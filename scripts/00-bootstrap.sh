@@ -15,7 +15,7 @@ if ! command -v python${PYTHON_VERSION:-3.10} >/dev/null 2>&1; then
 fi
 
 # System deps for audio + build (only if apt-get exists)
-if command -c apt-get >/dev/null 2>&1 || command -v apt-get >/dev/null 2>&1; then
+if command -v apt-get >/dev/null 2>&1; then
   echo "[bootstrap] Installing system deps via apt-get"
   apt-get update -y || true
   DEBIAN_FRONTEND=noninteractive apt-get install -y \

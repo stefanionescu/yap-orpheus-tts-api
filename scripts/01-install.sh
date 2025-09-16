@@ -15,7 +15,34 @@ if [ -z "${HF_TOKEN:-}" ]; then
 fi
 
 echo "[install] Creating venv at ${VENV_DIR}"
-python${PYTHON_VERSION} -m venv "${VENV_DIR}"
+
+# Resolve Python executable
+if command -v python${PYTHON_VERSION} >/dev/null 2>&1; then
+  PY_EXE=python${PYTHON_VERSION}
+elif command -v python3 >/dev/null 2>&1; then
+  PY_EXE=python3
+elif command -v python >/dev/null 2>&1; then
+  PY_EXE=python
+else
+  echo "[install] ERROR: Python not found. Please install Python ${PYTHON_VERSION}." >&2
+  exit 1
+fi
+
+PY_MAJMIN=$($PY_EXE -c 'import sys;print(f"{sys.version_info.major}.{sys.version_info.minor}")')
+
+# Ensure venv module is available (Ubuntu often needs pythonX.Y-venv)
+if ! $PY_EXE -m ensurepip --version >/dev/null 2>&1; then
+  if command -v apt-get >/dev/null 2>&1; then
+    echo "[install] Installing python venv support via apt-get"
+    apt-get update -y || true
+    DEBIAN_FRONTEND=noninteractive apt-get install -y python${PY_MAJMIN}-venv || \
+    DEBIAN_FRONTEND=noninteractive apt-get install -y python3-venv || true
+  else
+    echo "[install] WARNING: ensurepip missing and apt-get unavailable. venv creation may fail." >&2
+  fi
+fi
+
+$PY_EXE -m venv "${VENV_DIR}"
 source "${VENV_DIR}/bin/activate"
 python -m pip install --upgrade pip wheel setuptools
 
