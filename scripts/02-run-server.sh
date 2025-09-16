@@ -2,6 +2,10 @@
 set -euo pipefail
 # Load env if present (optional)
 if [ -f ".env" ]; then source ".env"; fi
+# Defaults
+: "${VENV_DIR:=$PWD/.venv}"
+: "${HOST:=0.0.0.0}"
+: "${PORT:=8000}"
 
 [ -d "${VENV_DIR}" ] || { echo "venv missing. Run scripts/01-install.sh"; exit 1; }
 source "${VENV_DIR}/bin/activate"
