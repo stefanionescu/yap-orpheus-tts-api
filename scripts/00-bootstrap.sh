@@ -14,12 +14,16 @@ if ! command -v python${PYTHON_VERSION:-3.10} >/dev/null 2>&1; then
   echo "[bootstrap] python${PYTHON_VERSION:-3.10} not found. Skipping install (expected on managed images).";
 fi
 
-# System deps for audio + build (only if apt-get exists)
+# System deps (only if apt-get exists). Allow skipping via SKIP_APT=1
 if command -v apt-get >/dev/null 2>&1; then
-  echo "[bootstrap] Installing system deps via apt-get"
-  apt-get update -y || true
-  DEBIAN_FRONTEND=noninteractive apt-get install -y \
-    build-essential git wget curl jq ffmpeg libsndfile1 libportaudio2 || true
+  if [ "${SKIP_APT:-0}" = "1" ]; then
+    echo "[bootstrap] SKIP_APT=1 → skipping apt-get installs"
+  else
+    echo "[bootstrap] Installing minimal system deps via apt-get"
+    apt-get update -y || true
+    DEBIAN_FRONTEND=noninteractive apt-get install -y \
+      git wget curl jq || true
+  fi
 else
   echo "[bootstrap] apt-get not available. Skipping system packages."
 fi

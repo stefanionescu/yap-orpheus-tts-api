@@ -62,7 +62,7 @@ case "$CUDA_MINOR" in
 esac
 
 echo "[install] Installing Torch from ${TORCH_IDX}"
-pip install --index-url "${TORCH_IDX}" torch torchvision torchaudio
+pip install --index-url "${TORCH_IDX}" torch --only-binary=:all:
 
 echo "[install] Requirements"
 if [ -f requirements.txt ]; then
@@ -83,12 +83,13 @@ import os
 from huggingface_hub import login
 tok=os.environ.get("HF_TOKEN")
 assert tok, "HF_TOKEN missing"
-login(token=tok, add_to_git_credential=True)
+login(token=tok, add_to_git_credential=False)
 print("[install] HF login OK")
 PY
 
-echo "[install] Pre-fetch model weights to local cache (~/.cache/huggingface)"
-python - <<'PY'
+if [ "${PREFETCH:-1}" = "1" ]; then
+  echo "[install] Pre-fetch model weights to local cache (~/.cache/huggingface)"
+  python - <<'PY'
 import os
 from huggingface_hub import snapshot_download
 model_id=os.environ.get("MODEL_ID","canopylabs/orpheus-3b-0.1-ft")
@@ -96,6 +97,9 @@ tok=os.environ["HF_TOKEN"]
 snapshot_download(model_id, token=tok, local_files_only=False, ignore_patterns=["*.pt"])  # download safetensors + config
 print("[install] Prefetch complete")
 PY
+else:
+  echo "[install] PREFETCH=0 → skipping model pre-download"
+fi
 
 echo "[install] Done."
 
