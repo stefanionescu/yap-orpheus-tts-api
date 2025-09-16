@@ -27,7 +27,8 @@ CMD="uvicorn server.server:app --host \"${HOST:-0.0.0.0}\" --port \"${PORT:-8000
 
 # Always start detached and write PID + logs
 mkdir -p logs .run
-nohup bash -lc "$CMD" > logs/server.log 2>&1 &
+# Fully detach from TTY so Ctrl-C on this shell won't signal the server
+setsid bash -lc "$CMD" </dev/null > logs/server.log 2>&1 &
 PID=$!
 echo $PID > .run/server.pid
 echo "[run] Server started in background (PID $PID)."

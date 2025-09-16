@@ -36,11 +36,12 @@ bash scripts/00-bootstrap.sh
 bash scripts/01-install.sh
 ```
 
-5) Start the server on port 8000 (vLLM backend)
+5) Start the server on port 8000 (vLLM backend) — auto-detached with live logs
 ```bash
-bash scripts/02-run-server.sh
-# or start detached so Ctrl-C in console won't stop it:
-DETACH=1 bash scripts/02-run-server.sh
+bash scripts/02-run-server.sh   # starts in background and tails logs
+# Press Ctrl-C to stop following logs; server keeps running (PID in .run/server.pid)
+# Re-attach later:
+tail -f logs/server.log
 ```
 
 Alternatively, you can run all three steps with one command:
