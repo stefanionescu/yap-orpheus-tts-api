@@ -89,15 +89,34 @@ PY
 
 if [ "${PREFETCH:-1}" = "1" ]; then
   echo "[install] Pre-fetch model weights to local cache (~/.cache/huggingface)"
+  # Enable accelerated downloader if available (speeds up big shards)
+  pip install -q hf-transfer || true
+  export HF_HUB_ENABLE_HF_TRANSFER=${HF_HUB_ENABLE_HF_TRANSFER:-1}
   python - <<'PY'
 import os
 from huggingface_hub import snapshot_download
 model_id=os.environ.get("MODEL_ID","canopylabs/orpheus-3b-0.1-ft")
 tok=os.environ["HF_TOKEN"]
-snapshot_download(model_id, token=tok, local_files_only=False, ignore_patterns=["*.pt"])  # download safetensors + config
+allow = [
+    "config.json",
+    "generation_config.json",
+    "tokenizer.json",
+    "tokenizer_config.json",
+    "special_tokens_map.json",
+    "vocab.json",
+    "merges.txt",
+    "*.safetensors",
+    "model.safetensors*",
+]
+snapshot_download(
+    model_id,
+    token=tok,
+    local_files_only=False,
+    allow_patterns=allow,
+)
 print("[install] Prefetch complete")
 PY
-else:
+else
   echo "[install] PREFETCH=0 → skipping model pre-download"
 fi
 
