@@ -37,8 +37,12 @@ esac
 echo "[install] Installing Torch from ${TORCH_IDX}"
 pip install --index-url "${TORCH_IDX}" torch torchvision torchaudio
 
-echo "[install] Server requirements"
-pip install -r server/requirements.txt
+echo "[install] Requirements"
+if [ -f requirements.txt ]; then
+  pip install -r requirements.txt
+else
+  pip install -r server/requirements.txt
+fi
 
 # Orpheus recommends pinning vLLM due to a March 18 regression.
 if [ -n "${VLLM_VERSION_PIN:-}" ]; then

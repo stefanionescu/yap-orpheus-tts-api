@@ -31,7 +31,7 @@ export HF_TOKEN="hf_xxx"  # must be set in the shell/session
 bash scripts/00-bootstrap.sh
 ```
 
-4) Create virtualenv and install Python deps (Torch, vLLM, server deps)
+4) Create virtualenv and install Python deps (Torch, vLLM, deps)
 ```bash
 bash scripts/01-install.sh
 ```
