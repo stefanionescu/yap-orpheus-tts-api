@@ -5,12 +5,13 @@ from vllm import AsyncLLMEngine, AsyncEngineArgs, SamplingParams
 from transformers import AutoTokenizer
 from .vllm_config import vllm_engine_kwargs
 from .text_chunker import chunk_text
+from .decoder import tokens_decoder_sync
 
 MODEL_ID = os.getenv("MODEL_ID", "canopylabs/orpheus-3b-0.1-ft")
 
 # Orpheus suggests repetition_penalty >= 1.1 for stability; speed up w/ higher temp if needed.
 DEFAULT_PARAMS = dict(
-    temperature=0.8,
+    temperature=0.75,
     top_p=0.9,
     repetition_penalty=1.2,
     seed=42,
