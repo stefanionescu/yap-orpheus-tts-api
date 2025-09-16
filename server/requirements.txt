@@ -1,0 +1,18 @@
+fastapi==0.115.0
+uvicorn[standard]==0.30.6
+python-dotenv==1.0.1
+
+# Orpheus wrapper (uses vLLM under the hood per upstream docs)
+orpheus-speech>=0.1.8
+
+# vLLM (a second pin is optionally applied in 01-install.sh based on VLLM_VERSION_PIN)
+vllm>=0.7.0
+
+# Utils
+numpy>=1.26
+soundfile>=0.12.1
+huggingface_hub>=0.24.7
+requests>=2.32.3
+httpx>=0.27.2
+
+
