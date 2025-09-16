@@ -2,11 +2,11 @@ fastapi==0.115.0
 uvicorn[standard]==0.30.6
 python-dotenv==1.0.1
 
-# Orpheus wrapper (uses vLLM under the hood per upstream docs)
-orpheus-speech>=0.1.8
+# Orpheus Python wrapper (only 0.1.0 exists on PyPI today)
+orpheus-speech==0.1.0
 
-# vLLM (a second pin is optionally applied in 01-install.sh based on VLLM_VERSION_PIN)
-vllm>=0.7.0
+# vLLM compatible with Torch 2.6 / CUDA 12.4+
+vllm==0.8.5
 
 # Utils
 numpy>=1.26

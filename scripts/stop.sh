@@ -1,6 +1,14 @@
 #!/usr/bin/env bash
 set -euo pipefail
-pkill -f "uvicorn app.server" || true
+if [ -f .run/server.pid ]; then
+  PID=$(cat .run/server.pid || true)
+  if [ -n "$PID" ]; then
+    kill "$PID" || true
+    sleep 1
+  fi
+  rm -f .run/server.pid || true
+fi
+pkill -f "uvicorn server.server:app" || true
 sleep 1
 
 read -p "This will remove venv and caches (~/.cache/huggingface, ~/.cache/torch, pip). Continue? [y/N] " yn
