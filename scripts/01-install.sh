@@ -1,6 +1,18 @@
 #!/usr/bin/env bash
 set -euo pipefail
-source ".env"
+# Load env if present
+if [ -f ".env" ]; then source ".env"; fi
+
+# Defaults
+: "${PYTHON_VERSION:=3.10}"
+: "${VENV_DIR:=$PWD/.venv}"
+
+# Required
+if [ -z "${HF_TOKEN:-}" ]; then
+  echo "[install] ERROR: HF_TOKEN not set. Export HF_TOKEN in the shell (deployment step)." >&2
+  echo "           Example: export HF_TOKEN=\"hf_xxx\"" >&2
+  exit 1
+fi
 
 echo "[install] Creating venv at ${VENV_DIR}"
 python${PYTHON_VERSION} -m venv "${VENV_DIR}"
@@ -25,8 +37,8 @@ esac
 echo "[install] Installing Torch from ${TORCH_IDX}"
 pip install --index-url "${TORCH_IDX}" torch torchvision torchaudio
 
-echo "[install] App requirements"
-pip install -r app/requirements.txt
+echo "[install] Server requirements"
+pip install -r server/requirements.txt
 
 # Orpheus recommends pinning vLLM due to a March 18 regression.
 if [ -n "${VLLM_VERSION_PIN:-}" ]; then

@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-if [ ! -f .env ]; then
-  echo "[run-all] Missing .env. Copy .env.example to .env and set HF_TOKEN." >&2
+# HF_TOKEN must be set by the deployment environment (no .env required)
+if [ -z "${HF_TOKEN:-}" ]; then
+  echo "[run-all] ERROR: HF_TOKEN not set. Export HF_TOKEN in the shell." >&2
+  echo "           Example: export HF_TOKEN=\"hf_xxx\"" >&2
   exit 1
 fi
 
@@ -13,10 +15,4 @@ echo "[run-all] 2/3 install"
 bash scripts/01-install.sh
 
 echo "[run-all] 3/3 start server"
-if [ "${TRTLLM_ENABLE:-0}" = "1" ]; then
-  exec bash scripts/02-run-server-trtllm.sh
-else
-  exec bash scripts/02-run-server.sh
-fi
-
-
+exec bash scripts/02-run-server.sh

@@ -8,6 +8,5 @@ echo "VLLM_MAX_SEQS:       ${VLLM_MAX_SEQS:-}"
 echo "VLLM_MAX_MODEL_LEN:  ${VLLM_MAX_MODEL_LEN:-}"
 echo "VLLM_GPU_UTIL:       ${VLLM_GPU_UTIL:-}"
 echo "VLLM_DTYPE:          ${VLLM_DTYPE:-}"
-echo "TRTLLM_ENABLE:       ${TRTLLM_ENABLE:-0}"
 
 

@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
-source ".env"
+# Load env if present (optional)
+if [ -f ".env" ]; then source ".env"; fi
 
 [ -d "${VENV_DIR}" ] || { echo "venv missing. Run scripts/01-install.sh"; exit 1; }
 source "${VENV_DIR}/bin/activate"
@@ -11,7 +12,6 @@ export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True,garbage_collection_thres
 export OMP_NUM_THREADS=$(nproc)
 export NVIDIA_TF32_OVERRIDE=1
 
-echo "[run] Starting FastAPI on ${HOST}:${PORT}"
-exec uvicorn app.server:app --host "${HOST}" --port "${PORT}" --timeout-keep-alive 75 --log-level info
-
+echo "[run] Starting FastAPI on ${HOST:-0.0.0.0}:${PORT:-8000}"
+exec uvicorn server.server:app --host "${HOST:-0.0.0.0}" --port "${PORT:-8000}" --timeout-keep-alive 75 --log-level info
 
