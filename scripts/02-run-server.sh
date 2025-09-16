@@ -15,6 +15,12 @@ export CUDA_DEVICE_MAX_CONNECTIONS=1
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True,garbage_collection_threshold:0.9
 export OMP_NUM_THREADS=$(nproc)
 export NVIDIA_TF32_OVERRIDE=1
+# Ensure vLLM uses spawn (decoder.py initializes CUDA early)
+export VLLM_WORKER_MULTIPROC_METHOD=spawn
+# Disable torch.compile/inductor to avoid building Triton/C extensions at runtime
+export VLLM_TORCH_COMPILE=0
+export TORCH_COMPILE_DISABLE=1
+export TRITON_DISABLE_COMPILATION=1
 
 echo "[run] Starting FastAPI on ${HOST:-0.0.0.0}:${PORT:-8000}"
 
