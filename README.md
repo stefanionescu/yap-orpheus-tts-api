@@ -1,4 +1,4 @@
-# Yap Orpheus API
+# Yap Orpheus TTS API
 
 This repo provides a docker-free setup to run Orpheus 3B TTS behind a FastAPI server with vLLM continuous batching. It’s designed for Runpod/AWS-style GPU instances and a plain Python virtualenv.
 

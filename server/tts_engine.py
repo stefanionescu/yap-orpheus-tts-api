@@ -1,8 +1,11 @@
 import os
+import asyncio
 from typing import Generator, Optional, Dict, Any
-from orpheus_tts import OrpheusModel
+from vllm import AsyncLLMEngine, AsyncEngineArgs, SamplingParams
+from transformers import AutoTokenizer
 from .vllm_config import vllm_engine_kwargs
 from .text_chunker import chunk_text
+from .decoder import tokens_decoder_sync
 
 MODEL_ID = os.getenv("MODEL_ID", "canopylabs/orpheus-3b-0.1-ft")
 
@@ -12,7 +15,8 @@ DEFAULT_PARAMS = dict(
     top_p=0.9,
     repetition_penalty=1.2,
     seed=42,
-    num_predict=None,
+    num_predict=49152,
+    num_ctx=8192,
 )
 
 VOICE_PRESETS: Dict[str, Dict[str, Any]] = {
@@ -23,7 +27,6 @@ VOICE_PRESETS: Dict[str, Dict[str, Any]] = {
         "top_p": 0.80,
         "repetition_penalty": 1.90,
         "seed": 42,
-        "num_predict": None,
     },
     # Male -> Zac
     "zac": {
@@ -32,7 +35,6 @@ VOICE_PRESETS: Dict[str, Dict[str, Any]] = {
         "top_p": 0.80,
         "repetition_penalty": 1.85,
         "seed": 42,
-        "num_predict": None,
     },
 }
 
@@ -43,14 +45,17 @@ ALIASES = {
 
 class OrpheusTTSEngine:
     def __init__(self):
-        # Forward key vLLM tuning knobs to Orpheus
         engine_kwargs = vllm_engine_kwargs()
-        # OrpheusModel constructor accepts model_name + core args; unknown kwargs are forwarded
-        self.model = OrpheusModel(
-            model_name=MODEL_ID,
-            max_model_len=engine_kwargs.pop("max_model_len"),
-            **engine_kwargs,
+        max_model_len = engine_kwargs.pop("max_model_len")
+        self.engine = AsyncLLMEngine.from_engine_args(
+            AsyncEngineArgs(
+                model=MODEL_ID,
+                max_model_len=max_model_len,
+                **engine_kwargs,
+            )
         )
+        # Tokenizer for formatting prompts
+        self.tokenizer = AutoTokenizer.from_pretrained(MODEL_ID)
 
     def stream_pcm_chunks(
         self,
@@ -81,12 +86,60 @@ class OrpheusTTSEngine:
         if top_p is not None: params["top_p"] = top_p
         if repetition_penalty is not None: params["repetition_penalty"] = repetition_penalty
         if seed is not None: params["seed"] = seed
-        if num_predict is not None: params["num_predict"] = num_predict
+        # num_predict is fixed by policy; do not allow override from request
         params.update(gen_kwargs or {})
 
+        def format_prompt(prompt_text: str, voice_name: str) -> str:
+            adapted = f"{voice_name}: {prompt_text}"
+            ids = self.tokenizer(adapted, return_tensors="pt").input_ids
+            # Insert BOS/EOS-like special tokens expected by model
+            import torch
+            start_token = torch.tensor([[128259]], dtype=torch.int64)
+            end_tokens = torch.tensor([[128009, 128260, 128261, 128257]], dtype=torch.int64)
+            all_ids = torch.cat([start_token, ids, end_tokens], dim=1)
+            return self.tokenizer.decode(all_ids[0])
+
         for piece in chunk_text(text, target_chars=chunk_chars):
-            # Orpheus returns a generator of PCM16 byte chunks
-            for audio_chunk in self.model.generate_speech(prompt=piece, voice=preset["voice"], **params):
+            prompt_string = format_prompt(piece, preset["voice"])
+            sampling_params = SamplingParams(
+                temperature=params.get("temperature", 0.8),
+                top_p=params.get("top_p", 0.9),
+                max_tokens=params.get("num_predict", 49152),
+                repetition_penalty=params.get("repetition_penalty", 1.2),
+                detokenize=True,
+                skip_special_tokens=False,
+            )
+
+            # Convert async token stream to sync tokens via a background thread + Queue
+            import threading, queue
+            token_q: "queue.Queue[Optional[str]]" = queue.Queue()
+
+            async def produce_tokens():
+                prev_text = ""
+                async for out in self.engine.generate(prompt=prompt_string, sampling_params=sampling_params):
+                    text_chunk = out.outputs[0].text if out.outputs else ""
+                    if not text_chunk:
+                        continue
+                    delta = text_chunk[len(prev_text):]
+                    prev_text = text_chunk
+                    if delta:
+                        token_q.put(delta)
+                token_q.put(None)
+
+            def runner():
+                asyncio.run(produce_tokens())
+
+            th = threading.Thread(target=runner, daemon=True)
+            th.start()
+
+            def sync_token_iter():
+                while True:
+                    item = token_q.get()
+                    if item is None:
+                        break
+                    yield item
+
+            for audio_chunk in tokens_decoder_sync(sync_token_iter()):
                 if audio_chunk:
                     yield audio_chunk
 

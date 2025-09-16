@@ -1,17 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
-
-FORCE=0
-if [ "${1:-}" = "--force" ]; then FORCE=1; fi
-if [ "${FORCE:-0}" = "1" ]; then
-  echo "[stop] Force mode enabled; skipping confirmation"
-else
-  read -p "This will remove venv and caches. Continue? [y/N] " yn
-  case "$yn" in
-    [Yy]* ) ;;
-    * ) echo "Aborted"; exit 0;;
-  esac
-fi
+echo "[stop] Non-interactive wipe starting"
 
 echo "[stop] Stopping server if running"
 if [ -f .run/server.pid ]; then
@@ -35,12 +24,17 @@ echo "[stop] Removing caches"
 rm -rf ~/.cache/huggingface || true
 rm -rf ~/.local/share/huggingface || true
 if [ -n "${HF_HOME:-}" ]; then rm -rf "${HF_HOME}" || true; fi
+if [ -n "${HF_HUB_CACHE:-}" ]; then rm -rf "${HF_HUB_CACHE}" || true; fi
 
 # Torch/pip caches
 rm -rf ~/.cache/torch || true
+rm -rf ~/.cache/torch_extensions || true
 rm -rf ~/.cache/pip || true
 rm -rf ~/.cache/hf_transfer || true
 rm -rf ~/.cache/clip || true
+rm -rf ~/.cache/vllm || true
+rm -rf ~/.cache/triton || true
+rm -rf ~/.nv || true
 
 # Temp files that may accumulate
 rm -rf /tmp/vllm* 2>/dev/null || true

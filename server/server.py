@@ -32,12 +32,12 @@ class TTSIn(BaseModel):
     text: str
     voice: str = "tara"
     stream: bool = True
-    chunk_chars: int = 450
+    chunk_chars: int = 500
     temperature: float | None = None
     top_p: float | None = None
     repetition_penalty: float | None = None
     seed: int | None = None
-    num_predict: int | None = None
+    model_config = {"extra": "forbid"}
 
 def _gen_kwargs(req: TTSIn):
     d = {}
@@ -45,7 +45,6 @@ def _gen_kwargs(req: TTSIn):
     if req.top_p is not None: d["top_p"] = req.top_p
     if req.repetition_penalty is not None: d["repetition_penalty"] = req.repetition_penalty
     if req.seed is not None: d["seed"] = req.seed
-    if req.num_predict is not None: d["num_predict"] = req.num_predict
     return d
 
 @app.post("/tts")
