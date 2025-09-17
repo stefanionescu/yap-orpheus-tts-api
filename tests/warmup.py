@@ -63,16 +63,24 @@ def main() -> None:
                     msg = await asyncio.wait_for(ws.recv(), timeout=IDLE_TIMEOUT_S)
                 except asyncio.TimeoutError:
                     # No data for a while -> assume done
+                    print("Timeout: No data received for 15 seconds, ending...")
                     break
                 except ConnectionClosed:
+                    print("Connection closed by server")
                     break
+                
+                # Print everything we receive from the server
                 if isinstance(msg, (bytes, bytearray)):
+                    print(f"Received binary data: {len(msg)} bytes")
                     now = time.perf_counter()
                     if first_chunk_at is None:
                         first_chunk_at = now
                     last_bytes_at = now
                     total_bytes += len(msg)
-                # Ignore stray text frames (server sends bytes only)
+                elif isinstance(msg, str):
+                    print(f"Received text message: {msg}")
+                else:
+                    print(f"Received unknown message type {type(msg)}: {msg}")
 
     asyncio.run(run())
 
