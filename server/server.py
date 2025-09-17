@@ -307,10 +307,55 @@ async def tts_ws(ws: WebSocket):
                     )
 
                     v = resolve_voice(voice) or "tara"
-                    for chunk in chunk_text(full_text, MAX_CHUNK_SIZE):
-                        async for pcm in aiter_pcm_from_custom_tokens(engine.engine, chunk, v, sp):
+                    chunks = chunk_text(full_text, MAX_CHUNK_SIZE)
+                    if not chunks:
+                        try:
+                            await ws.close()
+                        except Exception:
+                            pass
+                        break
+
+                    async def produce_to_queue(text: str, qout: asyncio.Queue):
+                        async for pcm in aiter_pcm_from_custom_tokens(engine.engine, text, v, sp):
+                            await qout.put(pcm)
+                        await qout.put(None)  # sentinel
+
+                    if len(chunks) == 1:
+                        # Single chunk: stream directly
+                        async for pcm in aiter_pcm_from_custom_tokens(engine.engine, chunks[0], v, sp):
                             await ws.send_bytes(pcm)
                             await asyncio.sleep(0)
+                    else:
+                        # Pipeline: stream chunk 0 directly, pre-generate chunk 1 into a queue,
+                        # then for each subsequent chunk pre-generate the next while draining current queued
+                        queued_q = asyncio.Queue(maxsize=128)
+                        queued_task = asyncio.create_task(produce_to_queue(chunks[1], queued_q))
+
+                        # Active 0 → socket
+                        async for pcm in aiter_pcm_from_custom_tokens(engine.engine, chunks[0], v, sp):
+                            await ws.send_bytes(pcm)
+                            await asyncio.sleep(0)
+
+                        # Drain queued chunks in order, starting from index 1
+                        for idx in range(1, len(chunks)):
+                            # Start next queued (idx+1) before draining current queued (idx)
+                            next_q = None
+                            next_task = None
+                            if (idx + 1) < len(chunks):
+                                next_q = asyncio.Queue(maxsize=128)
+                                next_task = asyncio.create_task(produce_to_queue(chunks[idx + 1], next_q))
+
+                            # Drain current queued_q (chunk idx)
+                            while True:
+                                b = await queued_q.get()
+                                if b is None:
+                                    break
+                                await ws.send_bytes(b)
+                                await asyncio.sleep(0)
+
+                            # Move to next queued
+                            queued_q = next_q if next_q is not None else asyncio.Queue()
+                            queued_task = next_task
 
                     try:
                         await ws.close()
