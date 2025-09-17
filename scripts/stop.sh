@@ -34,9 +34,25 @@ if command -v nvidia-smi >/dev/null 2>&1; then
   echo "[stop] Killing GPU compute processes (if any)"
   PIDS=$(nvidia-smi --query-compute-apps=pid --format=csv,noheader 2>/dev/null | tr -d ' ' || true)
   if [ -n "$PIDS" ]; then
-    for p in $PIDS; do
-      kill -9 "$p" 2>/dev/null || true
+    echo "$PIDS" | xargs -r -n1 kill 2>/dev/null || true
+    sleep 1
+    # hard kill stragglers
+    PIDS=$(nvidia-smi --query-compute-apps=pid --format=csv,noheader 2>/dev/null | tr -d ' ' || true)
+    if [ -n "$PIDS" ]; then
+      echo "$PIDS" | xargs -r -n1 kill -9 2>/dev/null || true
+    fi
+  fi
+  # As a fallback, kill any process holding /dev/nvidia* (container-local)
+  if command -v fuser >/dev/null 2>&1; then
+    for dev in /dev/nvidiactl /dev/nvidia-uvm /dev/nvidia0; do
+      [ -e "$dev" ] && fuser -k "$dev" 2>/dev/null || true
     done
+  fi
+  # Attempt GPU reset if no compute procs remain (may require privileges)
+  LEFT=$(nvidia-smi --query-compute-apps=pid --format=csv,noheader 2>/dev/null | tr -d ' ' || true)
+  if [ -z "$LEFT" ]; then
+    GPU_INDEX=${GPU_INDEX:-0}
+    nvidia-smi --gpu-reset -i "$GPU_INDEX" 2>/dev/null || true
   fi
 else
   echo "[stop] nvidia-smi not available; skipping GPU process kill"
