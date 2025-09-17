@@ -26,6 +26,22 @@ async def _startup():
     global engine
     ensure_hf_login()
     engine = OrpheusTTSEngine()
+    # Background warmup to reduce first-request TTFB (compile kernels, allocate KV cache)
+    async def _warmup():
+        try:
+            # Small prompts per voice to prime model + SNAC path
+            async def _prime(voice: str):
+                # consume a couple frames then stop
+                n = 0
+                async for _ in engine.aiter_frames("hello", voice=voice, num_predict=256):
+                    n += 1
+                    if n >= 2:
+                        break
+            await asyncio.gather(_prime("tara"), _prime("zac"))
+        except Exception:
+            # Do not fail startup if warmup errors
+            pass
+    asyncio.create_task(_warmup())
 
 @app.get("/healthz")
 async def healthz():
@@ -96,7 +112,7 @@ async def tts_ws(ws: WebSocket):
         top_p: Optional[float] = None
         repetition_penalty: Optional[float] = None
         num_predict: Optional[int] = None  # a.k.a. max_tokens
-        buf_sz = int(os.getenv("WS_WORD_BUFFER_SIZE", os.getenv("BUFFER_SIZE", "10")))
+        buf_sz = int(os.getenv("WS_WORD_BUFFER_SIZE", os.getenv("BUFFER_SIZE", "5")))
 
         splitter = pysbd.Segmenter(language="en", clean=False)
         text_buffer: list[str] = []

@@ -117,6 +117,8 @@ class OrpheusTTSEngine:
         dbg_frames = 0
 
         try:
+            # With prefix caching enabled in vLLM, the shared prompt prefix
+            # (SOH + voice label + colon/space) benefits across calls.
             async for out in self.engine.generate(build_prompt(text, resolve_voice(voice)), sp, req_id):
                 outs = out.outputs or []
                 if not outs:

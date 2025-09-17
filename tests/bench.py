@@ -61,7 +61,7 @@ async def _tts_one_ws(
 
     async with websockets.connect(url, max_size=None) as ws:
         # Baseten-style metadata first
-        meta = {"voice": voice, "buffer_size": 10}
+        meta = {"voice": voice, "buffer_size": 5}
         if num_predict is not None:
             meta["max_tokens"] = num_predict
         await ws.send(json.dumps(meta))

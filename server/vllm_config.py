@@ -13,6 +13,7 @@ def vllm_engine_kwargs() -> dict:
         trust_remote_code=True,
         disable_log_stats=True,
         tensor_parallel_size=int(os.getenv("TENSOR_PARALLEL_SIZE", "1")),
+        enable_prefix_caching=bool(int(os.getenv("VLLM_PREFIX_CACHE", "1"))),
         # NOTE: do NOT include worker_use_ray; not valid on vLLM 0.8.x
     )
 
