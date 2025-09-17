@@ -181,21 +181,85 @@ rm -rf /tmp/torch* 2>/dev/null || true
 if [ "$CLEAN_INSTALL" = "1" ]; then
   echo "[stop] Removing venv and caches from install step"
   rm -rf .venv || true
+  
+  # HuggingFace caches (multiple possible locations)
   rm -rf ~/.cache/huggingface ~/.local/share/huggingface || true
+  rm -rf ~/.huggingface || true
   [ -n "${HF_HOME:-}" ] && rm -rf "${HF_HOME}" || true
   [ -n "${HF_HUB_CACHE:-}" ] && rm -rf "${HF_HUB_CACHE}" || true
-  rm -rf ~/.cache/torch ~/.cache/torch_extensions ~/.cache/pip ~/.cache/hf_transfer ~/.cache/vllm ~/.cache/triton ~/.nv || true
+  [ -n "${HUGGINGFACE_HUB_CACHE:-}" ] && rm -rf "${HUGGINGFACE_HUB_CACHE}" || true
+  [ -n "${TRANSFORMERS_CACHE:-}" ] && rm -rf "${TRANSFORMERS_CACHE}" || true
+  
+  # PyTorch and related caches
+  rm -rf ~/.cache/torch ~/.cache/torch_extensions ~/.cache/torchvision || true
+  rm -rf ~/.torch || true
+  
+  # vLLM specific caches (can be huge)
+  rm -rf ~/.cache/vllm || true
+  rm -rf /tmp/vllm_* /tmp/.vllm_* || true
+  rm -rf /dev/shm/vllm_* || true
+  
+  # Other ML/AI caches
+  rm -rf ~/.cache/triton ~/.nv || true
+  rm -rf ~/.cache/pip ~/.cache/hf_transfer || true
+  rm -rf ~/.cache/transformers || true
+  
+  # NVIDIA/CUDA caches
+  rm -rf ~/.nv/ComputeCache || true
+  rm -rf ~/.nvidia/compute-cache || true
+  
+  # Python package caches
+  find /tmp -name "pip-*" -type d -exec rm -rf {} + 2>/dev/null || true
+  find /tmp -name "tmppack*" -type d -exec rm -rf {} + 2>/dev/null || true
+  
+  echo "[stop] Checking remaining cache sizes..."
+  du -sh ~/.cache 2>/dev/null || true
+  du -sh /tmp/vllm* /tmp/huggingface* /tmp/torch* 2>/dev/null || true
 fi
 
-# 6) Optional apt cache clean
+# 6) Optional Docker/container volume cleanup
 if [ "$CLEAN_SYSTEM" = "1" ]; then
+  if command -v docker >/dev/null 2>&1; then
+    echo "[stop] Cleaning Docker volumes and images (if any)"
+    # Clean up any orphaned volumes
+    docker volume prune -f 2>/dev/null || true
+    # Clean up any dangling images
+    docker image prune -f 2>/dev/null || true
+    # Clean up build cache
+    docker builder prune -f 2>/dev/null || true
+  fi
+  
+  # System package caches
   if command -v apt-get >/dev/null 2>&1; then
     echo "[stop] Cleaning apt caches"
     apt-get clean || true
+    apt-get autoclean || true
     rm -rf /var/lib/apt/lists/* || true
-  else
-    echo "[stop] apt-get not available; skipping system cache clean"
+    rm -rf /var/cache/apt/archives/* || true
   fi
+  
+  if command -v yum >/dev/null 2>&1; then
+    echo "[stop] Cleaning yum caches"
+    yum clean all || true
+  fi
+  
+  if command -v dnf >/dev/null 2>&1; then
+    echo "[stop] Cleaning dnf caches"
+    dnf clean all || true
+  fi
+  
+  # System-wide temp cleanup
+  echo "[stop] Cleaning system temp directories"
+  rm -rf /var/tmp/vllm* /var/tmp/huggingface* /var/tmp/torch* || true
+  find /tmp -name "*vllm*" -type d -exec rm -rf {} + 2>/dev/null || true
+  find /tmp -name "*huggingface*" -type d -exec rm -rf {} + 2>/dev/null || true
+  find /tmp -name "*torch*" -type d -exec rm -rf {} + 2>/dev/null || true
+  
+  # Clean up any leftover NVIDIA persistence files
+  rm -rf /var/run/nvidia-persistenced || true
+  
+  echo "[stop] Final disk usage check:"
+  df -h / 2>/dev/null || true
 fi
 
 echo "[stop] Wipe complete."
