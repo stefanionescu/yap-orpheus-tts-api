@@ -4,7 +4,7 @@ python-dotenv==1.0.1
 huggingface_hub>=0.24.7
 
 # Core inference + audio
-vllm==0.8.5
+vllm==0.7.3
 transformers>=4.44.2
 snac>=0.1.6
 numpy>=1.26
