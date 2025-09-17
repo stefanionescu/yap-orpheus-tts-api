@@ -13,6 +13,7 @@ from typing import Optional
 import asyncio
 import json
 import websockets
+from websockets.exceptions import ConnectionClosed
 
 
 DEFAULT_TEXT = (
@@ -33,7 +34,7 @@ def _ws_url(server: str) -> str:
 
 
 def main() -> None:
-    ap = argparse.ArgumentParser(description="HTTP streaming warmup (Orpheus TTS)")
+    ap = argparse.ArgumentParser(description="WebSocket streaming warmup (Orpheus TTS)")
     ap.add_argument("--server", default="127.0.0.1:8000", help="host:port or http[s]://host:port")
     ap.add_argument("--voice", default=os.environ.get("TTS_VOICE", "female"), help="Voice alias: female|male|tara|zac")
     ap.add_argument("--text", default=DEFAULT_TEXT, help="Text to synthesize")
@@ -47,22 +48,32 @@ def main() -> None:
     total_bytes = 0
     sr = 24000
 
+    IDLE_TIMEOUT_S = 15.0
+
     async def run():
         nonlocal first_chunk_at, total_bytes
         async with websockets.connect(url, max_size=None) as ws:
             # Send text then end
             await ws.send(json.dumps({"text": args.text, "voice": args.voice}))
             await ws.send(json.dumps({"end": True}))
-            # Receive PCM
+
+            last_bytes_at = None
             while True:
                 try:
-                    msg = await asyncio.wait_for(ws.recv(), timeout=2.0)
+                    msg = await asyncio.wait_for(ws.recv(), timeout=IDLE_TIMEOUT_S)
                 except asyncio.TimeoutError:
+                    # No data for a while -> assume done
                     break
+                except ConnectionClosed:
+                    break
+
                 if isinstance(msg, (bytes, bytearray)):
+                    now = time.perf_counter()
                     if first_chunk_at is None:
-                        first_chunk_at = time.perf_counter()
+                        first_chunk_at = now
+                    last_bytes_at = now
                     total_bytes += len(msg)
+                # ignore any stray text frames
 
     asyncio.run(run())
 
