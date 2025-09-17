@@ -26,7 +26,9 @@ FINETUNE_START_AUDIO = 128257
 class FTStreamNormalizer:
     """Consumes token ids and yields aligned 7-code frames once streaming starts."""
     def __init__(self):
-        self.started = False
+        # Prompt already contains FINETUNE_START_AUDIO, so generated tokens are codes.
+        # Start immediately to avoid waiting for 128257 in the generated stream.
+        self.started = True
         self.pos = 0
         self.buf = []
 
@@ -39,11 +41,7 @@ class FTStreamNormalizer:
         return None
 
     def push_id(self, tid: int):
-        # wait for start-of-audio
-        if not self.started:
-            if tid == FINETUNE_START_AUDIO:
-                self.started = True
-            return None
+        # Start-of-audio was in the prompt; proceed directly with codes.
         # ignore EOT in stream
         if tid == FINETUNE_EOT:
             return None
