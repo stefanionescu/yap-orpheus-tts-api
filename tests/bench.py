@@ -20,6 +20,7 @@ from typing import Dict, List, Tuple, Optional
 
 import asyncio
 import websockets
+from websockets.exceptions import ConnectionClosed
 
 
 ROOT_DIR = Path(__file__).resolve().parent.parent
@@ -74,6 +75,10 @@ async def _tts_one_ws(
             try:
                 msg = await asyncio.wait_for(ws.recv(), timeout=2.0)
             except asyncio.TimeoutError:
+                # No more data for a bit → assume done
+                break
+            except ConnectionClosed:
+                # Server closed after sending final frames
                 break
             if isinstance(msg, (bytes, bytearray)):
                 if first_chunk_at is None:
