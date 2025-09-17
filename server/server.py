@@ -38,7 +38,7 @@ async def tts(req: Dict):
 
     voice = req.get("voice", "tara")
     stream = bool(req.get("stream", True))
-    chunk_chars = int(req.get("chunk_chars", 450))
+    chunk_chars = int(req.get("chunk_chars", 500))
     temperature = req.get("temperature")
     top_p = req.get("top_p")
     repetition_penalty = req.get("repetition_penalty")
