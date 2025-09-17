@@ -4,7 +4,6 @@ import queue
 import asyncio
 from typing import Generator, Optional, Dict, Any, AsyncGenerator, List
 
-from transformers import AutoTokenizer
 from vllm.engine.arg_utils import AsyncEngineArgs
 from vllm.engine.async_llm_engine import AsyncLLMEngine
 from vllm import SamplingParams
@@ -38,7 +37,6 @@ class OrpheusTTSEngine:
             model=MODEL_ID,
             **ekw,
         ))
-        self.tokenizer = AutoTokenizer.from_pretrained(MODEL_ID, use_fast=True)
         self.decode_frames = int(os.getenv("SNAC_DECODE_FRAMES", "5"))  # 5 ≈ ~100ms; 10 ≈ ~200ms
 
     # -------- internal: async text→frames extractor --------

@@ -16,7 +16,7 @@ export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True,garbage_collection_thres
 export OMP_NUM_THREADS=$(nproc)
 export NVIDIA_TF32_OVERRIDE=1
 # vLLM tuning defaults (override via env if needed)
-export VLLM_DTYPE=${VLLM_DTYPE:-half}
+export VLLM_DTYPE=${VLLM_DTYPE:-float16}
 export VLLM_MAX_MODEL_LEN=${VLLM_MAX_MODEL_LEN:-8192}
 export VLLM_GPU_UTIL=${VLLM_GPU_UTIL:-0.92}
 export VLLM_MAX_SEQS=${VLLM_MAX_SEQS:-24}

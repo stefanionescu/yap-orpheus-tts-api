@@ -38,6 +38,30 @@ collect_gpu_pids() {
   printf "%s %s %s" "$pids" "$holders" "$fusers" | tr ' ' '\n' | grep -E '^[0-9]+$' | sort -u | tr '\n' ' '
 }
 
+# Kill a PID, its children, and its process group (best-effort)
+kill_tree() {
+  local pid="$1"
+  [ -z "$pid" ] && return 0
+  # Recurse into children first
+  local children
+  children="$(pgrep -P "$pid" 2>/dev/null || true)"
+  for c in $children; do
+    kill_tree "$c"
+  done
+  # Kill by process group
+  local pgid
+  pgid="$(ps -o pgid= -p "$pid" 2>/dev/null | tr -d ' ' || true)"
+  if [ -n "$pgid" ]; then
+    kill -TERM -"$pgid" 2>/dev/null || true
+    sleep 0.5
+    kill -KILL -"$pgid" 2>/dev/null || true
+  fi
+  # Finally the PID itself
+  kill -TERM "$pid" 2>/dev/null || true
+  sleep 0.5
+  kill -KILL "$pid" 2>/dev/null || true
+}
+
 echo "[stop] Stopping server and cleaning run artifacts"
 
 # 1) Kill uvicorn main proc (pidfile + pattern)
@@ -53,6 +77,7 @@ if [ -f .run/server.pid ]; then
 fi
 # Fallback: pattern kill
 pkill -f "uvicorn server.server:app" 2>/dev/null || true
+pkill -f "python.*server/server.py" 2>/dev/null || true
 sleep 1
 
 # 2) Kill vLLM core engine & related workers (best-effort)
@@ -62,6 +87,10 @@ pkill -f "python.*vllm" 2>/dev/null || true
 pkill -f "vllm.v1" 2>/dev/null || true
 pkill -f "vllm.entrypoints" 2>/dev/null || true
 pkill -f "openai.api_server" 2>/dev/null || true
+# Extra hard-kill for stubborn workers
+pkill -9 -f "python.*vllm" 2>/dev/null || true
+# Kill any lingering tail -F log followers launched by run script shells
+pkill -f "tail -n \+1 -F logs/server.log" 2>/dev/null || true
 # Ray (if any were spawned by other configs)
 pkill -f "ray::" 2>/dev/null || true
 pkill -f "raylet" 2>/dev/null || true
@@ -72,21 +101,31 @@ sleep 1
 # 3) Last resort: kill any process with open CUDA handles, then reset GPU
 if command -v nvidia-smi >/dev/null 2>&1; then
   echo "[stop] Checking for GPU compute processes"
-  # soft-kill then hard-kill in a few retries
+  # Attempt several passes: process-tree kill, then SIGKILL, then driver-assisted kill
   for attempt in 1 2 3; do
     PIDS="$(collect_gpu_pids)"
-    if [ -z "$PIDS" ]; then
-      break
-    fi
-    echo "[stop] Attempt ${attempt}: SIGTERM -> $PIDS"
-    echo "$PIDS" | xargs -r -n1 kill 2>/dev/null || true
+    [ -z "$PIDS" ] && break
+    echo "[stop] Attempt ${attempt}: kill-tree -> $PIDS"
+    for p in $PIDS; do
+      kill_tree "$p"
+    done
     sleep 2
   done
 
   PIDS="$(collect_gpu_pids)"
   if [ -n "$PIDS" ]; then
-    echo "[stop] Forcing SIGKILL -> $PIDS"
+    echo "[stop] Forcing SIGKILL (direct) -> $PIDS"
     echo "$PIDS" | xargs -r -n1 kill -9 2>/dev/null || true
+    sleep 1
+  fi
+
+  # Best-effort driver kill of compute processes (may require admin privileges / supported drivers)
+  PIDS="$(collect_gpu_pids)"
+  if [ -n "$PIDS" ]; then
+    echo "[stop] nvidia-smi --kill-compute-process for -> $PIDS"
+    for p in $PIDS; do
+      nvidia-smi --kill-compute-process "$p" >/dev/null 2>&1 || true
+    done
     sleep 1
   fi
 
@@ -123,6 +162,7 @@ if command -v nvidia-smi >/dev/null 2>&1; then
   if [ -n "$LEFT" ]; then
     echo "[stop] WARNING: GPU processes still present after cleanup: $LEFT"
     ps -o pid,cmd --no-headers -p $LEFT 2>/dev/null || true
+    echo "[stop] If processes persist, they may be zombie/driver-stuck. A node restart may be required."
   fi
 else
   echo "[stop] nvidia-smi not available; skipping GPU process kill"
