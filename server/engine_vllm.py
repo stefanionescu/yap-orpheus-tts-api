@@ -135,11 +135,13 @@ class OrpheusTTSEngine:
                             dbg_frames += 1
                         yield frame
                 prev_n = len(toks)
-        finally:
+        except Exception:
+            # Only abort on error/cancellation; avoid noisy "Aborted request" logs on normal completion
             try:
-                await self.engine.abort(req_id)   # <-- await; it's async
+                await self.engine.abort(req_id)
             except Exception:
                 pass
+            raise
 
         if DEBUG:
             print(f"[snac] frames={dbg_frames}", flush=True)

@@ -31,12 +31,9 @@ async def _startup():
         try:
             # Small prompts per voice to prime model + SNAC path
             async def _prime(voice: str):
-                # consume a couple frames then stop
-                n = 0
-                async for _ in engine.aiter_frames("hello", voice=voice, num_predict=256):
-                    n += 1
-                    if n >= 2:
-                        break
+                # Let a short generation complete naturally to avoid abort logs
+                async for _ in engine.aiter_frames("hello", voice=voice, num_predict=64):
+                    pass
             await asyncio.gather(_prime("tara"), _prime("zac"))
         except Exception:
             # Do not fail startup if warmup errors

@@ -58,10 +58,8 @@ class SnacDecoder:
         codes = [codes_0, codes_1, codes_2]
         
         with torch.inference_mode():
-            # Use quantizer.from_codes + decoder like Baseten
-            z_q = self.snac.quantizer.from_codes(codes)
-            # CRITICAL: Apply the same audio slicing as Baseten [:, :, 2048:4096]
-            audio_hat = self.snac.decoder(z_q.to(self.dtype_decoder))[:, :, 2048:4096]
+            # Decode full sequence so take_new_pcm16 can emit incremental deltas
+            audio_hat = self.snac.decode(codes)[0]
             
         audio = audio_hat.squeeze().detach().float().cpu().numpy()
         return np.clip(audio, -1.0, 1.0)
