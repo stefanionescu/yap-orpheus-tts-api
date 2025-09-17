@@ -2,7 +2,7 @@ import os
 import threading
 import queue
 import asyncio
-from typing import Generator, Optional, Dict, Any
+from typing import Generator, Optional, Dict, Any, AsyncGenerator, List
 
 from transformers import AutoTokenizer
 from vllm.engine.arg_utils import AsyncEngineArgs
@@ -13,7 +13,7 @@ from vllm.utils import random_uuid
 from .vllm_config import vllm_engine_kwargs
 from .text_chunker import chunk_text
 from .prompts import build_prompt, resolve_voice
-from .snac_stream import StreamNormalizer, SnacDecoder, extract_token_numbers
+from .snac_stream import StreamNormalizer, SnacDecoder, AUDIO_TOKEN_RE
 
 MODEL_ID = os.getenv("MODEL_ID", "canopylabs/orpheus-3b-0.1-ft")
 
@@ -39,74 +39,95 @@ class OrpheusTTSEngine:
             **ekw,
         ))
         self.tokenizer = AutoTokenizer.from_pretrained(MODEL_ID, use_fast=True)
-        self.decode_frames = int(os.getenv("SNAC_DECODE_FRAMES", "10"))  # 10 ≈ ~200ms; 5 ≈ ~100ms
+        self.decode_frames = int(os.getenv("SNAC_DECODE_FRAMES", "5"))  # 5 ≈ ~100ms; 10 ≈ ~200ms
 
-    # -------- internal: async producer → PCM --------
-    async def _async_pcm_stream(self, text: str, voice: str, params: Dict[str, Any]):
+    # -------- internal: async text→frames extractor --------
+    async def _async_extract_frames(
+        self,
+        text: str,
+        voice: str,
+        params: Dict[str, Any],
+    ) -> AsyncGenerator[List[int], None]:
+        """Yield 7-code frames by parsing streamed TEXT deltas for <custom_token_####>."""
         sp = SamplingParams(
             temperature=float(params.get("temperature", 0.8)),
             top_p=float(params.get("top_p", 0.9)),
             repetition_penalty=float(params.get("repetition_penalty", 1.2)),
             max_tokens=int(params.get("num_predict", 49152)),
-            detokenize=False,                # IMPORTANT: stream token_ids, not text
-            skip_special_tokens=False,
+            detokenize=True,                 # stream TEXT deltas
+            skip_special_tokens=False,       # keep <custom_token_####>
             ignore_eos=True,                 # keep generating past <|eot_id|>
         )
 
         req_id = random_uuid()
-        prev_len = 0
+        prev_text = ""
+        carry = ""
+
         normalizer = StreamNormalizer()
-        snac = SnacDecoder(sample_rate=24000)
-        frames_batch = []
 
         eot_seen = False
         N_EXTRA_AFTER_EOT = 8192
         extra_budget = N_EXTRA_AFTER_EOT
 
         DEBUG = bool(int(os.getenv("SNAC_DEBUG", "0")))
-        dbg_tokens = dbg_frames = dbg_bytes = 0
+        dbg_frames = 0
 
         async for out in self.engine.generate(build_prompt(text, resolve_voice(voice)), sp, req_id):
             outs = out.outputs or []
             if not outs:
                 continue
-            tids = outs[0].token_ids or []
-            if not tids:
+            full_txt = outs[0].text or ""
+            if not full_txt:
                 continue
 
-            new_ids = tids[prev_len:]
-            prev_len = len(tids)
+            # delta since last step
+            delta = full_txt[len(prev_text):]
+            prev_text = full_txt
+            if not delta:
+                continue
 
-            for tid in new_ids:
-                # Prefer raw vocab token; fallback to decode
-                tok_str = self.tokenizer.convert_ids_to_tokens(tid, skip_special_tokens=False)
-                if tok_str is None or tok_str == "":
-                    tok_str = self.tokenizer.decode(
-                        [tid],
-                        skip_special_tokens=False,
-                        clean_up_tokenization_spaces=False,
-                    )
+            carry += delta
+            if (not eot_seen) and "<|eot_id|>" in carry:
+                eot_seen = True
+                extra_budget = N_EXTRA_AFTER_EOT
 
-                if DEBUG:
-                    dbg_tokens += 1
+            # extract numbers from the rolling carry
+            last_end = 0
+            for m in AUDIO_TOKEN_RE.finditer(carry):
+                last_end = m.end()
+                n = int(m.group(1))
+                frame = normalizer.push_number(n)
+                if frame is not None:
+                    if DEBUG:
+                        dbg_frames += 1
+                    yield frame
+                    if eot_seen:
+                        extra_budget -= 7
+                        if extra_budget <= 0:
+                            break
 
-                # Capture audio tokens
-                for n in extract_token_numbers(tok_str):
-                    frame = normalizer.push_number(n)
-                    if frame is not None:
-                        frames_batch.append(frame)
-                        if DEBUG:
-                            dbg_frames += 1
-                        if eot_seen:
-                            extra_budget -= 7
-                            if extra_budget <= 0:
-                                break
+            # trim processed part
+            if last_end > 0:
+                carry = carry[last_end:]
 
-                if (not eot_seen) and "<|eot_id|>" in tok_str:
-                    eot_seen = True
-                    extra_budget = N_EXTRA_AFTER_EOT
+            if eot_seen and extra_budget <= 0:
+                break
 
-            # decode every N frames for ~100–200ms cadence
+        # finalize
+        normalizer.close()
+        if DEBUG:
+            print(f"[snac] frames={dbg_frames}", flush=True)
+
+    # -------- internal: async producer → PCM (built on frames extractor) --------
+    async def _async_pcm_stream(self, text: str, voice: str, params: Dict[str, Any]):
+        snac = SnacDecoder(sample_rate=24000)
+        frames_batch: List[List[int]] = []
+
+        DEBUG = bool(int(os.getenv("SNAC_DEBUG", "0")))
+        dbg_bytes = 0
+
+        async for frame in self._async_extract_frames(text, voice, params):
+            frames_batch.append(frame)
             if len(frames_batch) >= self.decode_frames:
                 snac.add_frames(frames_batch)
                 frames_batch.clear()
@@ -116,21 +137,16 @@ class OrpheusTTSEngine:
                         dbg_bytes += len(pcm)
                     yield pcm
 
-            if eot_seen and extra_budget <= 0:
-                break
-
         # flush tail
         if frames_batch:
             snac.add_frames(frames_batch)
-        normalizer.close()
         pcm = snac.take_new_pcm16()
         if pcm:
             if DEBUG:
                 dbg_bytes += len(pcm)
             yield pcm
-
         if DEBUG:
-            print(f"[snac] tokens={dbg_tokens} frames={dbg_frames} bytes={dbg_bytes}", flush=True)
+            print(f"[snac] bytes={dbg_bytes}", flush=True)
 
     # -------- public: sync generator for FastAPI StreamingResponse --------
     def _piece_pcm_gen(self, text: str, voice: str, params: Dict[str, Any]) -> Generator[bytes, None, None]:
@@ -180,6 +196,26 @@ class OrpheusTTSEngine:
         for piece in chunk_text(text, target_chars=chunk_chars):
             for pcm in self._piece_pcm_gen(piece, resolved_voice, params):
                 yield pcm
+
+    # -------- public: async frames for a single text piece (for WS continuity) --------
+    async def aiter_frames(
+        self,
+        text: str,
+        voice: str = "tara",
+        *,
+        temperature: Optional[float] = None,
+        top_p: Optional[float] = None,
+        repetition_penalty: Optional[float] = None,
+        **kwargs,
+    ) -> AsyncGenerator[List[int], None]:
+        params = DEFAULT_PARAMS.copy()
+        if temperature is not None: params["temperature"] = float(temperature)
+        if top_p is not None: params["top_p"] = float(top_p)
+        if repetition_penalty is not None: params["repetition_penalty"] = float(repetition_penalty)
+
+        resolved_voice = ALIASES.get(str(voice).lower(), voice)
+        async for frame in self._async_extract_frames(text, resolved_voice, params):
+            yield frame
 
     def synthesize_wav_bytes(
         self,

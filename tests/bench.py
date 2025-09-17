@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-HTTP streaming benchmark for Orpheus TTS FastAPI server.
+WebSocket streaming benchmark for Orpheus TTS server.
 
-Sends concurrent POST /tts requests with stream=true and consumes PCM16 bytes.
-Reports wall, audio duration, TTFB (e2e and post-headers), RTF, xRT, throughput.
+Sends concurrent WS sessions that push text and receive PCM16 audio frames.
+Reports wall, audio duration, TTFB, RTF, xRT, throughput.
 """
 from __future__ import annotations
 
@@ -18,7 +18,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, List, Tuple, Optional
 
-import httpx
+import asyncio
+import websockets
 
 
 ROOT_DIR = Path(__file__).resolve().parent.parent
@@ -32,16 +33,18 @@ DEFAULT_TEXT = (
 )
 
 
-def _http_url(server: str) -> str:
-    if server.startswith(("http://", "https://")):
-        base = server.rstrip("/")
-    else:
-        base = f"http://{server.strip().rstrip('/')}"
-    return f"{base}/tts"
+def _ws_url(server: str) -> str:
+    base = server.strip().rstrip("/")
+    if base.startswith("http://"):
+        base = "ws://" + base[len("http://"):]
+    elif base.startswith("https://"):
+        base = "wss://" + base[len("https://"):]
+    elif not base.startswith(("ws://", "wss://")):
+        base = "ws://" + base
+    return f"{base}/ws/tts"
 
 
-async def _tts_one(
-    client: httpx.AsyncClient,
+async def _tts_one_ws(
     server: str,
     text: str,
     voice: str,
@@ -49,40 +52,31 @@ async def _tts_one(
     seed: Optional[int] = None,
     num_predict: Optional[int] = None,
 ) -> Dict[str, float]:
-    url = _http_url(server)
-    payload = {
-        "text": text,
-        "voice": voice,
-        "stream": True,
-    }
-    if seed is not None:
-        payload["seed"] = int(seed)
-    if num_predict is not None:
-        payload["num_predict"] = int(num_predict)
+    del seed, num_predict  # unused; WS path doesn't use them currently
+    url = _ws_url(server)
 
     t0_e2e = time.perf_counter()
-    # stream context yields after response headers are received
-    async with client.stream("POST", url, json=payload) as resp:
-        resp.raise_for_status()
-        t0_server = time.perf_counter()
-        sr = 24000
-        with contextlib.suppress(Exception):
-            sr = int(resp.headers.get("X-Audio-Sample-Rate", "24000"))
+    first_chunk_at: Optional[float] = None
+    total_bytes = 0
+    sr = 24000
 
-        first_chunk_at: Optional[float] = None
-        total_bytes = 0
-        async for chunk in resp.aiter_bytes():
-            if not chunk:
-                continue
-            if first_chunk_at is None:
-                first_chunk_at = time.perf_counter()
-            total_bytes += len(chunk)
+    async with websockets.connect(url, max_size=None) as ws:
+        await ws.send(json.dumps({"text": text, "voice": voice}))
+        await ws.send(json.dumps({"end": True}))
+
+        while True:
+            try:
+                msg = await asyncio.wait_for(ws.recv(), timeout=2.0)
+            except asyncio.TimeoutError:
+                break
+            if isinstance(msg, (bytes, bytearray)):
+                if first_chunk_at is None:
+                    first_chunk_at = time.perf_counter()
+                total_bytes += len(msg)
 
     wall_s = time.perf_counter() - t0_e2e
     ttfb_e2e_s = (first_chunk_at - t0_e2e) if first_chunk_at else 0.0
-    ttfb_server_s = (first_chunk_at - t0_server) if first_chunk_at else 0.0
-
-    # PCM16 mono @ sr Hz → 2 bytes/sample
+    ttfb_server_s = ttfb_e2e_s
     audio_s = (total_bytes / 2.0) / float(sr) if total_bytes > 0 else 0.0
     rtf = (wall_s / audio_s) if audio_s > 0 else float("inf")
     xrt = (audio_s / wall_s) if wall_s > 0 else 0.0
@@ -135,7 +129,7 @@ def _load_texts(inline_texts: Optional[List[str]]) -> List[str]:
     return [DEFAULT_TEXT]
 
 
-async def bench_http(
+async def bench_ws(
     server: str,
     total_reqs: int,
     concurrency: int,
@@ -148,31 +142,28 @@ async def bench_http(
     results: List[Dict[str, float]] = []
     errors_total = 0
 
-    limits = httpx.Limits(max_keepalive_connections=concurrency, max_connections=max(10, concurrency * 2))
-    timeout = httpx.Timeout(connect=30.0, read=1200.0, write=30.0, pool=30.0)
-    async with httpx.AsyncClient(limits=limits, timeout=timeout) as client:
-        async def worker(req_idx: int):
-            nonlocal errors_total
-            text = texts[req_idx % len(texts)]
-            async with sem:
-                try:
-                    r = await _tts_one(client, server, text, voice, seed=seed, num_predict=num_predict)
-                    results.append(r)
-                except Exception as e:
-                    errors_total += 1
-                    err_path = RESULTS_DIR / "bench_errors.txt"
-                    with contextlib.suppress(Exception):
-                        with open(err_path, "a", encoding="utf-8") as ef:
-                            ef.write(f"{datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')} idx={req_idx} err={e}\n")
+    async def worker(req_idx: int):
+        nonlocal errors_total
+        text = texts[req_idx % len(texts)]
+        async with sem:
+            try:
+                r = await _tts_one_ws(server, text, voice, seed=seed, num_predict=num_predict)
+                results.append(r)
+            except Exception as e:
+                errors_total += 1
+                err_path = RESULTS_DIR / "bench_errors.txt"
+                with contextlib.suppress(Exception):
+                    with open(err_path, "a", encoding="utf-8") as ef:
+                        ef.write(f"{datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')} idx={req_idx} err={e}\n")
 
-        tasks = [asyncio.create_task(worker(i)) for i in range(total_reqs)]
-        await asyncio.gather(*tasks, return_exceptions=True)
+    tasks = [asyncio.create_task(worker(i)) for i in range(total_reqs)]
+    await asyncio.gather(*tasks, return_exceptions=True)
 
     return results[:total_reqs], errors_total
 
 
 def main() -> None:
-    ap = argparse.ArgumentParser(description="HTTP streaming benchmark (Orpheus TTS)")
+    ap = argparse.ArgumentParser(description="WebSocket streaming benchmark (Orpheus TTS)")
     ap.add_argument("--server", default="127.0.0.1:8000", help="host:port or http[s]://host:port")
     ap.add_argument("--n", type=int, default=10, help="Total requests")
     ap.add_argument("--concurrency", type=int, default=10, help="Max concurrent sessions")
@@ -184,12 +175,12 @@ def main() -> None:
 
     texts = _load_texts(args.text)
 
-    print(f"Benchmark → HTTP stream | n={args.n} | concurrency={args.concurrency} | server={args.server}")
+    print(f"Benchmark → WebSocket stream | n={args.n} | concurrency={args.concurrency} | server={args.server}")
     print(f"Voice: {args.voice}")
     print(f"Texts: {len(texts)}")
 
     t0 = time.time()
-    results, errors = asyncio.run(bench_http(args.server, args.n, args.concurrency, args.voice, texts, args.seed, args.num_predict))
+    results, errors = asyncio.run(bench_ws(args.server, args.n, args.concurrency, args.voice, texts, args.seed, args.num_predict))
     elapsed = time.time() - t0
 
     _summarize("TTS Streaming", results)

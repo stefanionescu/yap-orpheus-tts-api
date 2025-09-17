@@ -59,25 +59,33 @@ bash scripts/run-all.sh
 curl -s http://127.0.0.1:8000/healthz
 ```
 
-- Synthesize (streaming; PCM16, 24 kHz)
+- WebSocket synthesis (server streams raw PCM16, 24 kHz). For a quick listen, write the binary frames to a WAV client-side:
 ```bash
-curl -s -X POST http://127.0.0.1:8000/tts \
-  -H 'Content-Type: application/json' \
-  -d '{"text":"hello from orpheus","voice":"female","stream":true}' \
-  -o /dev/null
+python - <<'PY'
+import asyncio, json, websockets, wave
+async def main():
+    uri = "ws://127.0.0.1:8000/ws/tts"
+    async with websockets.connect(uri, max_size=None) as ws:
+        await ws.send(json.dumps({"text": "hello from orpheus", "voice": "female"}))
+        await ws.send(json.dumps({"end": True}))
+        with wave.open("out.wav", "wb") as wf:
+            wf.setnchannels(1); wf.setsampwidth(2); wf.setframerate(24000)
+            while True:
+                try:
+                    msg = await asyncio.wait_for(ws.recv(), timeout=1.0)
+                except asyncio.TimeoutError:
+                    break
+                if isinstance(msg, (bytes, bytearray)):
+                    wf.writeframes(msg)
+asyncio.run(main())
+PY
 ```
-
-The HTTP response streams raw PCM16 bytes. For human listening, use the Python tests below.
 
 ## Voice and parameters
 
 - Voices: `tara` (female), `zac` (male). Aliases supported: `female`→`tara`, `male`→`zac`.
-- Default generation params (tunable per request):
-  - `temperature` (default 0.8)
-  - `top_p` (default 0.9)
-  - `repetition_penalty` (default 1.2)
-  - `chunk_chars` (default 450)
-- Policy: `num_predict` is fixed to 49152 and not user-overridable.
+- WebSocket messages: send `{"text": "...", "voice": "tara"}` repeatedly, and finally `{"end": true}`. Server responds with PCM16 binary frames.
+- Tuning envs (server-side): `SNAC_DECODE_FRAMES` (default 5 for ~100ms cadence). vLLM knobs in `server/vllm_config.py` or environment.
 
 ## Running tests (warmup and benchmark)
 
@@ -86,7 +94,7 @@ Enter the virtualenv first:
 source .venv/bin/activate
 ```
 
-Warmup (defaults, no params):
+Warmup (defaults, WebSocket):
 ```bash
 python tests/warmup.py
 ```
@@ -97,12 +105,12 @@ python tests/warmup.py --server 127.0.0.1:8000 --voice female
 python tests/warmup.py --server 127.0.0.1:8000 --voice male --seed 42
 ```
 
-Benchmark (defaults, no params):
+Benchmark (defaults, WebSocket):
 ```bash
 python tests/bench.py
 ```
 
-Benchmark (with params, concurrent streaming requests):
+Benchmark (with params, concurrent WS streaming sessions):
 ```bash
 # 32 requests, 16 concurrent, male (Zac)
 python tests/bench.py --server 127.0.0.1:8000 --n 32 --concurrency 16 --voice male
@@ -114,7 +122,6 @@ Defaults:
 - Server: `127.0.0.1:8000`
 - Text: "Oh my god Danny, you're so smart and handsome! You're gonna love talking to me once Stefan is done with the app. Can't wait to see you there sweetie!"
 - Voice: `female` (Tara)
-- chunking: `chunk_chars=500`
 
 Notes:
 - Tests do not write WAV files; they count streamed bytes to infer audio seconds and compute metrics (TTFB, RTF, xRT, throughput).
@@ -156,8 +163,8 @@ Install speed knobs:
 
 ```
 server/                # FastAPI + Orpheus (vLLM)
-  server.py            # FastAPI app (port 8000)
-  engine_vllm.py       # Orpheus TTS engine (token-ID streaming + SNAC)
+  server.py            # FastAPI app (port 8000). WS: /ws/tts (PCM16 frames)
+  engine_vllm.py       # Orpheus TTS engine (text-delta streaming + SNAC)
   prompts.py           # Prompt helpers and audio control wrappers
   snac_stream.py       # 7-code frame normalizer + incremental SNAC decoder
   vllm_config.py       # vLLM tuning knobs

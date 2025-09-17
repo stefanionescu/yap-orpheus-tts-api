@@ -15,6 +15,13 @@ export CUDA_DEVICE_MAX_CONNECTIONS=1
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True,garbage_collection_threshold:0.9
 export OMP_NUM_THREADS=$(nproc)
 export NVIDIA_TF32_OVERRIDE=1
+# vLLM tuning defaults (override via env if needed)
+export VLLM_DTYPE=${VLLM_DTYPE:-half}
+export VLLM_MAX_MODEL_LEN=${VLLM_MAX_MODEL_LEN:-8192}
+export VLLM_GPU_UTIL=${VLLM_GPU_UTIL:-0.92}
+export VLLM_MAX_SEQS=${VLLM_MAX_SEQS:-24}
+# SNAC cadence: 5 ≈ ~100ms
+export SNAC_DECODE_FRAMES=${SNAC_DECODE_FRAMES:-5}
 # Ensure vLLM uses spawn (safe with CUDA init in background thread)
 export VLLM_WORKER_MULTIPROC_METHOD=spawn
 # Disable torch.compile/inductor to avoid building Triton/C extensions at runtime

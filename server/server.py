@@ -1,12 +1,14 @@
 import os
-from typing import Dict
-from fastapi import FastAPI, HTTPException
-from fastapi.responses import StreamingResponse, Response
+from typing import Optional
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+import asyncio
+import json
 from dotenv import load_dotenv
 
 from .utils import ensure_hf_login
-from .prompts import resolve_voice
 from .engine_vllm import OrpheusTTSEngine
+from .snac_stream import SnacDecoder
+from .prompts import resolve_voice
 
 load_dotenv(".env")
 
@@ -28,52 +30,87 @@ async def _startup():
 async def healthz():
     return {"ok": True}
 
-@app.post("/tts")
-async def tts(req: Dict):
+@app.websocket("/ws/tts")
+async def tts_ws(ws: WebSocket):
+    """
+    Bi-directional streaming over WebSocket:
+      - Client sends JSON messages:
+          {"text": "partial text"}
+          {"end": true}
+      - Server sends PCM16 audio chunks as binary frames.
+    """
+    await ws.accept()
+    global engine
     if engine is None:
-        raise HTTPException(status_code=503, detail="Engine not ready")
+        await ws.close(code=1013)
+        return
 
-    text = (req.get("text") or "").strip()
-    if not text:
-        raise HTTPException(status_code=400, detail="text is required")
+    # Per-connection decoder for continuity across messages
+    decoder = SnacDecoder(sample_rate=SAMPLE_RATE)
+    decode_frames = int(os.getenv("SNAC_DECODE_FRAMES", "5"))
 
-    voice_in = req.get("voice", "tara")
-    voice = resolve_voice(voice_in)
-    stream = bool(req.get("stream", True))
-    chunk_chars = int(req.get("chunk_chars", 500))
-    temperature = req.get("temperature")
-    top_p = req.get("top_p")
-    repetition_penalty = req.get("repetition_penalty")
+    # Small queue for inbound text pieces
+    q: asyncio.Queue[Optional[dict]] = asyncio.Queue()
 
-    if stream:
-        def pcm_iter():
-            for chunk in engine.stream_pcm_chunks(
-                text=text,
-                voice=voice,
-                chunk_chars=chunk_chars,
-                temperature=temperature,
-                top_p=top_p,
-                repetition_penalty=repetition_penalty,
-            ):
-                if chunk:
-                    yield chunk
+    async def recv_loop():
+        while True:
+            msg = await ws.receive_text()
+            try:
+                obj = json.loads(msg)
+            except Exception:
+                obj = {"text": msg}
+            if obj.get("end") is True:
+                await q.put(None)
+                break
+            t = (obj.get("text") or "").strip()
+            v = (obj.get("voice") or "").strip()
+            if t:
+                await q.put({"text": t, "voice": v})
 
-        headers = {
-            "X-Audio-Sample-Rate": str(SAMPLE_RATE),
-            "X-Audio-Format": "pcm_s16le",
-            "X-Voice": voice,
-        }
-        return StreamingResponse(pcm_iter(), media_type="application/octet-stream", headers=headers)
+    async def synth_loop():
+        try:
+            while True:
+                item = await q.get()
+                if item is None:
+                    break
+                # Stream frames for this text piece and decode in-session
+                piece = item.get("text", "")
+                voice = resolve_voice(item.get("voice", "tara")) or "tara"
+                batch = []
+                async for frame in engine.aiter_frames(piece, voice=voice):
+                    batch.append(frame)
+                    if len(batch) >= decode_frames:
+                        decoder.add_frames(batch)
+                        batch.clear()
+                        pcm = decoder.take_new_pcm16()
+                        if pcm:
+                            await ws.send_bytes(pcm)
+                            await asyncio.sleep(0)
+                if batch:
+                    decoder.add_frames(batch)
+                    batch.clear()
+                    pcm = decoder.take_new_pcm16()
+                    if pcm:
+                        await ws.send_bytes(pcm)
+                        await asyncio.sleep(0)
+        except Exception as e:
+            try:
+                await ws.close(code=1011)
+            except Exception:
+                pass
+            raise e
 
-    # Non-streaming → WAV
-    wav_bytes = engine.synthesize_wav_bytes(
-        text=text,
-        voice=voice,
-        chunk_chars=chunk_chars,
-        temperature=temperature,
-        top_p=top_p,
-        repetition_penalty=repetition_penalty,
-    )
-    return Response(content=wav_bytes, media_type="audio/wav")
-
+    try:
+        recv_task = asyncio.create_task(recv_loop())
+        synth_task = asyncio.create_task(synth_loop())
+        await asyncio.gather(recv_task, synth_task)
+    except WebSocketDisconnect:
+        pass
+    except Exception:
+        pass
+    finally:
+        try:
+            await ws.close()
+        except Exception:
+            pass
 

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Single HTTP streaming warmup request for Orpheus TTS FastAPI server.
-Does not save WAV; only measures timings and bytes to infer audio duration.
+Single WebSocket streaming warmup for Orpheus TTS server.
+Sends text over WS and measures bytes of streamed PCM.
 """
 from __future__ import annotations
 
@@ -10,7 +10,9 @@ import os
 import time
 from typing import Optional
 
-import httpx
+import asyncio
+import json
+import websockets
 
 
 DEFAULT_TEXT = (
@@ -19,12 +21,15 @@ DEFAULT_TEXT = (
 )
 
 
-def _http_url(server: str) -> str:
-    if server.startswith(("http://", "https://")):
-        base = server.rstrip("/")
-    else:
-        base = f"http://{server.strip().rstrip('/')}"
-    return f"{base}/tts"
+def _ws_url(server: str) -> str:
+    base = server.strip().rstrip("/")
+    if base.startswith("http://"):
+        base = "ws://" + base[len("http://"):]
+    elif base.startswith("https://"):
+        base = "wss://" + base[len("https://"):]
+    elif not base.startswith(("ws://", "wss://")):
+        base = "ws://" + base
+    return f"{base}/ws/tts"
 
 
 def main() -> None:
@@ -36,43 +41,37 @@ def main() -> None:
     ap.add_argument("--num-predict", type=int, default=None, help="Optional num_predict override")
     args = ap.parse_args()
 
-    url = _http_url(args.server)
-    payload = {
-        "text": args.text,
-        "voice": args.voice,
-        "stream": True,
-    }
-    if args.seed is not None:
-        payload["seed"] = int(args.seed)
-    if args.num_predict is not None:
-        payload["num_predict"] = int(args.num_predict)
+    url = _ws_url(args.server)
+    t0_e2e = time.perf_counter()
+    first_chunk_at: Optional[float] = None
+    total_bytes = 0
+    sr = 24000
 
-    timeout = httpx.Timeout(connect=30.0, read=1200.0, write=30.0, pool=30.0)
-    with httpx.Client(timeout=timeout) as client:
-        t0_e2e = time.perf_counter()
-        with client.stream("POST", url, json=payload) as resp:
-            resp.raise_for_status()
-            t0_server = time.perf_counter()
-            sr = 24000
-            try:
-                sr = int(resp.headers.get("X-Audio-Sample-Rate", "24000"))
-            except Exception:
-                pass
-            first_chunk_at: Optional[float] = None
-            total_bytes = 0
-            for chunk in resp.iter_bytes():
-                if not chunk:
-                    continue
-                if first_chunk_at is None:
-                    first_chunk_at = time.perf_counter()
-                total_bytes += len(chunk)
+    async def run():
+        nonlocal first_chunk_at, total_bytes
+        async with websockets.connect(url, max_size=None) as ws:
+            # Send text then end
+            await ws.send(json.dumps({"text": args.text, "voice": args.voice}))
+            await ws.send(json.dumps({"end": True}))
+            # Receive PCM
+            while True:
+                try:
+                    msg = await asyncio.wait_for(ws.recv(), timeout=2.0)
+                except asyncio.TimeoutError:
+                    break
+                if isinstance(msg, (bytes, bytearray)):
+                    if first_chunk_at is None:
+                        first_chunk_at = time.perf_counter()
+                    total_bytes += len(msg)
 
-        wall_s = time.perf_counter() - t0_e2e
-        ttfb_e2e_s = (first_chunk_at - t0_e2e) if first_chunk_at else 0.0
-        ttfb_server_s = (first_chunk_at - t0_server) if first_chunk_at else 0.0
-        audio_s = (total_bytes / 2.0) / float(sr) if total_bytes > 0 else 0.0
-        rtf = (wall_s / audio_s) if audio_s > 0 else float("inf")
-        xrt = (audio_s / wall_s) if wall_s > 0 else 0.0
+    asyncio.run(run())
+
+    wall_s = time.perf_counter() - t0_e2e
+    ttfb_e2e_s = (first_chunk_at - t0_e2e) if first_chunk_at else 0.0
+    ttfb_server_s = ttfb_e2e_s  # WS single channel, so same measurement
+    audio_s = (total_bytes / 2.0) / float(sr) if total_bytes > 0 else 0.0
+    rtf = (wall_s / audio_s) if audio_s > 0 else float("inf")
+    xrt = (audio_s / wall_s) if wall_s > 0 else 0.0
 
     print("Warmup TTS request")
     print(f"Server: {args.server}")
