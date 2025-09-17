@@ -15,7 +15,7 @@ export CUDA_DEVICE_MAX_CONNECTIONS=1
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True,garbage_collection_threshold:0.9
 export OMP_NUM_THREADS=$(nproc)
 export NVIDIA_TF32_OVERRIDE=1
-# Ensure vLLM uses spawn (decoder.py initializes CUDA early)
+# Ensure vLLM uses spawn (safe with CUDA init in background thread)
 export VLLM_WORKER_MULTIPROC_METHOD=spawn
 # Disable torch.compile/inductor to avoid building Triton/C extensions at runtime
 export VLLM_TORCH_COMPILE=0

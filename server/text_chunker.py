@@ -1,7 +1,7 @@
 import re
 from typing import List
 
-def chunk_text(text: str, target_chars: int = 450) -> List[str]:
+def chunk_text(text: str, target_chars: int = 500) -> List[str]:
     """
     Split long text for ≥60s utterances while avoiding hard truncation mid-sentence.
     """

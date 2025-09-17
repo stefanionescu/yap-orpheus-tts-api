@@ -66,13 +66,15 @@ curl -s -X POST http://127.0.0.1:8000/tts \
 
 The HTTP response streams raw PCM16 bytes. For human listening, use the Python tests below.
 
-## Voice presets and parameters
+## Voice and parameters
 
-- Voices: `female` → Tara, `male` → Zac (aliases: `tara`, `zac`)
-- Tara defaults: `temperature=0.80`, `top_p=0.80`, `repetition_penalty=1.90`, `seed=42`
-- Zac defaults:  `temperature=0.40`, `top_p=0.80`, `repetition_penalty=1.85`, `seed=42`
-- Extra request params supported by `POST /tts`: `seed`, `temperature`, `top_p`, `repetition_penalty`, `chunk_chars`, `stream`
-- Policy: `num_predict` is fixed at 49152 and cannot be overridden. `chunk_chars` default is 500.
+- Voices: `tara` (female), `zac` (male). Aliases supported: `female`→`tara`, `male`→`zac`.
+- Default generation params (tunable per request):
+  - `temperature` (default 0.8)
+  - `top_p` (default 0.9)
+  - `repetition_penalty` (default 1.2)
+  - `chunk_chars` (default 450)
+- Policy: `num_predict` is fixed to 49152 and not user-overridable.
 
 ## Running tests (warmup and benchmark)
 
@@ -152,7 +154,9 @@ Install speed knobs:
 ```
 server/                 # FastAPI + Orpheus (vLLM)
   server.py            # FastAPI app (port 8000)
-  tts_engine.py        # Orpheus wrapper + voice presets
+  engine_vllm.py       # Orpheus TTS engine (token-ID streaming + SNAC)
+  prompts.py           # Prompt helpers and audio control wrappers
+  snac_stream.py       # 7-code frame normalizer + incremental SNAC decoder
   vllm_config.py       # vLLM tuning knobs
   text_chunker.py
   utils.py
