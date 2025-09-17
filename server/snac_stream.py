@@ -32,6 +32,11 @@ class SnacDecoder:
         self.snac = _SNAC_SINGLETON
         self.codes: List[int] = []
         self._decoded_samples = 0
+        # Optional one-time startup skip (in samples) to avoid initial grit
+        try:
+            self._startup_skip = int(os.environ.get("SNAC_STARTUP_SKIP_SAMPLES", "0"))
+        except Exception:
+            self._startup_skip = 0
 
     def add_frames(self, frames_7: List[List[int]]) -> None:
         for f in frames_7:
@@ -69,6 +74,10 @@ class SnacDecoder:
         if audio.size == 0:
             return b""
         total = audio.shape[-1]
+        # Apply one-time startup skip if configured and we have enough samples
+        if self._startup_skip > 0 and total > self._startup_skip:
+            self._decoded_samples = self._startup_skip
+            self._startup_skip = 0
         if total <= self._decoded_samples:
             return b""
         new = audio[self._decoded_samples:]

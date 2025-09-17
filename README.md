@@ -59,7 +59,11 @@ bash scripts/run-all.sh
 curl -s http://127.0.0.1:8000/healthz
 ```
 
-- WebSocket synthesis (server streams raw PCM16, 24 kHz). For a quick listen, write the binary frames to a WAV client-side:
+- WebSocket synthesis (server streams raw PCM16, 24 kHz). For a quick listen, write the binary frames to a WAV client-side. The WS protocol supports two patterns:
+  - Baseten-like streaming: send one JSON metadata object (e.g., `{ "voice": "tara", "buffer_size": 12, "max_tokens": 4096 }`), then stream plain words, then the string `__END__`.
+  - Legacy JSON: send `{ "text": "...", "voice": "..." }` one or more times, then `{ "end": true }`.
+
+  Example (legacy JSON):
 ```bash
 python - <<'PY'
 import asyncio, json, websockets, wave
@@ -84,8 +88,16 @@ PY
 ## Voice and parameters
 
 - Voices: `tara` (female), `zac` (male). Aliases supported: `female`→`tara`, `male`→`zac`.
-- WebSocket messages: send `{"text": "...", "voice": "tara"}` repeatedly, and finally `{"end": true}`. Server responds with PCM16 binary frames.
-- Tuning envs (server-side): `SNAC_DECODE_FRAMES` (default 5 for ~100ms cadence). vLLM knobs in `server/vllm_config.py` or environment.
+- WebSocket messages:
+  - Baseten-like streaming (recommended for live latency): send one metadata message (voice, optional `buffer_size`, optional `max_tokens`), then send words, then `__END__`.
+  - Legacy JSON (one-shot): send text objects, then `{ "end": true }`.
+- Tuning envs (server-side):
+  - `SNAC_PRIME_FRAMES` (default 2): frames to buffer before first PCM (stability vs TTFB)
+  - `SNAC_DECODE_FRAMES` (default 2): steady-state frames per PCM burst (smaller = smoother)
+  - `WS_WORD_BUFFER_SIZE` (default 12): mid-sentence flush fallback size when segmenter hasn’t hit a period yet
+  - `AUDIO_RAMP_MS` (default 5): tiny ramp/crossfade at chunk edges to remove clicks
+  - `SNAC_STARTUP_SKIP_SAMPLES` (default 0): one-time sample skip at start (e.g., 1200 ~50ms) if you still hear startup grit
+  - vLLM knobs in `server/vllm_config.py` or env
 
 ## Running tests (warmup and benchmark)
 

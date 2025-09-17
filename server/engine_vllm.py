@@ -88,7 +88,7 @@ class OrpheusTTSEngine:
             tokenizer=MODEL_ID,            # <-- Force use of model's tokenizer
             **ekw,
         ))
-        self.decode_frames = int(os.getenv("SNAC_DECODE_FRAMES", "4"))  # 4 ≈ ~80–100ms cadence
+        self.decode_frames = int(os.getenv("SNAC_DECODE_FRAMES", "2"))  # 2–3 for smoother cadence
 
     # -------- internal: async text→frames extractor --------
     async def _async_extract_frames(
@@ -154,7 +154,7 @@ class OrpheusTTSEngine:
         DEBUG = bool(int(os.getenv("SNAC_DEBUG", "0")))
         dbg_bytes = 0
 
-        PRIME_FRAMES = int(os.getenv("SNAC_PRIME_FRAMES", "4"))
+        PRIME_FRAMES = int(os.getenv("SNAC_PRIME_FRAMES", "2"))
         primed = False
 
         async for frame in self._async_extract_frames(text, voice, params):
