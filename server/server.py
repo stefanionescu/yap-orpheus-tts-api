@@ -22,59 +22,17 @@ app = FastAPI(title="Orpheus 3B TTS (Runpod / vLLM+SNAC)")
 
 engine: OrpheusTTSEngine | None = None
 
-# ---- tiny per-process ramp state to avoid clicks between PCM chunks ----
-_RAMP_MS = int(os.getenv("AUDIO_RAMP_MS", "5"))  # 5 ms by default
-
-class _RampState:
-    def __init__(self):
-        self.tail = b""
-        self.did_lead_skip = False
-
-_ramp_state = _RampState()
-
-def _int16_to_f32(b: bytes):
-    a = np.frombuffer(b, dtype=np.int16).astype(np.float32) / 32767.0
-    return a
-
-def _f32_to_int16(a: np.ndarray) -> bytes:
-    a = np.clip(a, -1.0, 1.0)
-    return (a * 32767.0).astype(np.int16).tobytes()
-
-def apply_chunk_ramp(pcm_bytes: bytes, sr: int, first_chunk: bool = False, state: _RampState | None = None) -> bytes:
+# ---- tiny first-chunk fade only (no overlap) ----
+def apply_first_chunk_fade(pcm_bytes: bytes, sr: int) -> bytes:
     if not pcm_bytes:
         return pcm_bytes
-
-    a = _int16_to_f32(pcm_bytes)
-    st = state or _ramp_state
-
-    # One-time tiny startup lead skip to hide initial crackle
-    if first_chunk and not st.did_lead_skip:
-        lead = max(1, int(0.005 * sr))  # 5 ms
-        if a.shape[0] > lead:
-            a = a[lead:]
-        st.did_lead_skip = True
-
-    ramp_len = max(1, int((_RAMP_MS / 1000.0) * sr))
-
-    # Fade-in current chunk
+    a = np.frombuffer(pcm_bytes, dtype=np.int16).astype(np.float32) / 32767.0
+    ramp_len = max(1, int(0.003 * sr))  # 3 ms
     if a.shape[0] >= ramp_len:
-        fade_in = np.linspace(0.0, 1.0, ramp_len, endpoint=True, dtype=np.float32)
-        a[:ramp_len] *= fade_in
-
-    # Overlap-add with previous tail if present
-    if st.tail:
-        prev = _int16_to_f32(st.tail)
-        n = min(prev.shape[0], a.shape[0])
-        if n > 0:
-            fade_out = np.linspace(1.0, 0.0, n, endpoint=True, dtype=np.float32)
-            fade_in2 = np.linspace(0.0, 1.0, n, endpoint=True, dtype=np.float32)
-            a[:n] = prev[:n] * fade_out + a[:n] * fade_in2
-
-    # Save new tail
-    tail_len = min(ramp_len, a.shape[0])
-    st.tail = _f32_to_int16(a[-tail_len:]) if tail_len > 0 else b""
-
-    return _f32_to_int16(a)
+        fade = np.linspace(0.0, 1.0, ramp_len, endpoint=True, dtype=np.float32)
+        a[:ramp_len] *= fade
+    a = np.clip(a, -1.0, 1.0)
+    return (a * 32767.0).astype(np.int16).tobytes()
 
 @app.on_event("startup")
 async def _startup():
@@ -164,95 +122,125 @@ async def tts_ws(ws: WebSocket):
         top_p: Optional[float] = None
         repetition_penalty: Optional[float] = None
         num_predict: Optional[int] = None  # a.k.a. max_tokens
-        buf_sz = int(os.getenv("WS_WORD_BUFFER_SIZE", os.getenv("BUFFER_SIZE", "40")))  # safety valve only
+        buf_sz = int(os.getenv("WS_WORD_BUFFER_SIZE", os.getenv("BUFFER_SIZE", "10")))  # safety valve only
 
         splitter = pysbd.Segmenter(language="en", clean=False)
         text_buffer: list[str] = []
 
         sent_any_audio = False
-        ramp_state = _RampState()
+
+        # pacing (timer-based flush to avoid idle gaps)
+        FLUSH_MS = int(os.getenv("FLUSH_MS", "120"))
+        flush_running = False
+        stop_flag = False
+
+        async def ticker():
+            nonlocal stop_flag
+            while not stop_flag:
+                await asyncio.sleep(FLUSH_MS / 1000.0)
+                if text_buffer and not flush_running:
+                    try:
+                        await flush(final=False)
+                    except Exception:
+                        pass
 
         async def flush(final: bool = False):
-            nonlocal sent_any_audio
-            if not text_buffer:
+            nonlocal sent_any_audio, flush_running
+            if flush_running:
                 return
-            full_text = " ".join(text_buffer)
-            sentences = splitter.segment(full_text)
-            prompt = None
-            words_consumed = 0
-            if len(sentences) > 1:
-                # Flush all complete sentences except the last unfinished one
-                complete_sents = sentences[:-1]
-                prompt = " ".join(complete_sents)
-                words_consumed = sum(len(s.split()) for s in complete_sents)
-            # Fallback: if we buffered enough words, flush that many regardless of sentence boundary
-            elif len(text_buffer) >= buf_sz:
-                prompt = " ".join(text_buffer[:buf_sz])
-                words_consumed = buf_sz
-            elif final:
-                prompt = " ".join(text_buffer)
-                words_consumed = len(text_buffer)
-            else:
+            if not text_buffer and not final:
                 return
+            flush_running = True
+            try:
+                full_text = " ".join(text_buffer)
+                sentences = splitter.segment(full_text)
+                prompt = None
+                words_consumed = 0
+                if len(sentences) > 1:
+                    # Flush all complete sentences except the last unfinished one
+                    complete_sents = sentences[:-1]
+                    prompt = " ".join(complete_sents)
+                    words_consumed = sum(len(s.split()) for s in complete_sents)
+                # Fallback: if we buffered enough words, flush that many regardless of sentence boundary
+                elif len(text_buffer) >= buf_sz:
+                    prompt = " ".join(text_buffer[:buf_sz])
+                    words_consumed = buf_sz
+                elif final:
+                    prompt = " ".join(text_buffer)
+                    words_consumed = len(text_buffer)
+                else:
+                    # Nothing to do (no complete sentence, below buffer, and not final)
+                    return
 
-            # Consume from buffer
-            del text_buffer[:words_consumed]
+                # Consume from buffer
+                del text_buffer[:words_consumed]
 
-            # Resolve voice alias each flush (voice may have been updated)
-            v = resolve_voice(voice) or "tara"
+                # Resolve voice alias each flush (voice may have been updated)
+                v = resolve_voice(voice) or "tara"
 
-            # Stream frames for this prompt and decode in-session
-            frames_batch = []
-            PRIME_FRAMES = int(os.getenv("SNAC_PRIME_FRAMES", "2"))
-            primed = False
-            async for frame in engine.aiter_frames(
-                prompt,
-                voice=v,
-                temperature=temperature,
-                top_p=top_p,
-                repetition_penalty=repetition_penalty,
-                num_predict=num_predict,
-            ):
-                frames_batch.append(frame)
-                # Hold first PCM until primed with a few frames
-                if not primed and len(frames_batch) < PRIME_FRAMES:
-                    continue
-                if not primed:
+                # Stream frames for this prompt and decode in-session
+                frames_batch = []
+                PRIME_FRAMES = int(os.getenv("SNAC_PRIME_FRAMES", "2"))
+                primed = False
+                # Do not start a generation on empty prompt (e.g., final with no text)
+                if not prompt or not prompt.strip():
+                    if final:
+                        try:
+                            await ws.close()
+                        except Exception:
+                            pass
+                    return
+
+                async for frame in engine.aiter_frames(
+                    prompt,
+                    voice=v,
+                    temperature=temperature,
+                    top_p=top_p,
+                    repetition_penalty=repetition_penalty,
+                    num_predict=num_predict,
+                ):
+                    frames_batch.append(frame)
+                    # Hold first PCM until primed with a few frames
+                    if not primed and len(frames_batch) < PRIME_FRAMES:
+                        continue
+                    if not primed:
+                        decoder.add_frames(frames_batch)
+                        frames_batch.clear()
+                        pcm = decoder.take_new_pcm16()
+                        if pcm:
+                            if not sent_any_audio:
+                                pcm = apply_first_chunk_fade(pcm, SAMPLE_RATE)
+                                sent_any_audio = True
+                            await ws.send_bytes(pcm)
+                            await asyncio.sleep(0)
+                        primed = True
+                        continue
+                    # Smaller cadence for smoother flow
+                    local_decode_frames = int(os.getenv("SNAC_DECODE_FRAMES", "2"))
+                    if len(frames_batch) >= local_decode_frames:
+                        decoder.add_frames(frames_batch)
+                        frames_batch.clear()
+                        pcm = decoder.take_new_pcm16()
+                        if pcm:
+                            await ws.send_bytes(pcm)
+                            await asyncio.sleep(0)
+                if frames_batch:
                     decoder.add_frames(frames_batch)
                     frames_batch.clear()
                     pcm = decoder.take_new_pcm16()
                     if pcm:
-                        pcm = apply_chunk_ramp(pcm, SAMPLE_RATE, first_chunk=(not sent_any_audio), state=ramp_state)
-                        await ws.send_bytes(pcm)
-                        sent_any_audio = True
-                        await asyncio.sleep(0)
-                    primed = True
-                    continue
-                # Smaller cadence for smoother flow
-                local_decode_frames = int(os.getenv("SNAC_DECODE_FRAMES", "2"))
-                if len(frames_batch) >= local_decode_frames:
-                    decoder.add_frames(frames_batch)
-                    frames_batch.clear()
-                    pcm = decoder.take_new_pcm16()
-                    if pcm:
-                        pcm = apply_chunk_ramp(pcm, SAMPLE_RATE, state=ramp_state)
                         await ws.send_bytes(pcm)
                         await asyncio.sleep(0)
-            if frames_batch:
-                decoder.add_frames(frames_batch)
-                frames_batch.clear()
-                pcm = decoder.take_new_pcm16()
-                if pcm:
-                    pcm = apply_chunk_ramp(pcm, SAMPLE_RATE, state=ramp_state)
-                    await ws.send_bytes(pcm)
-                    await asyncio.sleep(0)
 
-            if final:
-                try:
-                    await ws.close()
-                except Exception:
-                    pass
+                if final:
+                    try:
+                        await ws.close()
+                    except Exception:
+                        pass
+            finally:
+                flush_running = False
 
+        tick_task = asyncio.create_task(ticker())
         try:
             while True:
                 item = await q.get()
@@ -311,6 +299,12 @@ async def tts_ws(ws: WebSocket):
             except Exception:
                 pass
             raise e
+        finally:
+            stop_flag = True
+            try:
+                tick_task.cancel()
+            except Exception:
+                pass
 
     try:
         recv_task = asyncio.create_task(recv_loop())

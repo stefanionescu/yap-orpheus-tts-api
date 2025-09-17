@@ -91,12 +91,12 @@ PY
 - WebSocket messages:
   - Baseten-like streaming (recommended for live latency): send one metadata message (voice, optional `buffer_size`, optional `max_tokens`), then send words, then `__END__`.
   - Legacy JSON (one-shot): send text objects, then `{ "end": true }`.
-- Tuning envs (server-side):
+-- Tuning envs (server-side):
   - `SNAC_PRIME_FRAMES` (default 2): frames to buffer before first PCM (stability vs TTFB)
   - `SNAC_DECODE_FRAMES` (default 2): steady-state frames per PCM burst (smaller = smoother)
-  - `WS_WORD_BUFFER_SIZE` (default 12): mid-sentence flush fallback size when segmenter hasn’t hit a period yet
-  - `AUDIO_RAMP_MS` (default 5): tiny ramp/crossfade at chunk edges to remove clicks
-  - `SNAC_STARTUP_SKIP_SAMPLES` (default 0): one-time sample skip at start (e.g., 1200 ~50ms) if you still hear startup grit
+  - `WS_WORD_BUFFER_SIZE` (default 10): mid-sentence flush fallback size when segmenter hasn’t hit a period yet
+  - `FLUSH_MS` (default 120): periodic flush interval to coalesce and avoid idle gaps
+  - `SNAC_STARTUP_SKIP_SAMPLES` (default 0): one-time sample skip at start (e.g., 600 ~25ms) if you still hear startup grit
   - vLLM knobs in `server/vllm_config.py` or env
 
 ## Running tests (warmup and benchmark)

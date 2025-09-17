@@ -31,6 +31,7 @@ class FTStreamNormalizer:
         self.started = True
         self.pos = 0
         self.buf = []
+        self.drop_count = 0
 
     def _decode_code(self, tid: int):
         rel = tid - FINETUNE_BASE
@@ -48,6 +49,7 @@ class FTStreamNormalizer:
 
         dv = self._decode_code(tid)
         if dv is None:
+            self.drop_count += 1
             return None
         k, v = dv
         if k == self.pos:
@@ -144,7 +146,7 @@ class OrpheusTTSEngine:
             raise
 
         if DEBUG:
-            print(f"[snac] frames={dbg_frames}", flush=True)
+            print(f"[snac] frames={dbg_frames} drops={normalizer.drop_count}", flush=True)
 
     # -------- internal: async producer → PCM (built on frames extractor) --------
     async def _async_pcm_stream(self, text: str, voice: str, params: Dict[str, Any]):

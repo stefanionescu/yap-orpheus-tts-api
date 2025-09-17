@@ -28,9 +28,9 @@ export SNAC_STARTUP_SKIP_SAMPLES=${SNAC_STARTUP_SKIP_SAMPLES:-0}
 # Enable vLLM prefix cache to cut prefill on repeated voice/prompt preambles
 export VLLM_PREFIX_CACHE=${VLLM_PREFIX_CACHE:-1}
 # Default client word buffer size for WS chunking (server uses as fallback)
-export WS_WORD_BUFFER_SIZE=${WS_WORD_BUFFER_SIZE:-12}
-# Tiny audio ramp in ms to avoid clicks at chunk boundaries
-export AUDIO_RAMP_MS=${AUDIO_RAMP_MS:-5}
+export WS_WORD_BUFFER_SIZE=${WS_WORD_BUFFER_SIZE:-10}
+# Timer-based flush interval to avoid idle gaps in WS (ms)
+export FLUSH_MS=${FLUSH_MS:-120}
 # Ensure vLLM uses spawn (safe with CUDA init in background thread)
 export VLLM_WORKER_MULTIPROC_METHOD=spawn
 # Disable torch.compile/inductor to avoid building Triton/C extensions at runtime
