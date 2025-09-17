@@ -29,6 +29,19 @@ fi
 pkill -f "uvicorn server.server:app" || true
 sleep 1
 
+# Kill any lingering GPU compute processes (free VRAM)
+if command -v nvidia-smi >/dev/null 2>&1; then
+  echo "[stop] Killing GPU compute processes (if any)"
+  PIDS=$(nvidia-smi --query-compute-apps=pid --format=csv,noheader 2>/dev/null | tr -d ' ' || true)
+  if [ -n "$PIDS" ]; then
+    for p in $PIDS; do
+      kill -9 "$p" 2>/dev/null || true
+    done
+  fi
+else
+  echo "[stop] nvidia-smi not available; skipping GPU process kill"
+fi
+
 echo "[stop] Removing run-time artifacts (.run/, logs/)"
 rm -rf .run || true
 rm -rf logs || true
