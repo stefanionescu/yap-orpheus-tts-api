@@ -16,6 +16,28 @@ for arg in "$@"; do
   esac
 done
 
+# Helpers: collect PIDs using nvidia-smi, lsof and fuser
+collect_gpu_pids() {
+  local pids=""
+  if command -v nvidia-smi >/dev/null 2>&1; then
+    pids="$(nvidia-smi --query-compute-apps=pid --format=csv,noheader 2>/dev/null | tr -d ' ' | tr '\n' ' ')"
+  fi
+  local holders=""
+  if command -v lsof >/dev/null 2>&1; then
+    holders="$(lsof -t /dev/nvidiactl /dev/nvidia-uvm /dev/nvidia[0-9]* 2>/dev/null | tr -d ' ' | tr '\n' ' ')"
+  fi
+  local fusers=""
+  if command -v fuser >/dev/null 2>&1; then
+    for dev in /dev/nvidiactl /dev/nvidia-uvm /dev/nvidia[0-9]*; do
+      [ -e "$dev" ] || continue
+      local out
+      out="$(fuser "$dev" 2>/dev/null || true)"
+      [ -n "$out" ] && fusers="$fusers $out"
+    done
+  fi
+  printf "%s %s %s" "$pids" "$holders" "$fusers" | tr ' ' '\n' | grep -E '^[0-9]+$' | sort -u | tr '\n' ' '
+}
+
 echo "[stop] Stopping server and cleaning run artifacts"
 
 # 1) Kill uvicorn main proc (pidfile + pattern)
@@ -50,30 +72,57 @@ sleep 1
 # 3) Last resort: kill any process with open CUDA handles, then reset GPU
 if command -v nvidia-smi >/dev/null 2>&1; then
   echo "[stop] Checking for GPU compute processes"
-  PIDS=$(nvidia-smi --query-compute-apps=pid --format=csv,noheader 2>/dev/null | tr -d ' ' || true)
-  if [ -n "$PIDS" ]; then
-    echo "$PIDS" | xargs -r -n1 kill 2>/dev/null || true
-    sleep 1
-    # hard kill stragglers
-    PIDS=$(nvidia-smi --query-compute-apps=pid --format=csv,noheader 2>/dev/null | tr -d ' ' || true)
-    if [ -n "$PIDS" ]; then
-      echo "$PIDS" | xargs -r -n1 kill -9 2>/dev/null || true
+  # soft-kill then hard-kill in a few retries
+  for attempt in 1 2 3; do
+    PIDS="$(collect_gpu_pids)"
+    if [ -z "$PIDS" ]; then
+      break
     fi
+    echo "[stop] Attempt ${attempt}: SIGTERM -> $PIDS"
+    echo "$PIDS" | xargs -r -n1 kill 2>/dev/null || true
+    sleep 2
+  done
+
+  PIDS="$(collect_gpu_pids)"
+  if [ -n "$PIDS" ]; then
+    echo "[stop] Forcing SIGKILL -> $PIDS"
+    echo "$PIDS" | xargs -r -n1 kill -9 2>/dev/null || true
+    sleep 1
   fi
+
+  # Stop CUDA MPS and persistence if present
+  if command -v nvidia-cuda-mps-control >/dev/null 2>&1; then
+    echo "[stop] Stopping CUDA MPS daemon"
+    echo quit | nvidia-cuda-mps-control >/dev/null 2>&1 || true
+    pkill -f nvidia-cuda-mps-control 2>/dev/null || true
+  fi
+  nvidia-smi -pm 0 >/dev/null 2>&1 || true
+  pkill -f nvidia-persistenced 2>/dev/null || true
+
   # Kill any process holding /dev/nvidia* (container-local)
   if command -v fuser >/dev/null 2>&1; then
-    for dev in /dev/nvidiactl /dev/nvidia-uvm /dev/nvidia0 /dev/nvidia1; do
+    for dev in /dev/nvidiactl /dev/nvidia-uvm /dev/nvidia[0-9]*; do
       [ -e "$dev" ] && fuser -k "$dev" 2>/dev/null || true
     done
   fi
-  # If nothing left, attempt GPU reset (may require privileges)
-  LEFT=$(nvidia-smi --query-compute-apps=pid --format=csv,noheader 2>/dev/null | tr -d ' ' || true)
-  if [ -z "$LEFT" ]; then
-    GPU_INDEX=${GPU_INDEX:-0}
-    echo "[stop] Attempting nvidia-smi --gpu-reset -i ${GPU_INDEX}"
-    nvidia-smi --gpu-reset -i "$GPU_INDEX" 2>/dev/null || true
-  else
-    echo "[stop] GPU processes still present; skipping reset"
+
+  # Attempt GPU reset individually for idle GPUs (may require privileges)
+  GPU_IDS=$(nvidia-smi --query-gpu=index --format=csv,noheader 2>/dev/null | tr -d ' ' || true)
+  for gid in $GPU_IDS; do
+    LEFT_ON_GPU=$(nvidia-smi -i "$gid" --query-compute-apps=pid --format=csv,noheader 2>/dev/null | tr -d ' ' || true)
+    if [ -z "$LEFT_ON_GPU" ]; then
+      echo "[stop] Attempting nvidia-smi --gpu-reset -i ${gid}"
+      nvidia-smi --gpu-reset -i "$gid" 2>/dev/null || true
+    else
+      echo "[stop] GPU ${gid} still has processes: $LEFT_ON_GPU; skipping reset"
+    fi
+  done
+
+  # Final check and diagnostic
+  LEFT="$(collect_gpu_pids)"
+  if [ -n "$LEFT" ]; then
+    echo "[stop] WARNING: GPU processes still present after cleanup: $LEFT"
+    ps -o pid,cmd --no-headers -p $LEFT 2>/dev/null || true
   fi
 else
   echo "[stop] nvidia-smi not available; skipping GPU process kill"
