@@ -1,8 +1,11 @@
 import re
+import os
 import numpy as np
 import torch
 from typing import List, Optional
 from snac import SNAC
+
+_SNAC_SINGLETON = None  # module-level cache
 
 # 7-code frame layout; each code in [0..4095]
 POS_OFFSETS = [0, 4096, 8192, 12288, 16384, 20480, 24576]
@@ -51,9 +54,14 @@ class StreamNormalizer:
 class SnacDecoder:
     """Incremental SNAC decode; emits only new PCM16 since last call."""
     def __init__(self, device: str = None, sample_rate: int = 24000):
-        self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
+        # Keep on CUDA by default for performance, but allow override via env
+        default_dev = os.environ.get("SNAC_DEVICE", "cuda" if torch.cuda.is_available() else "cpu")
+        self.device = device or default_dev
         self.sample_rate = sample_rate
-        self.snac = SNAC.from_pretrained("hubertsiuzdak/snac_24khz").eval().to(self.device)
+        global _SNAC_SINGLETON
+        if _SNAC_SINGLETON is None:
+            _SNAC_SINGLETON = SNAC.from_pretrained("hubertsiuzdak/snac_24khz").eval().to(self.device)
+        self.snac = _SNAC_SINGLETON
         self.codes: List[int] = []
         self._decoded_samples = 0
 

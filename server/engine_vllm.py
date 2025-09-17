@@ -19,8 +19,8 @@ MODEL_ID = os.getenv("MODEL_ID", "canopylabs/orpheus-3b-0.1-ft")
 DEFAULT_PARAMS: Dict[str, Any] = dict(
     temperature=0.8,
     top_p=0.9,
-    repetition_penalty=1.2,
-    num_predict=49152,
+    repetition_penalty=1.2,   # Orpheus requires >=1.1 for stability
+    num_predict=8192,         # sane default; override per call if you need
 )
 
 # Simple voice aliases for backward compatibility with docs/tests
@@ -51,10 +51,12 @@ class OrpheusTTSEngine:
             temperature=float(params.get("temperature", 0.8)),
             top_p=float(params.get("top_p", 0.9)),
             repetition_penalty=float(params.get("repetition_penalty", 1.2)),
-            max_tokens=int(params.get("num_predict", 49152)),
+            max_tokens=int(params.get("num_predict", 8192)),
             detokenize=True,                 # stream TEXT deltas
             skip_special_tokens=False,       # keep <custom_token_####>
-            ignore_eos=True,                 # keep generating past <|eot_id|>
+            ignore_eos=False,                # stop on EOS tokens
+            # Stop on either special terminator the tokenizer may emit:
+            stop=["<|eot_id|>", "<|end_of_text|>"],
         )
 
         req_id = random_uuid()
@@ -63,53 +65,46 @@ class OrpheusTTSEngine:
 
         normalizer = StreamNormalizer()
 
-        eot_seen = False
-        N_EXTRA_AFTER_EOT = 8192
-        extra_budget = N_EXTRA_AFTER_EOT
-
         DEBUG = bool(int(os.getenv("SNAC_DEBUG", "0")))
         dbg_frames = 0
 
-        async for out in self.engine.generate(build_prompt(text, resolve_voice(voice)), sp, req_id):
-            outs = out.outputs or []
-            if not outs:
-                continue
-            full_txt = outs[0].text or ""
-            if not full_txt:
-                continue
+        try:
+            async for out in self.engine.generate(build_prompt(text, resolve_voice(voice)), sp, req_id):
+                outs = out.outputs or []
+                if not outs:
+                    continue
+                full_txt = outs[0].text or ""
+                if not full_txt:
+                    continue
 
-            # delta since last step
-            delta = full_txt[len(prev_text):]
-            prev_text = full_txt
-            if not delta:
-                continue
+                # delta since last step
+                delta = full_txt[len(prev_text):]
+                prev_text = full_txt
+                if not delta:
+                    continue
 
-            carry += delta
-            if (not eot_seen) and "<|eot_id|>" in carry:
-                eot_seen = True
-                extra_budget = N_EXTRA_AFTER_EOT
+                carry += delta
 
-            # extract numbers from the rolling carry
-            last_end = 0
-            for m in AUDIO_TOKEN_RE.finditer(carry):
-                last_end = m.end()
-                n = int(m.group(1))
-                frame = normalizer.push_number(n)
-                if frame is not None:
-                    if DEBUG:
-                        dbg_frames += 1
-                    yield frame
-                    if eot_seen:
-                        extra_budget -= 7
-                        if extra_budget <= 0:
-                            break
+                # extract numbers from the rolling carry
+                last_end = 0
+                for m in AUDIO_TOKEN_RE.finditer(carry):
+                    last_end = m.end()
+                    n = int(m.group(1))
+                    frame = normalizer.push_number(n)
+                    if frame is not None:
+                        if DEBUG:
+                            dbg_frames += 1
+                        yield frame
 
-            # trim processed part
-            if last_end > 0:
-                carry = carry[last_end:]
-
-            if eot_seen and extra_budget <= 0:
-                break
+                # trim processed part
+                if last_end > 0:
+                    carry = carry[last_end:]
+        finally:
+            # Ensure pending generation is cancelled if we broke out early.
+            try:
+                self.engine.abort(req_id)
+            except Exception:
+                pass
 
         # finalize
         normalizer.close()
