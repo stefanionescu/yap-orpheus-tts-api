@@ -71,11 +71,9 @@ else
   pip install -r server/requirements.txt
 fi
 
-# Orpheus recommends pinning vLLM due to a March 18 regression.
-if [ -n "${VLLM_VERSION_PIN:-}" ]; then
-  echo "[install] Pinning vLLM==${VLLM_VERSION_PIN}"
-  pip install "vllm==${VLLM_VERSION_PIN}"
-fi
+# Orpheus requires pinning vLLM to 0.7.3 due to regressions in newer versions.
+echo "[install] Pinning vLLM==0.7.3"
+pip install "vllm==0.7.3"
 
 # Login to HF (non-interactive)
 python - <<'PY'
