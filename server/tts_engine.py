@@ -92,14 +92,9 @@ class OrpheusTTSEngine:
         params.update(gen_kwargs or {})
 
         def format_prompt(prompt_text: str, voice_name: str) -> str:
-            adapted = f"{voice_name}: {prompt_text}"
-            ids = self.tokenizer(adapted, return_tensors="pt").input_ids
-            # Insert BOS/EOS-like special tokens expected by model
-            import torch
-            start_token = torch.tensor([[128259]], dtype=torch.int64)
-            end_tokens = torch.tensor([[128009, 128260, 128261, 128257]], dtype=torch.int64)
-            all_ids = torch.cat([start_token, ids, end_tokens], dim=1)
-            return self.tokenizer.decode(all_ids[0])
+            pre = "<custom_token_3><|begin_of_text|>"
+            post = "<|eot_id|><custom_token_4><custom_token_5><custom_token_1>"
+            return f"{pre}{voice_name}: {prompt_text}{post}"
 
         for piece in chunk_text(text, target_chars=chunk_chars):
             prompt_string = format_prompt(piece, preset["voice"])
