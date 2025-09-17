@@ -26,18 +26,6 @@ app = FastAPI(title="Orpheus 3B TTS (Runpod / vLLM+SNAC)")
 
 engine: OrpheusTTSEngine | None = None
 
-# ---- tiny first-chunk fade only (no overlap) ----
-def apply_first_chunk_fade(pcm_bytes: bytes, sr: int) -> bytes:
-    if not pcm_bytes:
-        return pcm_bytes
-    a = np.frombuffer(pcm_bytes, dtype=np.int16).astype(np.float32) / 32767.0
-    ramp_len = max(1, int(0.003 * sr))  # 3 ms
-    if a.shape[0] >= ramp_len:
-        fade = np.linspace(0.0, 1.0, ramp_len, endpoint=True, dtype=np.float32)
-        a[:ramp_len] *= fade
-    a = np.clip(a, -1.0, 1.0)
-    return (a * 32767.0).astype(np.int16).tobytes()
-
 # --- Baseten-compatible token parsing and SNAC batching ---
 _TOKEN_RE = re.compile(r"<custom_token_(\d+)>")
 
@@ -90,39 +78,41 @@ async def aiter_pcm_from_custom_tokens(engine, prompt: str, voice: str, sp) -> I
     """
     vLLM → detokenized pieces → <custom_token_…> → 28→PCM, Baseten-identical.
     """
-    tok_count = 0
+    tok_count_total = 0
     buf_ids: list[int] = []
     snacx = _get_snac_batched()
 
-    prev_len = 0
+    # track number of matches processed so far rather than relying on string growth
+    last_n_matches = 0
     async for out in engine.generate(build_prompt(prompt, resolve_voice(voice)), sp, random_uuid()):
         outs = out.outputs or []
         if not outs:
             continue
 
-        # We MUST detokenize to strings to see <custom_token_…>
         piece = outs[0].text or ""
-        if not piece:
-            continue
+        all_nums = _split_custom_tokens(piece)  # full rescan
+        n_matches = len(all_nums)
 
-        # Only process delta since last step to avoid double counting
-        delta = piece[prev_len:]
-        prev_len = len(piece)
+        # If vLLM rewrote earlier content and reduced matches, reset safely
+        if n_matches < last_n_matches:
+            last_n_matches = 0
+            buf_ids.clear()
 
-        for n in _split_custom_tokens(delta):
-            tid = _turn_token_into_id(n, tok_count)
-            tok_count += 1
+        # Process only newly appeared matches
+        for i in range(last_n_matches, n_matches):
+            n = all_nums[i]
+            tid = _turn_token_into_id(n, tok_count_total)
+            tok_count_total += 1
             buf_ids.append(tid)
 
             # Every 7 tokens is one frame; after 4 frames (28 ids) → decode
-            if (tok_count % 7 == 0) and len(buf_ids) >= 28:
+            if (tok_count_total % 7 == 0) and len(buf_ids) >= 28:
                 window = buf_ids[-28:]
                 arr = np.asarray(window, dtype=np.int32).reshape(-1, 7)
                 codes_0 = torch.from_numpy(arr[:, 0]).unsqueeze(0).to(SNAC_DEVICE)
                 codes_1 = torch.from_numpy(arr[:, [1, 4]].reshape(-1)).unsqueeze(0).to(SNAC_DEVICE)
                 codes_2 = torch.from_numpy(arr[:, [2, 3, 5, 6]].reshape(-1)).unsqueeze(0).to(SNAC_DEVICE)
 
-                # sync staging stream like Baseten
                 if PREPROCESS_STREAM is not None:
                     with torch.cuda.stream(PREPROCESS_STREAM):
                         c0, c1, c2 = codes_0, codes_1, codes_2
@@ -134,6 +124,12 @@ async def aiter_pcm_from_custom_tokens(engine, prompt: str, voice: str, sp) -> I
                 pcm = (np.clip(audio, -1.0, 1.0) * 32767.0).astype(np.int16).tobytes()
                 if pcm:
                     yield pcm
+
+        # optional sanity meter
+        if (tok_count_total % 140) == 0 and tok_count_total > 0:
+            print(f"[tts] tokens seen so far (custom): {tok_count_total}", flush=True)
+
+        last_n_matches = n_matches
 
 @app.on_event("startup")
 async def _startup():
@@ -150,7 +146,7 @@ async def _startup():
                 temperature=0.6,
                 top_p=0.8,
                 repetition_penalty=1.1,
-                max_tokens=64,
+                max_tokens=6144,
                 detokenize=True,
                 skip_special_tokens=False,
                 ignore_eos=False,
@@ -230,13 +226,13 @@ async def tts_ws(ws: WebSocket):
         top_p: Optional[float] = None
         repetition_penalty: Optional[float] = None
         num_predict: Optional[int] = None  # a.k.a. max_tokens
-        buf_sz = int(os.getenv("WS_WORD_BUFFER_SIZE", os.getenv("BUFFER_SIZE", "10")))  # safety valve only
+        buf_sz = int(os.getenv("WS_WORD_BUFFER_SIZE", os.getenv("BUFFER_SIZE", "6")))  # safety valve only
 
         splitter = pysbd.Segmenter(language="en", clean=False)
         text_buffer: list[str] = []
 
         # pacing (timer-based flush to avoid idle gaps)
-        FLUSH_MS = int(os.getenv("FLUSH_MS", "120"))
+        FLUSH_MS = int(os.getenv("FLUSH_MS", "60"))
         flush_running = False
         stop_flag = False
 
@@ -305,16 +301,7 @@ async def tts_ws(ws: WebSocket):
                     stop_token_ids=[128258, 128009],
                 )
 
-                first_chunk = True
                 async for pcm in aiter_pcm_from_custom_tokens(engine.engine, prompt, v, sp):
-                    if first_chunk:
-                        # tiny fade-in (3ms) only on the very first PCM of this flush
-                        a = np.frombuffer(pcm, dtype=np.int16).astype(np.float32) / 32767.0
-                        r = max(1, int(0.003 * SAMPLE_RATE))
-                        if a.shape[0] > r:
-                            a[:r] *= np.linspace(0.0, 1.0, r, dtype=np.float32)
-                        pcm = (np.clip(a, -1.0, 1.0) * 32767.0).astype(np.int16).tobytes()
-                        first_chunk = False
                     await ws.send_bytes(pcm)
                     await asyncio.sleep(0)
 
