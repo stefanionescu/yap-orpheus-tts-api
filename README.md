@@ -42,6 +42,9 @@ bash scripts/02-run-server.sh   # starts in background and tails logs
 # Press Ctrl-C to stop following logs; server keeps running (PID in .run/server.pid)
 # Re-attach later:
 tail -f logs/server.log
+
+# Show last 200 lines of the server log (one-time)
+tail -n 200 logs/server.log
 ```
 
 Alternatively, you can run all three steps with one command:
@@ -152,7 +155,7 @@ Install speed knobs:
 ## Project layout
 
 ```
-server/                 # FastAPI + Orpheus (vLLM)
+server/                # FastAPI + Orpheus (vLLM)
   server.py            # FastAPI app (port 8000)
   engine_vllm.py       # Orpheus TTS engine (token-ID streaming + SNAC)
   prompts.py           # Prompt helpers and audio control wrappers
@@ -160,11 +163,11 @@ server/                 # FastAPI + Orpheus (vLLM)
   vllm_config.py       # vLLM tuning knobs
   text_chunker.py
   utils.py
-scripts/                # All runnable scripts (bash)
+scripts/               # All runnable scripts (bash)
   00-bootstrap.sh
   01-install.sh
-  02-run-server.sh          # vLLM path (default)
-  run-all.sh                # bootstrap → install → start
+  02-run-server.sh     # vLLM path (default)
+  run-all.sh           # bootstrap → install → start
   print-env.sh
   stop.sh
 tests/

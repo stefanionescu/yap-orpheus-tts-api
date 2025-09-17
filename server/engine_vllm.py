@@ -12,7 +12,7 @@ from vllm.utils import random_uuid
 
 from .vllm_config import vllm_engine_kwargs
 from .text_chunker import chunk_text
-from .prompts import build_prompt
+from .prompts import build_prompt, resolve_voice
 from .snac_stream import StreamNormalizer, SnacDecoder, extract_token_numbers
 
 MODEL_ID = os.getenv("MODEL_ID", "canopylabs/orpheus-3b-0.1-ft")
@@ -50,6 +50,7 @@ class OrpheusTTSEngine:
             max_tokens=int(params.get("num_predict", 49152)),
             detokenize=False,                # IMPORTANT: stream token_ids, not text
             skip_special_tokens=False,
+            ignore_eos=True,                 # keep generating past <|eot_id|>
         )
 
         req_id = random_uuid()
@@ -62,7 +63,10 @@ class OrpheusTTSEngine:
         N_EXTRA_AFTER_EOT = 8192
         extra_budget = N_EXTRA_AFTER_EOT
 
-        async for out in self.engine.generate(build_prompt(text, voice), sp, req_id):
+        DEBUG = bool(int(os.getenv("SNAC_DEBUG", "0")))
+        dbg_tokens = dbg_frames = dbg_bytes = 0
+
+        async for out in self.engine.generate(build_prompt(text, resolve_voice(voice)), sp, req_id):
             outs = out.outputs or []
             if not outs:
                 continue
@@ -74,17 +78,25 @@ class OrpheusTTSEngine:
             prev_len = len(tids)
 
             for tid in new_ids:
-                tok_str = self.tokenizer.decode(
-                    [tid],
-                    skip_special_tokens=False,
-                    clean_up_tokenization_spaces=False,
-                )
+                # Prefer raw vocab token; fallback to decode
+                tok_str = self.tokenizer.convert_ids_to_tokens(tid, skip_special_tokens=False)
+                if tok_str is None or tok_str == "":
+                    tok_str = self.tokenizer.decode(
+                        [tid],
+                        skip_special_tokens=False,
+                        clean_up_tokenization_spaces=False,
+                    )
+
+                if DEBUG:
+                    dbg_tokens += 1
 
                 # Capture audio tokens
                 for n in extract_token_numbers(tok_str):
                     frame = normalizer.push_number(n)
                     if frame is not None:
                         frames_batch.append(frame)
+                        if DEBUG:
+                            dbg_frames += 1
                         if eot_seen:
                             extra_budget -= 7
                             if extra_budget <= 0:
@@ -100,6 +112,8 @@ class OrpheusTTSEngine:
                 frames_batch.clear()
                 pcm = snac.take_new_pcm16()
                 if pcm:
+                    if DEBUG:
+                        dbg_bytes += len(pcm)
                     yield pcm
 
             if eot_seen and extra_budget <= 0:
@@ -111,7 +125,12 @@ class OrpheusTTSEngine:
         normalizer.close()
         pcm = snac.take_new_pcm16()
         if pcm:
+            if DEBUG:
+                dbg_bytes += len(pcm)
             yield pcm
+
+        if DEBUG:
+            print(f"[snac] tokens={dbg_tokens} frames={dbg_frames} bytes={dbg_bytes}", flush=True)
 
     # -------- public: sync generator for FastAPI StreamingResponse --------
     def _piece_pcm_gen(self, text: str, voice: str, params: Dict[str, Any]) -> Generator[bytes, None, None]:

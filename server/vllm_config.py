@@ -7,7 +7,7 @@ def vllm_engine_kwargs() -> dict:
     """
     return dict(
         dtype=os.getenv("VLLM_DTYPE", "half"),             # 'half'|'bfloat16'|'float16'|'auto'
-        max_model_len=int(os.getenv("VLLM_MAX_MODEL_LEN", "4096")),
+        max_model_len=int(os.getenv("VLLM_MAX_MODEL_LEN", "8192")),
         gpu_memory_utilization=float(os.getenv("VLLM_GPU_UTIL", "0.92")),
         max_num_seqs=int(os.getenv("VLLM_MAX_SEQS", "24")),
         trust_remote_code=True,

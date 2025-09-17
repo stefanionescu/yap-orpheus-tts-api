@@ -5,6 +5,7 @@ from fastapi.responses import StreamingResponse, Response
 from dotenv import load_dotenv
 
 from .utils import ensure_hf_login
+from .prompts import resolve_voice
 from .engine_vllm import OrpheusTTSEngine
 
 load_dotenv(".env")
@@ -36,7 +37,8 @@ async def tts(req: Dict):
     if not text:
         raise HTTPException(status_code=400, detail="text is required")
 
-    voice = req.get("voice", "tara")
+    voice_in = req.get("voice", "tara")
+    voice = resolve_voice(voice_in)
     stream = bool(req.get("stream", True))
     chunk_chars = int(req.get("chunk_chars", 500))
     temperature = req.get("temperature")
