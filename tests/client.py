@@ -3,7 +3,7 @@
 Orpheus TTS WebSocket client.
 
 - Connects to a remote Orpheus TTS server (RunPod or local)
-- Sends text (word-by-word) using Baseten-style protocol and receives streaming PCM chunks
+- Sends a single JSON payload with full text (Baseten Mode A) and receives streaming PCM chunks
 - Aggregates all audio and saves a WAV file under ROOT/audio/
 - Tracks metrics similar to other test files (TTFB, connect, handshake)
 - Supports env vars: RUNPOD_TCP_HOST, RUNPOD_TCP_PORT, RUNPOD_API_KEY
@@ -88,11 +88,12 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="Text to synthesize (repeat flag for multiple sentences)",
     )
+    # Buffer-size no longer used in Mode A; kept for CLI compatibility but ignored
     ap.add_argument(
         "--buffer-size",
         type=int,
         default=5,
-        help="Word buffer size for server-side chunking (default: 5)",
+        help="Ignored in Mode A (kept for CLI compatibility)",
     )
     ap.add_argument(
         "--max-tokens",
@@ -162,26 +163,14 @@ async def tts_client(
     async with websockets.connect(url, **ws_options) as ws:
         connect_ms = (time.perf_counter() - connect_start) * 1000.0
 
-        # Send Baseten-style metadata first
-        meta = {"voice": voice, "buffer_size": buffer_size}
+        # Send single JSON payload with full text (server will chunk internally)
+        payload = {"voice": voice, "text": " ".join(texts).strip()}
         if max_tokens is not None:
-            meta["max_tokens"] = max_tokens
-        await ws.send(json.dumps(meta))
+            payload["max_tokens"] = max_tokens
+        await ws.send(json.dumps(payload))
 
-        # Start server TTFB timer after metadata sent
+        # Start server TTFB timer after payload sent
         t0_server = time.perf_counter()
-
-        # Send text word by word
-        all_words = []
-        for text in texts:
-            all_words.extend(text.split())
-
-        for word in all_words:
-            await ws.send(word)
-            await asyncio.sleep(0)  # yield to receiver
-
-        # Send END sentinel
-        await ws.send("__END__")
 
         # Receive PCM until server closes
         while True:
@@ -257,7 +246,7 @@ def main() -> None:
     print(f"Voice:  {args.voice}")
     print(f"Out:    {out}")
     print(f"Text(s): {len(texts)}")
-    print(f"Buffer size: {args.buffer_size}")
+    # Buffer size is ignored in Mode A; kept for CLI compatibility
     if args.max_tokens:
         print(f"Max tokens: {args.max_tokens}")
 

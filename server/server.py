@@ -5,7 +5,6 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 import asyncio
 import json
 from dotenv import load_dotenv
-import pysbd
 import numpy as np
 import torch
 
@@ -30,8 +29,9 @@ engine: OrpheusTTSEngine | None = None
 _TOKEN_RE = re.compile(r"<custom_token_(\d+)>")
 
 SNAC_DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
-SNAC_MAX_BATCH = 64
-PREPROCESS_STREAM = torch.cuda.Stream() if torch.cuda.is_available() else None
+PREPROCESS_STREAM = (
+    torch.cuda.Stream(device=torch.device(SNAC_DEVICE)) if torch.cuda.is_available() else None
+)
 
 _SNAC_BATCHEX = None
 
@@ -67,6 +67,36 @@ def _get_snac_batched():
     _SNAC_BATCHEX = _SnacBatched()
     return _SNAC_BATCHEX
 
+# --- Baseten chunking (pre-prompt formatting) ---
+MAX_CHUNK_SIZE = int(os.getenv("MAX_CHUNK_SIZE", "280"))
+
+def chunk_text(text: str, max_len: int = MAX_CHUNK_SIZE) -> list[str]:
+    if len(text) <= max_len:
+        return [text]
+    chunks = []
+    start = 0
+    while start < len(text):
+        end = min(start + max_len, len(text))
+        window = text[start:end]
+        split_at = window.rfind("\n")
+        if split_at == -1 or split_at < max_len * 0.5:
+            split_at = max(window.rfind("."), window.rfind("?"), window.rfind("!"))
+            if split_at != -1:
+                split_at += 1
+        if split_at == -1 or split_at < max_len * 0.33:
+            split_at = window.rfind(",")
+        if split_at == -1:
+            split_at = window.rfind(" ")
+        if split_at == -1:
+            split_at = len(window)
+        chunk = text[start : start + split_at].strip()
+        if chunk:
+            chunks.append(chunk)
+        start += split_at
+        while start < len(text) and text[start].isspace():
+            start += 1
+    return chunks or [""]
+
 def _split_custom_tokens(s: str) -> List[int]:
     return [int(x) for x in _TOKEN_RE.findall(s) if x != "0"]
 
@@ -77,36 +107,32 @@ def _turn_token_into_id(token_number: int, index: int) -> int:
 async def aiter_pcm_from_custom_tokens(engine, prompt: str, voice: str, sp) -> Iterator[bytes]:
     """
     vLLM → detokenized pieces → <custom_token_…> → 28→PCM, Baseten-identical.
+    Monotonic delta consumption (no rescans, no resets) for artifact-free audio.
     """
-    tok_count_total = 0
+    tok_index = 0  # never reset within a single generation
     buf_ids: list[int] = []
     snacx = _get_snac_batched()
 
-    # track number of matches processed so far rather than relying on string growth
-    last_n_matches = 0
+    prev_len = 0  # length of detokenized text we have already processed
     async for out in engine.generate(build_prompt(prompt, resolve_voice(voice)), sp, random_uuid()):
         outs = out.outputs or []
         if not outs:
             continue
 
         piece = outs[0].text or ""
-        all_nums = _split_custom_tokens(piece)  # full rescan
-        n_matches = len(all_nums)
+        # Only process newly appended text to keep sequence monotonic
+        if len(piece) <= prev_len:
+            continue
+        delta = piece[prev_len:]
+        prev_len = len(piece)
 
-        # If vLLM rewrote earlier content and reduced matches, reset safely
-        if n_matches < last_n_matches:
-            last_n_matches = 0
-            buf_ids.clear()
-
-        # Process only newly appeared matches
-        for i in range(last_n_matches, n_matches):
-            n = all_nums[i]
-            tid = _turn_token_into_id(n, tok_count_total)
-            tok_count_total += 1
+        for n in _split_custom_tokens(delta):
+            tid = _turn_token_into_id(n, tok_index)
+            tok_index += 1
             buf_ids.append(tid)
 
             # Every 7 tokens is one frame; after 4 frames (28 ids) → decode
-            if (tok_count_total % 7 == 0) and len(buf_ids) >= 28:
+            if (tok_index % 7 == 0) and len(buf_ids) >= 28:
                 window = buf_ids[-28:]
                 arr = np.asarray(window, dtype=np.int32).reshape(-1, 7)
                 codes_0 = torch.from_numpy(arr[:, 0]).unsqueeze(0).to(SNAC_DEVICE)
@@ -115,21 +141,13 @@ async def aiter_pcm_from_custom_tokens(engine, prompt: str, voice: str, sp) -> I
 
                 if PREPROCESS_STREAM is not None:
                     with torch.cuda.stream(PREPROCESS_STREAM):
-                        c0, c1, c2 = codes_0, codes_1, codes_2
+                        pass
                     torch.cuda.synchronize()
-                else:
-                    c0, c1, c2 = codes_0, codes_1, codes_2
 
-                audio = await snacx.decode_codes([c0, c1, c2])
+                audio = await snacx.decode_codes([codes_0, codes_1, codes_2])
                 pcm = (np.clip(audio, -1.0, 1.0) * 32767.0).astype(np.int16).tobytes()
                 if pcm:
                     yield pcm
-
-        # optional sanity meter
-        if (tok_count_total % 140) == 0 and tok_count_total > 0:
-            print(f"[tts] tokens seen so far (custom): {tok_count_total}", flush=True)
-
-        last_n_matches = n_matches
 
 @app.on_event("startup")
 async def _startup():
@@ -168,12 +186,11 @@ async def healthz():
 @app.websocket("/ws/tts")
 async def tts_ws(ws: WebSocket):
     """
-    Bi-directional streaming over WebSocket. Supports two client patterns:
-      1) Baseten-like: send one JSON metadata object (voice/max_tokens/buffer_size/..),
-         then stream plain text words, finally send the string "__END__".
-      2) Legacy JSON: send {"text": "...", "voice": "..."} one or more times,
-         then send {"end": true}.
-    Server responds with PCM16 audio chunks as binary frames.
+    Baseten-parity WS (best-performance):
+      - Client sends a single JSON with {"text": "...full text...", "voice": "..."}.
+      - Server splits the original text into ~280-char chunks BEFORE formatting the prompt.
+      - For each chunk, runs one generation and streams audio hops from last 28 custom tokens.
+      - Strict in-order emission; no timers, no word buffering.
     """
     await ws.accept()
     global engine
@@ -214,10 +231,10 @@ async def tts_ws(ws: WebSocket):
                     await q.put({"type": "text", "text": t, "voice": v})
                 continue
 
-            # Plain text message (treat as a single word or phrase)
+            # Plain text message → treat as full text for Baseten mode
             t = msg.strip()
             if t:
-                await q.put({"type": "word", "word": t})
+                await q.put({"type": "text", "text": t})
 
     async def synth_loop():
         # Connection-local settings
@@ -226,110 +243,22 @@ async def tts_ws(ws: WebSocket):
         top_p: Optional[float] = None
         repetition_penalty: Optional[float] = None
         num_predict: Optional[int] = None  # a.k.a. max_tokens
-        buf_sz = int(os.getenv("WS_WORD_BUFFER_SIZE", os.getenv("BUFFER_SIZE", "6")))  # safety valve only
 
-        splitter = pysbd.Segmenter(language="en", clean=False)
-        text_buffer: list[str] = []
-
-        # pacing (timer-based flush to avoid idle gaps)
-        FLUSH_MS = int(os.getenv("FLUSH_MS", "60"))
-        flush_running = False
-        stop_flag = False
-
-        async def ticker():
-            nonlocal stop_flag
-            while not stop_flag:
-                await asyncio.sleep(FLUSH_MS / 1000.0)
-                if text_buffer and not flush_running:
-                    try:
-                        await flush(final=False)
-                    except Exception:
-                        pass
-
-        async def flush(final: bool = False):
-            nonlocal flush_running
-            if flush_running:
-                return
-            if not text_buffer and not final:
-                return
-            flush_running = True
-            try:
-                full_text = " ".join(text_buffer)
-                sentences = splitter.segment(full_text)
-                prompt = None
-                words_consumed = 0
-                if len(sentences) > 1:
-                    # Flush all complete sentences except the last unfinished one
-                    complete_sents = sentences[:-1]
-                    prompt = " ".join(complete_sents)
-                    words_consumed = sum(len(s.split()) for s in complete_sents)
-                # Fallback: if we buffered enough words, flush that many regardless of sentence boundary
-                elif len(text_buffer) >= buf_sz:
-                    prompt = " ".join(text_buffer[:buf_sz])
-                    words_consumed = buf_sz
-                elif final:
-                    prompt = " ".join(text_buffer)
-                    words_consumed = len(text_buffer)
-                else:
-                    # Nothing to do (no complete sentence, below buffer, and not final)
-                    return
-
-                # Consume from buffer
-                del text_buffer[:words_consumed]
-
-                # Resolve voice alias each flush (voice may have been updated)
-                v = resolve_voice(voice) or "tara"
-
-                # Do not start a generation on empty prompt (e.g., final with no text)
-                if not prompt or not prompt.strip():
-                    if final:
-                        try:
-                            await ws.close()
-                        except Exception:
-                            pass
-                    return
-
-                # ---- Baseten-compatible streaming from vLLM ----
-                sp = SamplingParams(
-                    temperature=float(temperature if (temperature is not None) else 0.6),
-                    top_p=float(top_p if (top_p is not None) else 0.8),
-                    repetition_penalty=float(repetition_penalty if (repetition_penalty is not None) else 1.1),
-                    max_tokens=int(num_predict if (num_predict is not None) else 6144),
-                    detokenize=True,
-                    skip_special_tokens=False,
-                    ignore_eos=False,
-                    stop_token_ids=[128258, 128009],
-                )
-
-                async for pcm in aiter_pcm_from_custom_tokens(engine.engine, prompt, v, sp):
-                    await ws.send_bytes(pcm)
-                    await asyncio.sleep(0)
-
-                if final:
-                    try:
-                        await ws.close()
-                    except Exception:
-                        pass
-            finally:
-                flush_running = False
-
-        tick_task = asyncio.create_task(ticker())
         try:
             while True:
                 item = await q.get()
                 if item is None:
-                    await flush(final=True)
+                    # If no text was ever provided, just close
+                    try:
+                        await ws.close()
+                    except Exception:
+                        pass
                     break
                 typ = item.get("type")
                 if typ == "meta":
                     m = item.get("meta", {})
                     if "voice" in m and m["voice"]:
                         voice = str(m["voice"])  # store raw; resolve later
-                    if "buffer_size" in m:
-                        try:
-                            buf_sz = max(1, int(m["buffer_size"]))
-                        except Exception:
-                            pass
                     if "temperature" in m:
                         try:
                             temperature = float(m["temperature"])  # None allowed
@@ -352,32 +281,46 @@ async def tts_ws(ws: WebSocket):
                             pass
                     continue
                 if typ == "text":
-                    t = item.get("text", "").strip()
-                    v = item.get("voice")
-                    if v:
-                        voice = str(v)
-                    if t:
-                        text_buffer.extend(t.split())
-                        await flush(final=False)
-                    continue
-                if typ == "word":
-                    w = item.get("word", "").strip()
-                    if w:
-                        text_buffer.append(w)
-                        await flush(final=False)
-                    continue
+                    full_text = item.get("text", "").strip()
+                    v_override = item.get("voice")
+                    if v_override:
+                        voice = str(v_override)
+                    if not full_text:
+                        try:
+                            await ws.close()
+                        except Exception:
+                            pass
+                        break
+
+                    # ---- Baseten-compatible streaming from vLLM ----
+                    sp = SamplingParams(
+                        temperature=float(temperature if (temperature is not None) else 0.6),
+                        top_p=float(top_p if (top_p is not None) else 0.8),
+                        repetition_penalty=float(repetition_penalty if (repetition_penalty is not None) else 1.1),
+                        max_tokens=int(num_predict if (num_predict is not None) else 6144),
+                        detokenize=True,
+                        skip_special_tokens=False,
+                        ignore_eos=False,
+                        stop_token_ids=[128258, 128009],
+                    )
+
+                    v = resolve_voice(voice) or "tara"
+                    for chunk in chunk_text(full_text, MAX_CHUNK_SIZE):
+                        async for pcm in aiter_pcm_from_custom_tokens(engine.engine, chunk, v, sp):
+                            await ws.send_bytes(pcm)
+                            await asyncio.sleep(0)
+
+                    try:
+                        await ws.close()
+                    except Exception:
+                        pass
+                    break
         except Exception as e:
             try:
                 await ws.close(code=1011)
             except Exception:
                 pass
             raise e
-        finally:
-            stop_flag = True
-            try:
-                tick_task.cancel()
-            except Exception:
-                pass
 
     try:
         recv_task = asyncio.create_task(recv_loop())

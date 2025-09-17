@@ -61,15 +61,11 @@ async def _tts_one_ws(
     sr = 24000
 
     async with websockets.connect(url, max_size=None) as ws:
-        # Baseten-style metadata first
-        meta = {"voice": voice, "buffer_size": 6}
+        # Baseten-parity Mode A: send a single JSON with full text
+        payload = {"voice": voice, "text": text.strip()}
         if num_predict is not None:
-            meta["max_tokens"] = num_predict
-        await ws.send(json.dumps(meta))
-        # Then stream words and END sentinel
-        for w in text.strip().split():
-            await ws.send(w)
-        await ws.send("__END__")
+            payload["max_tokens"] = num_predict
+        await ws.send(json.dumps(payload))
 
         while True:
             try:

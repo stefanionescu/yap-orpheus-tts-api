@@ -24,10 +24,8 @@ export VLLM_MAX_SEQS=${VLLM_MAX_SEQS:-24}
 export SNAC_TORCH_COMPILE=${SNAC_TORCH_COMPILE:-0}
 # Enable vLLM prefix cache to cut prefill on repeated voice/prompt preambles
 export VLLM_PREFIX_CACHE=${VLLM_PREFIX_CACHE:-1}
-# Default client word buffer size for WS chunking (server uses as fallback)
-export WS_WORD_BUFFER_SIZE=${WS_WORD_BUFFER_SIZE:-6}
-# Timer-based flush interval to avoid idle gaps in WS (ms)
-export FLUSH_MS=${FLUSH_MS:-60}
+# Server-side chunking size for Baseten Mode A (~280 chars recommended)
+export MAX_CHUNK_SIZE=${MAX_CHUNK_SIZE:-280}
 # Ensure vLLM uses spawn (safe with CUDA init in background thread)
 export VLLM_WORKER_MULTIPROC_METHOD=spawn
 # Disable torch.compile/inductor to avoid building Triton/C extensions at runtime

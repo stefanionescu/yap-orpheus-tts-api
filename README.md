@@ -59,11 +59,9 @@ bash scripts/run-all.sh
 curl -s http://127.0.0.1:8000/healthz
 ```
 
-- WebSocket synthesis (server streams raw PCM16, 24 kHz). For a quick listen, write the binary frames to a WAV client-side. The WS protocol supports two patterns:
-  - Baseten-like streaming: send one JSON metadata object (e.g., `{ "voice": "tara", "buffer_size": 12, "max_tokens": 4096 }`), then stream plain words, then the string `__END__`.
-  - Legacy JSON: send `{ "text": "...", "voice": "..." }` one or more times, then `{ "end": true }`.
+- WebSocket synthesis (server streams raw PCM16, 24 kHz). Mode A (Baseten best-performance): send a single JSON with the full text. The server will split into ~280-char chunks internally and stream audio sequentially.
 
-  Example (legacy JSON):
+  Example (Mode A):
 ```bash
 python - <<'PY'
 import asyncio, json, websockets, wave
@@ -71,7 +69,6 @@ async def main():
     uri = "ws://127.0.0.1:8000/ws/tts"
     async with websockets.connect(uri, max_size=None) as ws:
         await ws.send(json.dumps({"text": "hello from orpheus", "voice": "female"}))
-        await ws.send(json.dumps({"end": True}))
         with wave.open("out.wav", "wb") as wf:
             wf.setnchannels(1); wf.setsampwidth(2); wf.setframerate(24000)
             while True:
@@ -88,12 +85,9 @@ PY
 ## Voice and parameters
 
 - Voices: `tara` (female), `zac` (male). Aliases supported: `female`→`tara`, `male`→`zac`.
-- WebSocket messages:
-  - Baseten-like streaming (recommended for live latency): send one metadata message (voice, optional `buffer_size`, optional `max_tokens`), then send words, then `__END__`.
-  - Legacy JSON (one-shot): send text objects, then `{ "end": true }`.
+- WebSocket protocol (Mode A): send a single JSON `{ "text": "...", "voice": "...", "max_tokens": 4096? }`. The server chunks internally.
 -- Tuning envs (server-side):
-  - `WS_WORD_BUFFER_SIZE` (default 10): mid-sentence flush fallback size when segmenter hasn’t hit a period yet
-  - `FLUSH_MS` (default 120): periodic flush interval to coalesce and avoid idle gaps
+  - `MAX_CHUNK_SIZE` (default 280): chunk size in characters before prompt formatting
   - `SNAC_TORCH_COMPILE` (default 0): compile SNAC modules (0 recommended)
   - vLLM knobs in `server/vllm_config.py` or env
 
@@ -181,7 +175,7 @@ python tests/client.py --voice tara --text "Testing from my laptop to RunPod"
 
 Custom server:
 ```bash
-python tests/client.py --server wss://your-domain.com:8000 --voice zac --buffer-size 3 --max-tokens 4096
+python tests/client.py --server wss://your-domain.com:8000 --voice zac --max-tokens 4096
 ```
 
 **Output:**
