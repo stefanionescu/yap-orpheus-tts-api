@@ -69,7 +69,7 @@ class FTStreamNormalizer:
 DEFAULT_PARAMS: Dict[str, Any] = dict(
     temperature=0.6,
     top_p=0.9,
-    repetition_penalty=1.1,   # Orpheus requires >=1.1 for stability
+    repetition_penalty=1.2,  # Orpheus requires >=1.1 for stability
     num_predict=6144,         # default aligned with Baseten example max_tokens
 )
 
@@ -88,7 +88,7 @@ class OrpheusTTSEngine:
             tokenizer=MODEL_ID,            # <-- Force use of model's tokenizer
             **ekw,
         ))
-        self.decode_frames = int(os.getenv("SNAC_DECODE_FRAMES", "5"))  # 5 ≈ ~100ms; 10 ≈ ~200ms
+        self.decode_frames = int(os.getenv("SNAC_DECODE_FRAMES", "4"))  # 4 ≈ ~80–100ms cadence
 
     # -------- internal: async text→frames extractor --------
     async def _async_extract_frames(
@@ -154,8 +154,28 @@ class OrpheusTTSEngine:
         DEBUG = bool(int(os.getenv("SNAC_DEBUG", "0")))
         dbg_bytes = 0
 
+        PRIME_FRAMES = int(os.getenv("SNAC_PRIME_FRAMES", "4"))
+        primed = False
+
         async for frame in self._async_extract_frames(text, voice, params):
             frames_batch.append(frame)
+
+            # Hold back initial PCM until we have a short prime window of frames
+            if not primed and len(frames_batch) < PRIME_FRAMES:
+                continue
+
+            if not primed:
+                # Prime immediately with what we have, then continue at normal cadence
+                snac.add_frames(frames_batch)
+                frames_batch.clear()
+                pcm = snac.take_new_pcm16()
+                if pcm:
+                    if DEBUG:
+                        dbg_bytes += len(pcm)
+                    yield pcm
+                primed = True
+                continue
+
             if len(frames_batch) >= self.decode_frames:
                 snac.add_frames(frames_batch)
                 frames_batch.clear()

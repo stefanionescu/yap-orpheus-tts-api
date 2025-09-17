@@ -62,7 +62,7 @@ async def tts_ws(ws: WebSocket):
 
     # Per-connection decoder for continuity across messages
     decoder = SnacDecoder(sample_rate=SAMPLE_RATE)
-    decode_frames = int(os.getenv("SNAC_DECODE_FRAMES", "5"))
+    decode_frames = int(os.getenv("SNAC_DECODE_FRAMES", "4"))
 
     # State and queues
     q: asyncio.Queue[Optional[dict]] = asyncio.Queue()
@@ -109,7 +109,7 @@ async def tts_ws(ws: WebSocket):
         top_p: Optional[float] = None
         repetition_penalty: Optional[float] = None
         num_predict: Optional[int] = None  # a.k.a. max_tokens
-        buf_sz = int(os.getenv("WS_WORD_BUFFER_SIZE", os.getenv("BUFFER_SIZE", "5")))
+        buf_sz = int(os.getenv("WS_WORD_BUFFER_SIZE", os.getenv("BUFFER_SIZE", "40")))  # safety valve only
 
         splitter = pysbd.Segmenter(language="en", clean=False)
         text_buffer: list[str] = []
@@ -126,10 +126,6 @@ async def tts_ws(ws: WebSocket):
                 complete_sents = sentences[:-1]
                 prompt = " ".join(complete_sents)
                 words_consumed = sum(len(s.split()) for s in complete_sents)
-            elif len(text_buffer) >= buf_sz:
-                # Force flush by buffer size
-                prompt = " ".join(text_buffer[:buf_sz])
-                words_consumed = buf_sz
             elif final:
                 prompt = " ".join(text_buffer)
                 words_consumed = len(text_buffer)
@@ -144,6 +140,8 @@ async def tts_ws(ws: WebSocket):
 
             # Stream frames for this prompt and decode in-session
             frames_batch = []
+            PRIME_FRAMES = int(os.getenv("SNAC_PRIME_FRAMES", "4"))
+            primed = False
             async for frame in engine.aiter_frames(
                 prompt,
                 voice=v,
@@ -153,6 +151,18 @@ async def tts_ws(ws: WebSocket):
                 num_predict=num_predict,
             ):
                 frames_batch.append(frame)
+                # Hold first PCM until primed with a few frames
+                if not primed and len(frames_batch) < PRIME_FRAMES:
+                    continue
+                if not primed:
+                    decoder.add_frames(frames_batch)
+                    frames_batch.clear()
+                    pcm = decoder.take_new_pcm16()
+                    if pcm:
+                        await ws.send_bytes(pcm)
+                        await asyncio.sleep(0)
+                    primed = True
+                    continue
                 if len(frames_batch) >= decode_frames:
                     decoder.add_frames(frames_batch)
                     frames_batch.clear()

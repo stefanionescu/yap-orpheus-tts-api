@@ -19,13 +19,14 @@ export NVIDIA_TF32_OVERRIDE=1
 export VLLM_DTYPE=${VLLM_DTYPE:-float16}
 export VLLM_MAX_MODEL_LEN=${VLLM_MAX_MODEL_LEN:-8192}
 export VLLM_GPU_UTIL=${VLLM_GPU_UTIL:-0.92}
-export VLLM_MAX_SEQS=${VLLM_MAX_SEQS:-16}
-# SNAC cadence: lower = lower TTFB, higher = better throughput. 2 ≈ ~40–60ms
-export SNAC_DECODE_FRAMES=${SNAC_DECODE_FRAMES:-2}
+export VLLM_MAX_SEQS=${VLLM_MAX_SEQS:-24}
+# SNAC cadence: prime then steady cadence
+export SNAC_DECODE_FRAMES=${SNAC_DECODE_FRAMES:-4}
+export SNAC_PRIME_FRAMES=${SNAC_PRIME_FRAMES:-4}
 # Enable vLLM prefix cache to cut prefill on repeated voice/prompt preambles
 export VLLM_PREFIX_CACHE=${VLLM_PREFIX_CACHE:-1}
 # Default client word buffer size for WS chunking (server reads this env)
-export WS_WORD_BUFFER_SIZE=${WS_WORD_BUFFER_SIZE:-5}
+export WS_WORD_BUFFER_SIZE=${WS_WORD_BUFFER_SIZE:-40}
 # Ensure vLLM uses spawn (safe with CUDA init in background thread)
 export VLLM_WORKER_MULTIPROC_METHOD=spawn
 # Disable torch.compile/inductor to avoid building Triton/C extensions at runtime
