@@ -1,16 +1,20 @@
 import os
-from typing import Optional
+import re
+from typing import Optional, Iterator, List
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 import asyncio
 import json
 from dotenv import load_dotenv
 import pysbd
 import numpy as np
+import torch
 
 from .utils import ensure_hf_login
 from .engine_vllm import OrpheusTTSEngine
-from .snac_stream import SnacDecoder
-from .prompts import resolve_voice
+from .prompts import build_prompt, resolve_voice
+from vllm import SamplingParams
+from vllm.utils import random_uuid
+from snac import SNAC
 
 load_dotenv(".env")
 
@@ -34,6 +38,103 @@ def apply_first_chunk_fade(pcm_bytes: bytes, sr: int) -> bytes:
     a = np.clip(a, -1.0, 1.0)
     return (a * 32767.0).astype(np.int16).tobytes()
 
+# --- Baseten-compatible token parsing and SNAC batching ---
+_TOKEN_RE = re.compile(r"<custom_token_(\d+)>")
+
+SNAC_DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+SNAC_MAX_BATCH = 64
+PREPROCESS_STREAM = torch.cuda.Stream() if torch.cuda.is_available() else None
+
+_SNAC_BATCHEX = None
+
+def _get_snac_batched():
+    global _SNAC_BATCHEX
+    if _SNAC_BATCHEX is not None:
+        return _SNAC_BATCHEX
+
+    class _SnacBatched:
+        def __init__(self):
+            self.dtype_decoder = torch.float32
+            m = SNAC.from_pretrained("hubertsiuzdak/snac_24khz").eval().to(SNAC_DEVICE)
+            m.decoder = m.decoder.to(self.dtype_decoder)
+            if bool(int(os.getenv("SNAC_TORCH_COMPILE", "0"))):
+                m.decoder = torch.compile(m.decoder, dynamic=True)
+                m.quantizer = torch.compile(m.quantizer, dynamic=True)
+            self.m = m
+            self.stream = torch.cuda.Stream() if torch.cuda.is_available() else None
+
+        async def decode_codes(self, codes_triplet: list[torch.Tensor]) -> np.ndarray:
+            # codes_triplet shapes: [(1, n), (1, 2n), (1, 4n)]
+            with torch.inference_mode():
+                if self.stream is not None:
+                    with torch.cuda.stream(self.stream):
+                        z_q = self.m.quantizer.from_codes(codes_triplet)
+                        audio_hat = self.m.decoder(z_q.to(self.dtype_decoder))[:, :, 2048:4096]
+                        torch.cuda.synchronize()
+                else:
+                    z_q = self.m.quantizer.from_codes(codes_triplet)
+                    audio_hat = self.m.decoder(z_q.to(self.dtype_decoder))[:, :, 2048:4096]
+            return audio_hat[0].detach().cpu().numpy()
+
+    _SNAC_BATCHEX = _SnacBatched()
+    return _SNAC_BATCHEX
+
+def _split_custom_tokens(s: str) -> List[int]:
+    return [int(x) for x in _TOKEN_RE.findall(s) if x != "0"]
+
+def _turn_token_into_id(token_number: int, index: int) -> int:
+    # Baseten’s exact rule
+    return token_number - 10 - ((index % 7) * 4096)
+
+async def aiter_pcm_from_custom_tokens(engine, prompt: str, voice: str, sp) -> Iterator[bytes]:
+    """
+    vLLM → detokenized pieces → <custom_token_…> → 28→PCM, Baseten-identical.
+    """
+    tok_count = 0
+    buf_ids: list[int] = []
+    snacx = _get_snac_batched()
+
+    prev_len = 0
+    async for out in engine.generate(build_prompt(prompt, resolve_voice(voice)), sp, random_uuid()):
+        outs = out.outputs or []
+        if not outs:
+            continue
+
+        # We MUST detokenize to strings to see <custom_token_…>
+        piece = outs[0].text or ""
+        if not piece:
+            continue
+
+        # Only process delta since last step to avoid double counting
+        delta = piece[prev_len:]
+        prev_len = len(piece)
+
+        for n in _split_custom_tokens(delta):
+            tid = _turn_token_into_id(n, tok_count)
+            tok_count += 1
+            buf_ids.append(tid)
+
+            # Every 7 tokens is one frame; after 4 frames (28 ids) → decode
+            if (tok_count % 7 == 0) and len(buf_ids) >= 28:
+                window = buf_ids[-28:]
+                arr = np.asarray(window, dtype=np.int32).reshape(-1, 7)
+                codes_0 = torch.from_numpy(arr[:, 0]).unsqueeze(0).to(SNAC_DEVICE)
+                codes_1 = torch.from_numpy(arr[:, [1, 4]].reshape(-1)).unsqueeze(0).to(SNAC_DEVICE)
+                codes_2 = torch.from_numpy(arr[:, [2, 3, 5, 6]].reshape(-1)).unsqueeze(0).to(SNAC_DEVICE)
+
+                # sync staging stream like Baseten
+                if PREPROCESS_STREAM is not None:
+                    with torch.cuda.stream(PREPROCESS_STREAM):
+                        c0, c1, c2 = codes_0, codes_1, codes_2
+                    torch.cuda.synchronize()
+                else:
+                    c0, c1, c2 = codes_0, codes_1, codes_2
+
+                audio = await snacx.decode_codes([c0, c1, c2])
+                pcm = (np.clip(audio, -1.0, 1.0) * 32767.0).astype(np.int16).tobytes()
+                if pcm:
+                    yield pcm
+
 @app.on_event("startup")
 async def _startup():
     global engine
@@ -42,11 +143,22 @@ async def _startup():
     # Background warmup to reduce first-request TTFB (compile kernels, allocate KV cache)
     async def _warmup():
         try:
-            # Small prompts per voice to prime model + SNAC path
+            # Preload SNAC model to avoid first-request latency
+            _ = _get_snac_batched()
+            # Small prompts per voice to prime model + SNAC path using tokens→PCM
+            sp = SamplingParams(
+                temperature=0.6,
+                top_p=0.8,
+                repetition_penalty=1.1,
+                max_tokens=64,
+                detokenize=True,
+                skip_special_tokens=False,
+                ignore_eos=False,
+                stop_token_ids=[128258, 128009],
+            )
             async def _prime(voice: str):
-                # Let a short generation complete naturally to avoid abort logs
-                async for _ in engine.aiter_frames("hello", voice=voice, num_predict=64):
-                    pass
+                async for _ in aiter_pcm_from_custom_tokens(engine.engine, "hello", voice, sp):
+                    break
             await asyncio.gather(_prime("tara"), _prime("zac"))
         except Exception:
             # Do not fail startup if warmup errors
@@ -72,10 +184,6 @@ async def tts_ws(ws: WebSocket):
     if engine is None:
         await ws.close(code=1013)
         return
-
-    # Per-connection decoder for continuity across messages
-    decoder = SnacDecoder(sample_rate=SAMPLE_RATE)
-    decode_frames = int(os.getenv("SNAC_DECODE_FRAMES", "2"))
 
     # State and queues
     q: asyncio.Queue[Optional[dict]] = asyncio.Queue()
@@ -127,8 +235,6 @@ async def tts_ws(ws: WebSocket):
         splitter = pysbd.Segmenter(language="en", clean=False)
         text_buffer: list[str] = []
 
-        sent_any_audio = False
-
         # pacing (timer-based flush to avoid idle gaps)
         FLUSH_MS = int(os.getenv("FLUSH_MS", "120"))
         flush_running = False
@@ -145,7 +251,7 @@ async def tts_ws(ws: WebSocket):
                         pass
 
         async def flush(final: bool = False):
-            nonlocal sent_any_audio, flush_running
+            nonlocal flush_running
             if flush_running:
                 return
             if not text_buffer and not final:
@@ -178,10 +284,6 @@ async def tts_ws(ws: WebSocket):
                 # Resolve voice alias each flush (voice may have been updated)
                 v = resolve_voice(voice) or "tara"
 
-                # Stream frames for this prompt and decode in-session
-                frames_batch = []
-                PRIME_FRAMES = int(os.getenv("SNAC_PRIME_FRAMES", "2"))
-                primed = False
                 # Do not start a generation on empty prompt (e.g., final with no text)
                 if not prompt or not prompt.strip():
                     if final:
@@ -191,46 +293,30 @@ async def tts_ws(ws: WebSocket):
                             pass
                     return
 
-                async for frame in engine.aiter_frames(
-                    prompt,
-                    voice=v,
-                    temperature=temperature,
-                    top_p=top_p,
-                    repetition_penalty=repetition_penalty,
-                    num_predict=num_predict,
-                ):
-                    frames_batch.append(frame)
-                    # Hold first PCM until primed with a few frames
-                    if not primed and len(frames_batch) < PRIME_FRAMES:
-                        continue
-                    if not primed:
-                        decoder.add_frames(frames_batch)
-                        frames_batch.clear()
-                        pcm = decoder.take_new_pcm16()
-                        if pcm:
-                            if not sent_any_audio:
-                                pcm = apply_first_chunk_fade(pcm, SAMPLE_RATE)
-                                sent_any_audio = True
-                            await ws.send_bytes(pcm)
-                            await asyncio.sleep(0)
-                        primed = True
-                        continue
-                    # Smaller cadence for smoother flow
-                    local_decode_frames = int(os.getenv("SNAC_DECODE_FRAMES", "2"))
-                    if len(frames_batch) >= local_decode_frames:
-                        decoder.add_frames(frames_batch)
-                        frames_batch.clear()
-                        pcm = decoder.take_new_pcm16()
-                        if pcm:
-                            await ws.send_bytes(pcm)
-                            await asyncio.sleep(0)
-                if frames_batch:
-                    decoder.add_frames(frames_batch)
-                    frames_batch.clear()
-                    pcm = decoder.take_new_pcm16()
-                    if pcm:
-                        await ws.send_bytes(pcm)
-                        await asyncio.sleep(0)
+                # ---- Baseten-compatible streaming from vLLM ----
+                sp = SamplingParams(
+                    temperature=float(temperature if (temperature is not None) else 0.6),
+                    top_p=float(top_p if (top_p is not None) else 0.8),
+                    repetition_penalty=float(repetition_penalty if (repetition_penalty is not None) else 1.1),
+                    max_tokens=int(num_predict if (num_predict is not None) else 6144),
+                    detokenize=True,
+                    skip_special_tokens=False,
+                    ignore_eos=False,
+                    stop_token_ids=[128258, 128009],
+                )
+
+                first_chunk = True
+                async for pcm in aiter_pcm_from_custom_tokens(engine.engine, prompt, v, sp):
+                    if first_chunk:
+                        # tiny fade-in (3ms) only on the very first PCM of this flush
+                        a = np.frombuffer(pcm, dtype=np.int16).astype(np.float32) / 32767.0
+                        r = max(1, int(0.003 * SAMPLE_RATE))
+                        if a.shape[0] > r:
+                            a[:r] *= np.linspace(0.0, 1.0, r, dtype=np.float32)
+                        pcm = (np.clip(a, -1.0, 1.0) * 32767.0).astype(np.int16).tobytes()
+                        first_chunk = False
+                    await ws.send_bytes(pcm)
+                    await asyncio.sleep(0)
 
                 if final:
                     try:

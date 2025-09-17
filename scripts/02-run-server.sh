@@ -20,11 +20,8 @@ export VLLM_DTYPE=${VLLM_DTYPE:-float16}
 export VLLM_MAX_MODEL_LEN=${VLLM_MAX_MODEL_LEN:-8192}
 export VLLM_GPU_UTIL=${VLLM_GPU_UTIL:-0.92}
 export VLLM_MAX_SEQS=${VLLM_MAX_SEQS:-24}
-# SNAC cadence: prime then steady cadence (smaller = smoother)
-export SNAC_DECODE_FRAMES=${SNAC_DECODE_FRAMES:-2}
-export SNAC_PRIME_FRAMES=${SNAC_PRIME_FRAMES:-2}
-# Optional startup skip to hide very first-frame grit (samples at 24kHz)
-export SNAC_STARTUP_SKIP_SAMPLES=${SNAC_STARTUP_SKIP_SAMPLES:-0}
+# Disable torch.compile for SNAC by default to match Baseten testing
+export SNAC_TORCH_COMPILE=${SNAC_TORCH_COMPILE:-0}
 # Enable vLLM prefix cache to cut prefill on repeated voice/prompt preambles
 export VLLM_PREFIX_CACHE=${VLLM_PREFIX_CACHE:-1}
 # Default client word buffer size for WS chunking (server uses as fallback)
