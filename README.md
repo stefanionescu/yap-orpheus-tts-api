@@ -127,6 +127,58 @@ Notes:
 - Tests do not write WAV files; they count streamed bytes to infer audio seconds and compute metrics (TTFB, RTF, xRT, throughput).
 - `tests/bench.py` writes per-session metrics JSONL to `tests/results/bench_metrics.jsonl`.
 
+## Client for remote testing
+
+The `tests/client.py` script connects to a remote Orpheus server and saves audio as WAV files locally. Perfect for testing your RunPod deployment from your laptop.
+
+**Setup local environment (one-time):**
+
+1) Create a local Python virtualenv:
+```bash
+# On your laptop/local machine (not the server)
+cd /path/to/yap-orpheus-tts-api
+python3 -m venv .venv
+source .venv/bin/activate
+```
+
+2) Install minimal client dependencies:
+```bash
+pip install --upgrade pip
+pip install websockets python-dotenv
+```
+
+3) Create `.env` file with your RunPod details:
+```bash
+# .env (in project root)
+RUNPOD_TCP_HOST=your-pod-id-12345.proxy.runpod.net
+RUNPOD_TCP_PORT=8000
+RUNPOD_API_KEY=your-runpod-api-key-if-needed
+```
+
+**Usage:**
+
+Local testing (server running on same machine):
+```bash
+source .venv/bin/activate
+python tests/client.py --server 127.0.0.1:8000 --voice female --text "Hello from my laptop"
+```
+
+Remote RunPod testing (reads from .env):
+```bash
+source .venv/bin/activate
+python tests/client.py --voice tara --text "Testing from my laptop to RunPod"
+```
+
+Custom server:
+```bash
+python tests/client.py --server wss://your-domain.com:8000 --voice zac --buffer-size 3 --max-tokens 4096
+```
+
+**Output:**
+- WAV files saved to `audio/tts_<timestamp>.wav`
+- Metrics printed: TTFB, wall time, audio duration, RTF, xRT
+- Play the WAV files with any audio player to hear the results
+
 ## Stopping and cleanup
 
 Stop the server and clean artifacts:
@@ -178,6 +230,7 @@ scripts/               # All runnable scripts (bash)
   print-env.sh
   stop.sh
 tests/
-  warmup.py
-  bench.py
+  warmup.py            # single request warmup test
+  bench.py             # concurrent load testing
+  client.py            # remote client that saves WAV files
 ```
