@@ -1,8 +1,7 @@
 import re
-import os
 import numpy as np
 import torch
-from typing import List, Optional, Tuple
+from typing import List, Optional
 from snac import SNAC
 
 # 7-code frame layout; each code in [0..4095]
@@ -52,9 +51,9 @@ class StreamNormalizer:
 class SnacDecoder:
     """Incremental SNAC decode; emits only new PCM16 since last call."""
     def __init__(self, device: str = None, sample_rate: int = 24000):
-        # Reuse a global model instance to avoid per-connection allocations
-        self.snac, self.device = _get_snac_model(device)
+        self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
         self.sample_rate = sample_rate
+        self.snac = SNAC.from_pretrained("hubertsiuzdak/snac_24khz").eval().to(self.device)
         self.codes: List[int] = []
         self._decoded_samples = 0
 
@@ -90,16 +89,4 @@ def extract_token_numbers(token_text: str) -> List[int]:
     """Extract any <custom_token_####> numbers from a *single-token* string."""
     return [int(m.group(1)) for m in AUDIO_TOKEN_RE.finditer(token_text)]
 
-
-# ----- Global SNAC model management -----
-_SNAC_MODEL = None
-_SNAC_DEVICE_DEFAULT = os.getenv("SNAC_DEVICE", "cuda" if torch.cuda.is_available() else "cpu")
-
-def _get_snac_model(preferred_device: Optional[str] = None) -> Tuple[SNAC, str]:
-    global _SNAC_MODEL
-    device = preferred_device or _SNAC_DEVICE_DEFAULT
-    if _SNAC_MODEL is None:
-        m = SNAC.from_pretrained("hubertsiuzdak/snac_24khz").eval().to(device)
-        _SNAC_MODEL = m
-    return _SNAC_MODEL, device
 

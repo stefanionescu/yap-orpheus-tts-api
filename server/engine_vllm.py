@@ -3,7 +3,6 @@ import threading
 import queue
 import asyncio
 from typing import Generator, Optional, Dict, Any, AsyncGenerator, List
-from transformers import AutoTokenizer
 
 from vllm.engine.arg_utils import AsyncEngineArgs
 from vllm.engine.async_llm_engine import AsyncLLMEngine
@@ -39,8 +38,6 @@ class OrpheusTTSEngine:
             **ekw,
         ))
         self.decode_frames = int(os.getenv("SNAC_DECODE_FRAMES", "5"))  # 5 ≈ ~100ms; 10 ≈ ~200ms
-        # Tokenizer for mapping token ids -> token text (to see special tokens reliably)
-        self.tokenizer = AutoTokenizer.from_pretrained(MODEL_ID, trust_remote_code=True)
 
     # -------- internal: async text→frames extractor --------
     async def _async_extract_frames(
@@ -49,29 +46,27 @@ class OrpheusTTSEngine:
         voice: str,
         params: Dict[str, Any],
     ) -> AsyncGenerator[List[int], None]:
-        """Yield 7-code frames by parsing token IDs for <custom_token_####> and handling EOT robustly."""
+        """Yield 7-code frames by parsing streamed TEXT deltas for <custom_token_####>."""
         sp = SamplingParams(
             temperature=float(params.get("temperature", 0.8)),
             top_p=float(params.get("top_p", 0.9)),
             repetition_penalty=float(params.get("repetition_penalty", 1.2)),
             max_tokens=int(params.get("num_predict", 49152)),
-            detokenize=False,                # stream TOKEN IDS, not text
-            skip_special_tokens=False,       # keep specials visible
-            ignore_eos=True,                 # allow generation past EOT, but enforce our own budgets
+            detokenize=True,                 # stream TEXT deltas
+            skip_special_tokens=False,       # keep <custom_token_####>
+            ignore_eos=True,                 # keep generating past <|eot_id|>
         )
 
         req_id = random_uuid()
+        prev_text = ""
+        carry = ""
+
         normalizer = StreamNormalizer()
 
-        # Termination heuristics
         eot_seen = False
         N_EXTRA_AFTER_EOT = 8192
         extra_budget = N_EXTRA_AFTER_EOT
-        max_frames = int(os.getenv("SNAC_MAX_FRAMES", "16384"))
-        frames_emitted = 0
-        no_audio_steps = 0
 
-        prev_len = 0
         DEBUG = bool(int(os.getenv("SNAC_DEBUG", "0")))
         dbg_frames = 0
 
@@ -79,46 +74,44 @@ class OrpheusTTSEngine:
             outs = out.outputs or []
             if not outs:
                 continue
-            tids = outs[0].token_ids or []
-            if not tids:
+            full_txt = outs[0].text or ""
+            if not full_txt:
                 continue
 
-            new_ids = tids[prev_len:]
-            prev_len = len(tids)
+            # delta since last step
+            delta = full_txt[len(prev_text):]
+            prev_text = full_txt
+            if not delta:
+                continue
 
-            before = frames_emitted
-            for tid in new_ids:
-                tok = self.tokenizer.convert_ids_to_tokens(tid, skip_special_tokens=False) or ""
-                if tok == "<|eot_id|>":
-                    eot_seen = True
-                    extra_budget = N_EXTRA_AFTER_EOT
-                for m in AUDIO_TOKEN_RE.finditer(tok):
-                    n = int(m.group(1))
-                    frame = normalizer.push_number(n)
-                    if frame is not None:
-                        frames_emitted += 1
-                        if DEBUG:
-                            dbg_frames += 1
-                        yield frame
-                        if eot_seen:
-                            extra_budget -= 7
-                            if extra_budget <= 0:
-                                break
-                if eot_seen and extra_budget <= 0:
-                    break
+            carry += delta
+            if (not eot_seen) and "<|eot_id|>" in carry:
+                eot_seen = True
+                extra_budget = N_EXTRA_AFTER_EOT
 
-            if frames_emitted == before:
-                no_audio_steps += 1
-            else:
-                no_audio_steps = 0
+            # extract numbers from the rolling carry
+            last_end = 0
+            for m in AUDIO_TOKEN_RE.finditer(carry):
+                last_end = m.end()
+                n = int(m.group(1))
+                frame = normalizer.push_number(n)
+                if frame is not None:
+                    if DEBUG:
+                        dbg_frames += 1
+                    yield frame
+                    if eot_seen:
+                        extra_budget -= 7
+                        if extra_budget <= 0:
+                            break
 
-            if frames_emitted >= max_frames:
-                break
-            if frames_emitted > 0 and no_audio_steps > 512:
-                break
+            # trim processed part
+            if last_end > 0:
+                carry = carry[last_end:]
+
             if eot_seen and extra_budget <= 0:
                 break
 
+        # finalize
         normalizer.close()
         if DEBUG:
             print(f"[snac] frames={dbg_frames}", flush=True)
