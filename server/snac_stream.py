@@ -1,55 +1,10 @@
-import re
 import os
 import numpy as np
 import torch
-from typing import List, Optional
+from typing import List
 from snac import SNAC
 
 _SNAC_SINGLETON = None  # module-level cache
-
-# 7-code frame layout; each code in [0..4095]
-POS_OFFSETS = [0, 4096, 8192, 12288, 16384, 20480, 24576]
-AUDIO_TOKEN_RE = re.compile(r"<custom_token_(\d+)>")
-
-
-class StreamNormalizer:
-    """Takes raw <custom_token_N> integers and yields aligned 7-code frames."""
-    def __init__(self):
-        self.pos = 0
-        self.buf: List[int] = []
-        self.dropped = 0
-
-    def _fits(self, val: int, k: int) -> bool:
-        lo = 10 + POS_OFFSETS[k]
-        return lo <= val < lo + 4096
-
-    def push_number(self, t: int) -> Optional[List[int]]:
-        if self._fits(t, self.pos):
-            self.buf.append(t - 10 - POS_OFFSETS[self.pos])
-            self.pos += 1
-            if self.pos == 7:
-                frame = self.buf
-                self.buf = []
-                self.pos = 0
-                return frame
-            return None
-        # try resync at frame start
-        if self._fits(t, 0):
-            if self.buf:
-                self.dropped += len(self.buf)
-            self.buf = [t - 10 - POS_OFFSETS[0]]
-            self.pos = 1
-        else:
-            self.dropped += 1
-        return None
-
-    def close(self) -> int:
-        if self.buf:
-            self.dropped += len(self.buf)
-            self.buf = []
-            self.pos = 0
-        return self.dropped
-
 
 class SnacDecoder:
     """Incremental SNAC decode; emits only new PCM16 since last call."""
@@ -91,10 +46,3 @@ class SnacDecoder:
         new = audio[self._decoded_samples:]
         self._decoded_samples = total
         return (new * 32767.0).astype(np.int16).tobytes()
-
-
-def extract_token_numbers(token_text: str) -> List[int]:
-    """Extract any <custom_token_####> numbers from a *single-token* string."""
-    return [int(m.group(1)) for m in AUDIO_TOKEN_RE.finditer(token_text)]
-
-

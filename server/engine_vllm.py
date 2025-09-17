@@ -12,9 +12,54 @@ from vllm.utils import random_uuid
 from .vllm_config import vllm_engine_kwargs
 from .text_chunker import chunk_text
 from .prompts import build_prompt, resolve_voice
-from .snac_stream import StreamNormalizer, SnacDecoder, AUDIO_TOKEN_RE
+from .snac_stream import SnacDecoder
 
 MODEL_ID = os.getenv("MODEL_ID", "canopylabs/orpheus-3b-0.1-ft")
+
+# Finetune audio code ID layout (7 streams of 4096 codes each)
+FINETUNE_BASE = 128266  # start of code space
+FINETUNE_SPAN = 4096
+FINETUNE_LAYERS = 7
+FINETUNE_EOT = 128258   # stop token emitted by model
+
+class FTStreamNormalizer:
+    """Consumes *token ids* from the finetuned Orpheus and yields aligned 7-code frames."""
+    def __init__(self):
+        self.pos = 0
+        self.buf = []
+
+    def _decode(self, tid: int):
+        # Map token id -> (layer_index, code 0..4095), or None if not an audio code token
+        rel = tid - FINETUNE_BASE
+        if 0 <= rel < FINETUNE_LAYERS * FINETUNE_SPAN:
+            k = rel // FINETUNE_SPAN
+            v = rel - k * FINETUNE_SPAN
+            return (k, v)
+        return None
+
+    def push_id(self, tid: int):
+        dv = self._decode(tid)
+        if dv is None:
+            return None
+        k, v = dv
+        # in-order: expect k == self.pos
+        if k == self.pos:
+            self.buf.append(v)
+            self.pos += 1
+            if self.pos == FINETUNE_LAYERS:
+                frame = self.buf
+                self.buf = []
+                self.pos = 0
+                return frame
+            return None
+        # resync only on layer 0
+        if k == 0:
+            self.buf = [v]
+            self.pos = 1
+        else:
+            # drop until we see a layer-0 again
+            pass
+        return None
 
 DEFAULT_PARAMS: Dict[str, Any] = dict(
     temperature=0.8,
@@ -35,6 +80,7 @@ class OrpheusTTSEngine:
         # Async engine
         self.engine = AsyncLLMEngine.from_engine_args(AsyncEngineArgs(
             model=MODEL_ID,
+            tokenizer=MODEL_ID,            # <-- Force use of model's tokenizer
             **ekw,
         ))
         self.decode_frames = int(os.getenv("SNAC_DECODE_FRAMES", "5"))  # 5 ≈ ~100ms; 10 ≈ ~200ms
@@ -46,24 +92,21 @@ class OrpheusTTSEngine:
         voice: str,
         params: Dict[str, Any],
     ) -> AsyncGenerator[List[int], None]:
-        """Yield 7-code frames by parsing streamed TEXT deltas for <custom_token_####>."""
+        """Yield 7-code frames by processing token IDs from the finetuned model."""
         sp = SamplingParams(
             temperature=float(params.get("temperature", 0.8)),
             top_p=float(params.get("top_p", 0.9)),
             repetition_penalty=float(params.get("repetition_penalty", 1.2)),
             max_tokens=int(params.get("num_predict", 8192)),
-            detokenize=True,                 # stream TEXT deltas
-            skip_special_tokens=False,       # keep <custom_token_####>
-            ignore_eos=False,                # stop on EOS tokens
-            # Stop on either special terminator the tokenizer may emit:
-            stop=["<|eot_id|>", "<|end_of_text|>"],
+            detokenize=False,                 # <-- text not needed
+            skip_special_tokens=False,        # <-- keep specials; we need ids
+            ignore_eos=False,
+            stop_token_ids=[128258],          # <-- finetune EOT
         )
 
         req_id = random_uuid()
-        prev_text = ""
-        carry = ""
-
-        normalizer = StreamNormalizer()
+        normalizer = FTStreamNormalizer()
+        prev_n = 0
 
         DEBUG = bool(int(os.getenv("SNAC_DEBUG", "0")))
         dbg_frames = 0
@@ -73,41 +116,24 @@ class OrpheusTTSEngine:
                 outs = out.outputs or []
                 if not outs:
                     continue
-                full_txt = outs[0].text or ""
-                if not full_txt:
-                    continue
-
-                # delta since last step
-                delta = full_txt[len(prev_text):]
-                prev_text = full_txt
-                if not delta:
-                    continue
-
-                carry += delta
-
-                # extract numbers from the rolling carry
-                last_end = 0
-                for m in AUDIO_TOKEN_RE.finditer(carry):
-                    last_end = m.end()
-                    n = int(m.group(1))
-                    frame = normalizer.push_number(n)
+                toks = outs[0].token_ids or []
+                # take only the newly generated tokens
+                for tid in toks[prev_n:]:
+                    # Optional: early break on explicit EOT
+                    if tid == 128258:
+                        break
+                    frame = normalizer.push_id(tid)
                     if frame is not None:
                         if DEBUG:
                             dbg_frames += 1
                         yield frame
-
-                # trim processed part
-                if last_end > 0:
-                    carry = carry[last_end:]
+                prev_n = len(toks)
         finally:
-            # Ensure pending generation is cancelled if we broke out early.
             try:
                 self.engine.abort(req_id)
             except Exception:
                 pass
 
-        # finalize
-        normalizer.close()
         if DEBUG:
             print(f"[snac] frames={dbg_frames}", flush=True)
 
