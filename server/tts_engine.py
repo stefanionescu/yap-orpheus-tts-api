@@ -2,6 +2,7 @@ import os
 import asyncio
 from typing import Generator, Optional, Dict, Any
 from vllm import AsyncLLMEngine, AsyncEngineArgs, SamplingParams
+from vllm.utils import random_uuid
 from transformers import AutoTokenizer
 from .vllm_config import vllm_engine_kwargs
 from .text_chunker import chunk_text
@@ -117,15 +118,22 @@ class OrpheusTTSEngine:
 
             async def produce_tokens():
                 prev_text = ""
-                async for out in self.engine.generate(prompt=prompt_string, sampling_params=sampling_params):
-                    text_chunk = out.outputs[0].text if out.outputs else ""
-                    if not text_chunk:
-                        continue
-                    delta = text_chunk[len(prev_text):]
-                    prev_text = text_chunk
-                    if delta:
-                        token_q.put(delta)
-                token_q.put(None)
+                req_id = random_uuid()
+                try:
+                    async for out in self.engine.generate(
+                        prompt=prompt_string,
+                        sampling_params=sampling_params,
+                        request_id=req_id,
+                    ):
+                        text_chunk = out.outputs[0].text if out.outputs else ""
+                        if not text_chunk:
+                            continue
+                        delta = text_chunk[len(prev_text):]
+                        prev_text = text_chunk
+                        if delta:
+                            token_q.put(delta)
+                finally:
+                    token_q.put(None)
 
             def runner():
                 asyncio.run(produce_tokens())
