@@ -52,7 +52,6 @@ async def _tts_one_ws(
     seed: Optional[int] = None,
     num_predict: Optional[int] = None,
 ) -> Dict[str, float]:
-    del seed, num_predict  # unused; WS path doesn't use them currently
     url = _ws_url(server)
 
     t0_e2e = time.perf_counter()
@@ -61,8 +60,15 @@ async def _tts_one_ws(
     sr = 24000
 
     async with websockets.connect(url, max_size=None) as ws:
-        await ws.send(json.dumps({"text": text, "voice": voice}))
-        await ws.send(json.dumps({"end": True}))
+        # Baseten-style metadata first
+        meta = {"voice": voice, "buffer_size": 10}
+        if num_predict is not None:
+            meta["max_tokens"] = num_predict
+        await ws.send(json.dumps(meta))
+        # Then stream words and END sentinel
+        for w in text.strip().split():
+            await ws.send(w)
+        await ws.send("__END__")
 
         while True:
             try:

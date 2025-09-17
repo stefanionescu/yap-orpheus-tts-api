@@ -4,6 +4,7 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 import asyncio
 import json
 from dotenv import load_dotenv
+import pysbd
 
 from .utils import ensure_hf_login
 from .engine_vllm import OrpheusTTSEngine
@@ -33,11 +34,12 @@ async def healthz():
 @app.websocket("/ws/tts")
 async def tts_ws(ws: WebSocket):
     """
-    Bi-directional streaming over WebSocket:
-      - Client sends JSON messages:
-          {"text": "partial text"}
-          {"end": true}
-      - Server sends PCM16 audio chunks as binary frames.
+    Bi-directional streaming over WebSocket. Supports two client patterns:
+      1) Baseten-like: send one JSON metadata object (voice/max_tokens/buffer_size/..),
+         then stream plain text words, finally send the string "__END__".
+      2) Legacy JSON: send {"text": "...", "voice": "..."} one or more times,
+         then send {"end": true}.
+    Server responds with PCM16 audio chunks as binary frames.
     """
     await ws.accept()
     global engine
@@ -49,50 +51,168 @@ async def tts_ws(ws: WebSocket):
     decoder = SnacDecoder(sample_rate=SAMPLE_RATE)
     decode_frames = int(os.getenv("SNAC_DECODE_FRAMES", "5"))
 
-    # Small queue for inbound text pieces
+    # State and queues
     q: asyncio.Queue[Optional[dict]] = asyncio.Queue()
 
     async def recv_loop():
         while True:
             msg = await ws.receive_text()
+            # Baseten-style END sentinel
+            if msg.strip() == "__END__":
+                await q.put(None)
+                break
+            # Try JSON parse; fall back to treating as a word/phrase
             try:
                 obj = json.loads(msg)
             except Exception:
-                obj = {"text": msg}
-            if obj.get("end") is True:
-                await q.put(None)
-                break
-            t = (obj.get("text") or "").strip()
-            v = (obj.get("voice") or "").strip()
+                obj = None
+
+            if isinstance(obj, dict):
+                if obj.get("end") is True:
+                    await q.put(None)
+                    break
+                # Metadata-only message (no text) → update state
+                if ("text" not in obj) and (
+                    any(k in obj for k in ("voice", "max_tokens", "temperature", "top_p", "repetition_penalty", "buffer_size"))
+                ):
+                    await q.put({"type": "meta", "meta": obj})
+                    continue
+                # Text message (may include voice override)
+                t = (obj.get("text") or "").strip()
+                v = obj.get("voice")
+                if t:
+                    await q.put({"type": "text", "text": t, "voice": v})
+                continue
+
+            # Plain text message (treat as a single word or phrase)
+            t = msg.strip()
             if t:
-                await q.put({"text": t, "voice": v})
+                await q.put({"type": "word", "word": t})
 
     async def synth_loop():
-        try:
-            while True:
-                item = await q.get()
-                if item is None:
-                    break
-                # Stream frames for this text piece and decode in-session
-                piece = item.get("text", "")
-                voice = resolve_voice(item.get("voice", "tara")) or "tara"
-                batch = []
-                async for frame in engine.aiter_frames(piece, voice=voice):
-                    batch.append(frame)
-                    if len(batch) >= decode_frames:
-                        decoder.add_frames(batch)
-                        batch.clear()
-                        pcm = decoder.take_new_pcm16()
-                        if pcm:
-                            await ws.send_bytes(pcm)
-                            await asyncio.sleep(0)
-                if batch:
-                    decoder.add_frames(batch)
-                    batch.clear()
+        # Connection-local settings
+        voice = "tara"
+        temperature: Optional[float] = None
+        top_p: Optional[float] = None
+        repetition_penalty: Optional[float] = None
+        num_predict: Optional[int] = None  # a.k.a. max_tokens
+        buf_sz = int(os.getenv("WS_WORD_BUFFER_SIZE", os.getenv("BUFFER_SIZE", "10")))
+
+        splitter = pysbd.Segmenter(language="en", clean=False)
+        text_buffer: list[str] = []
+
+        async def flush(final: bool = False):
+            if not text_buffer:
+                return
+            full_text = " ".join(text_buffer)
+            sentences = splitter.segment(full_text)
+            prompt = None
+            words_consumed = 0
+            if len(sentences) > 1:
+                # Flush all complete sentences except the last unfinished one
+                complete_sents = sentences[:-1]
+                prompt = " ".join(complete_sents)
+                words_consumed = sum(len(s.split()) for s in complete_sents)
+            elif len(text_buffer) >= buf_sz:
+                # Force flush by buffer size
+                prompt = " ".join(text_buffer[:buf_sz])
+                words_consumed = buf_sz
+            elif final:
+                prompt = " ".join(text_buffer)
+                words_consumed = len(text_buffer)
+            else:
+                return
+
+            # Consume from buffer
+            del text_buffer[:words_consumed]
+
+            # Resolve voice alias each flush (voice may have been updated)
+            v = resolve_voice(voice) or "tara"
+
+            # Stream frames for this prompt and decode in-session
+            frames_batch = []
+            async for frame in engine.aiter_frames(
+                prompt,
+                voice=v,
+                temperature=temperature,
+                top_p=top_p,
+                repetition_penalty=repetition_penalty,
+                num_predict=num_predict,
+            ):
+                frames_batch.append(frame)
+                if len(frames_batch) >= decode_frames:
+                    decoder.add_frames(frames_batch)
+                    frames_batch.clear()
                     pcm = decoder.take_new_pcm16()
                     if pcm:
                         await ws.send_bytes(pcm)
                         await asyncio.sleep(0)
+            if frames_batch:
+                decoder.add_frames(frames_batch)
+                frames_batch.clear()
+                pcm = decoder.take_new_pcm16()
+                if pcm:
+                    await ws.send_bytes(pcm)
+                    await asyncio.sleep(0)
+
+            if final:
+                try:
+                    await ws.close()
+                except Exception:
+                    pass
+
+        try:
+            while True:
+                item = await q.get()
+                if item is None:
+                    await flush(final=True)
+                    break
+                typ = item.get("type")
+                if typ == "meta":
+                    m = item.get("meta", {})
+                    if "voice" in m and m["voice"]:
+                        voice = str(m["voice"])  # store raw; resolve later
+                    if "buffer_size" in m:
+                        try:
+                            buf_sz = max(1, int(m["buffer_size"]))
+                        except Exception:
+                            pass
+                    if "temperature" in m:
+                        try:
+                            temperature = float(m["temperature"])  # None allowed
+                        except Exception:
+                            pass
+                    if "top_p" in m:
+                        try:
+                            top_p = float(m["top_p"])  # None allowed
+                        except Exception:
+                            pass
+                    if "repetition_penalty" in m:
+                        try:
+                            repetition_penalty = float(m["repetition_penalty"])  # None allowed
+                        except Exception:
+                            pass
+                    if "max_tokens" in m:
+                        try:
+                            num_predict = int(m["max_tokens"])  # None allowed
+                        except Exception:
+                            pass
+                    continue
+                if typ == "text":
+                    t = item.get("text", "").strip()
+                    v = item.get("voice")
+                    if v:
+                        voice = str(v)
+                    if t:
+                        text_buffer.extend(t.split())
+                        await flush(final=False)
+                    continue
+                if typ == "word":
+                    w = item.get("word", "").strip()
+                    if w:
+                        text_buffer.append(w)
+                        await flush(final=False)
+                    continue
         except Exception as e:
             try:
                 await ws.close(code=1011)

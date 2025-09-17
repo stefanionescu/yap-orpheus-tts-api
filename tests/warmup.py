@@ -53,9 +53,16 @@ def main() -> None:
     async def run():
         nonlocal first_chunk_at, total_bytes
         async with websockets.connect(url, max_size=None) as ws:
-            # Send text then end
-            await ws.send(json.dumps({"text": args.text, "voice": args.voice}))
-            await ws.send(json.dumps({"end": True}))
+            # Baseten-style: send metadata once, then stream words, then END sentinel
+            meta = {"voice": args.voice, "buffer_size": 10}
+            if args.num_predict is not None:
+                meta["max_tokens"] = args.num_predict
+            await ws.send(json.dumps(meta))
+
+            for w in str(args.text).strip().split():
+                await ws.send(w)
+            await ws.send("__END__")
+
             # Receive PCM until server closes or idle timeout
             last_bytes_at = None
             while True:

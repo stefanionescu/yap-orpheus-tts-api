@@ -17,19 +17,20 @@ from .snac_stream import SnacDecoder
 MODEL_ID = os.getenv("MODEL_ID", "canopylabs/orpheus-3b-0.1-ft")
 
 # Finetune audio code ID layout (7 streams of 4096 codes each)
-FINETUNE_BASE = 128266  # start of code space
+FINETUNE_BASE = 128266      # start of audio code space
 FINETUNE_SPAN = 4096
 FINETUNE_LAYERS = 7
-FINETUNE_EOT = 128258   # stop token emitted by model
+FINETUNE_EOT = 128258       # stop id
+FINETUNE_START_AUDIO = 128257
 
 class FTStreamNormalizer:
-    """Consumes *token ids* from the finetuned Orpheus and yields aligned 7-code frames."""
+    """Consumes token ids and yields aligned 7-code frames once streaming starts."""
     def __init__(self):
+        self.started = False
         self.pos = 0
         self.buf = []
 
-    def _decode(self, tid: int):
-        # Map token id -> (layer_index, code 0..4095), or None if not an audio code token
+    def _decode_code(self, tid: int):
         rel = tid - FINETUNE_BASE
         if 0 <= rel < FINETUNE_LAYERS * FINETUNE_SPAN:
             k = rel // FINETUNE_SPAN
@@ -38,11 +39,19 @@ class FTStreamNormalizer:
         return None
 
     def push_id(self, tid: int):
-        dv = self._decode(tid)
+        # wait for start-of-audio
+        if not self.started:
+            if tid == FINETUNE_START_AUDIO:
+                self.started = True
+            return None
+        # ignore EOT in stream
+        if tid == FINETUNE_EOT:
+            return None
+
+        dv = self._decode_code(tid)
         if dv is None:
             return None
         k, v = dv
-        # in-order: expect k == self.pos
         if k == self.pos:
             self.buf.append(v)
             self.pos += 1
@@ -56,16 +65,14 @@ class FTStreamNormalizer:
         if k == 0:
             self.buf = [v]
             self.pos = 1
-        else:
-            # drop until we see a layer-0 again
-            pass
+        # else drop until we hit a layer-0 again
         return None
 
 DEFAULT_PARAMS: Dict[str, Any] = dict(
-    temperature=0.8,
+    temperature=0.6,
     top_p=0.9,
-    repetition_penalty=1.2,   # Orpheus requires >=1.1 for stability
-    num_predict=8192,         # sane default; override per call if you need
+    repetition_penalty=1.1,   # Orpheus requires >=1.1 for stability
+    num_predict=6144,         # default aligned with Baseten example max_tokens
 )
 
 # Simple voice aliases for backward compatibility with docs/tests
@@ -97,7 +104,7 @@ class OrpheusTTSEngine:
             temperature=float(params.get("temperature", 0.8)),
             top_p=float(params.get("top_p", 0.9)),
             repetition_penalty=float(params.get("repetition_penalty", 1.2)),
-            max_tokens=int(params.get("num_predict", 8192)),
+            max_tokens=int(params.get("num_predict", DEFAULT_PARAMS["num_predict"])),
             detokenize=False,                 # <-- text not needed
             skip_special_tokens=False,        # <-- keep specials; we need ids
             ignore_eos=False,
@@ -130,7 +137,7 @@ class OrpheusTTSEngine:
                 prev_n = len(toks)
         finally:
             try:
-                self.engine.abort(req_id)
+                await self.engine.abort(req_id)   # <-- await; it's async
             except Exception:
                 pass
 
@@ -231,6 +238,17 @@ class OrpheusTTSEngine:
         if temperature is not None: params["temperature"] = float(temperature)
         if top_p is not None: params["top_p"] = float(top_p)
         if repetition_penalty is not None: params["repetition_penalty"] = float(repetition_penalty)
+        # Support pass-through overrides (Baseten-style max_tokens/num_predict)
+        if "num_predict" in kwargs and kwargs["num_predict"] is not None:
+            try:
+                params["num_predict"] = int(kwargs["num_predict"])  # noqa: C401
+            except Exception:
+                pass
+        if "max_tokens" in kwargs and kwargs["max_tokens"] is not None:
+            try:
+                params["num_predict"] = int(kwargs["max_tokens"])  # alias
+            except Exception:
+                pass
 
         resolved_voice = ALIASES.get(str(voice).lower(), voice)
         async for frame in self._async_extract_frames(text, resolved_voice, params):
