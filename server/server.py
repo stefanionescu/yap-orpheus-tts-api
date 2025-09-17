@@ -164,15 +164,17 @@ async def _startup():
                 temperature=0.6,
                 top_p=0.8,
                 repetition_penalty=1.1,
-                max_tokens=6144,
+                # Keep warmup short and let it complete naturally to avoid 'Aborted request' logs
+                max_tokens=56,
                 detokenize=True,
                 skip_special_tokens=False,
                 ignore_eos=False,
                 stop_token_ids=[128258, 128009],
             )
             async def _prime(voice: str):
+                # Consume to completion (no early break) so vLLM finishes without aborting
                 async for _ in aiter_pcm_from_custom_tokens(engine.engine, "hello", voice, sp):
-                    break
+                    pass
             await asyncio.gather(_prime("tara"), _prime("zac"))
         except Exception:
             # Do not fail startup if warmup errors
