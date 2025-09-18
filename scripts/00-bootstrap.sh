@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Load env
-if [ -f ".env" ]; then source ".env"; fi
+# Common helpers and env
+source "scripts/common.sh"
+load_env_if_present
 
 echo "[bootstrap] Checking environment…"
 command -v nvidia-smi >/dev/null || { echo "nvidia-smi not found"; exit 1; }
-CUDA_VER=$(nvidia-smi | grep -o "CUDA Version: [0-9][0-9]*\.[0-9]*" | awk '{print $3}')
+CUDA_VER=$(detect_cuda_version)
 echo "[bootstrap] Detected CUDA $CUDA_VER"
 
 # Python (best effort only; on Runpod you are root and Python is preinstalled)
@@ -29,10 +30,7 @@ else
 fi
 
 # HF token check
-if [ -z "${HF_TOKEN:-}" ]; then
-  echo "[bootstrap] ERROR: HF_TOKEN not set. Export it in .env"
-  exit 1
-fi
+require_env HF_TOKEN
 
 echo "[bootstrap] OK"
 

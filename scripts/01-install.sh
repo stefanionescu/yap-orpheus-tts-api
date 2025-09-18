@@ -1,32 +1,20 @@
 #!/usr/bin/env bash
 set -euo pipefail
-# Load env if present
-if [ -f ".env" ]; then source ".env"; fi
+# Common helpers and env
+source "scripts/common.sh"
+load_env_if_present
 
 # Defaults
 : "${PYTHON_VERSION:=3.10}"
 : "${VENV_DIR:=$PWD/.venv}"
 
 # Required
-if [ -z "${HF_TOKEN:-}" ]; then
-  echo "[install] ERROR: HF_TOKEN not set. Export HF_TOKEN in the shell (deployment step)." >&2
-  echo "           Example: export HF_TOKEN=\"hf_xxx\"" >&2
-  exit 1
-fi
+require_env HF_TOKEN
 
 echo "[install] Creating venv at ${VENV_DIR}"
 
 # Resolve Python executable
-if command -v python${PYTHON_VERSION} >/dev/null 2>&1; then
-  PY_EXE=python${PYTHON_VERSION}
-elif command -v python3 >/dev/null 2>&1; then
-  PY_EXE=python3
-elif command -v python >/dev/null 2>&1; then
-  PY_EXE=python
-else
-  echo "[install] ERROR: Python not found. Please install Python ${PYTHON_VERSION}." >&2
-  exit 1
-fi
+PY_EXE=$(choose_python_exe) || { echo "[install] ERROR: Python not found. Please install Python ${PYTHON_VERSION}." >&2; exit 1; }
 
 PY_MAJMIN=$($PY_EXE -c 'import sys;print(f"{sys.version_info.major}.{sys.version_info.minor}")')
 
@@ -47,19 +35,10 @@ source "${VENV_DIR}/bin/activate"
 python -m pip install --upgrade pip wheel setuptools
 
 # Pick the right PyTorch CUDA wheel channel
-if [ -z "${CUDA_VER:-}" ] && command -v nvidia-smi >/dev/null 2>&1; then
-  CUDA_VER=$(nvidia-smi | grep -o "CUDA Version: [0-9][0-9]*\.[0-9]*" | awk '{print $3}')
+if [ -z "${CUDA_VER:-}" ]; then
+  CUDA_VER=$(detect_cuda_version)
 fi
-CUDA_MINOR=$(echo "${CUDA_VER:-12.1}" | cut -d. -f1-2 | tr -d '.')
-# Map CUDA version to PyTorch index URL
-# Supported: cu121, cu124, cu126, cu128 (best-effort mapping)
-case "$CUDA_MINOR" in
-  120|121) TORCH_IDX="https://download.pytorch.org/whl/cu121" ;;
-  122|123|124) TORCH_IDX="https://download.pytorch.org/whl/cu124" ;;
-  125|126) TORCH_IDX="https://download.pytorch.org/whl/cu126" ;;
-  127|128|129) TORCH_IDX="https://download.pytorch.org/whl/cu128" ;;
-  *) TORCH_IDX="https://download.pytorch.org/whl/cu124" ;;
-esac
+TORCH_IDX=$(map_torch_index_url "${CUDA_VER:-}")
 
 echo "[install] Installing Torch from ${TORCH_IDX}"
 pip install --index-url "${TORCH_IDX}" torch --only-binary=:all:
@@ -71,9 +50,7 @@ else
   pip install -r server/requirements.txt
 fi
 
-# Orpheus requires pinning vLLM to 0.7.3 due to regressions in newer versions.
-echo "[install] Pinning vLLM==0.7.3"
-pip install "vllm==0.7.3"
+# vLLM is pinned in requirements.txt; no separate install needed.
 
 # Optional: Install FlashAttention 2 prebuilt wheel if available (Linux + NVIDIA)
 echo "[install] Checking for FlashAttention prebuilt wheel"

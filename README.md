@@ -85,9 +85,11 @@ PY
 ## Voice and parameters
 
 - Voices: `tara` (female), `zac` (male). Aliases supported: `female`→`tara`, `male`→`zac`.
-- WebSocket protocol (Mode A): send a single JSON `{ "text": "...", "voice": "...", "max_tokens": 4096? }`. The server chunks internally.
+- WebSocket protocol (Mode A): send a single JSON `{ "text": "...", "voice": "...", "max_tokens": 4096? }`. The server chunks internally using sentence-safe, word-based chunks.
 -- Tuning envs (server-side):
-  - `MAX_CHUNK_SIZE` (default 280): chunk size in characters before prompt formatting
+  - `FIRST_CHUNK_WORDS` (default 40): target words for first chunk (low TTFB)
+  - `NEXT_CHUNK_WORDS` (default 140): target words for subsequent chunks
+  - `MIN_TAIL_WORDS` (default 12): merge last small tail into previous chunk
   - `SNAC_TORCH_COMPILE` (default 0): compile SNAC modules (0 recommended)
   - vLLM knobs in `server/vllm_config.py` or env
 
@@ -231,12 +233,19 @@ server/                # FastAPI + Orpheus (vLLM)
   engine_vllm.py       # vLLM async engine holder
   prompts.py           # Prompt helpers and audio control wrappers
   vllm_config.py       # vLLM tuning knobs
-  utils.py
+  streaming.py         # vLLM→custom tokens→SNAC decode→PCM async generator
+  core/                # Core helpers and building blocks
+    __init__.py
+    utils.py           # HF login helper
+    chunking.py        # Sentence-safe, word-based chunking helpers
+    custom_tokens.py   # <custom_token_…> parsing and Baseten token id mapping
+    snac_batcher.py    # SNAC model loader + async dynamic batcher
 scripts/               # All runnable scripts (bash)
   00-bootstrap.sh
   01-install.sh
   02-run-server.sh     # vLLM path (default)
   run-all.sh           # bootstrap → install → start
+  common.sh            # shared helpers (env, CUDA detect, torch index, background)
   print-env.sh
   stop.sh
 tests/

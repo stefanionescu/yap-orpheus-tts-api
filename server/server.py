@@ -1,19 +1,17 @@
 import os
-import re
-from typing import Optional, Iterator, List
+from typing import Optional
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 import asyncio
 import json
 from dotenv import load_dotenv
-import numpy as np
-import torch
 
-from .utils import ensure_hf_login
+from .core.utils import ensure_hf_login
 from .engine_vllm import OrpheusTTSEngine
-from .prompts import build_prompt, resolve_voice
 from vllm import SamplingParams
-from vllm.utils import random_uuid
-from snac import SNAC
+
+from .core.chunking import chunk_by_words, FIRST_CHUNK_WORDS, NEXT_CHUNK_WORDS, MIN_TAIL_WORDS
+from .prompts import resolve_voice
+from .streaming import aiter_pcm_from_custom_tokens
 
 load_dotenv(".env")
 
@@ -25,252 +23,6 @@ app = FastAPI(title="Orpheus 3B TTS (Runpod / vLLM+SNAC)")
 
 engine: OrpheusTTSEngine | None = None
 
-# --- Baseten-compatible token parsing and SNAC batching ---
-_TOKEN_RE = re.compile(r"<custom_token_(\d+)>")
-
-SNAC_DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
-PREPROCESS_STREAM = (
-    torch.cuda.Stream(device=torch.device(SNAC_DEVICE)) if torch.cuda.is_available() else None
-)
-
-_SNAC_BATCHEX = None
-
-def _get_snac_batched():
-    global _SNAC_BATCHEX
-    if _SNAC_BATCHEX is not None:
-        return _SNAC_BATCHEX
-
-    class _SnacBatched:
-        def __init__(self):
-            self.dtype_decoder = torch.float32
-            m = SNAC.from_pretrained("hubertsiuzdak/snac_24khz").eval().to(SNAC_DEVICE)
-            m.decoder = m.decoder.to(self.dtype_decoder)
-            if bool(int(os.getenv("SNAC_TORCH_COMPILE", "0"))):
-                m.decoder = torch.compile(m.decoder, dynamic=True)
-                m.quantizer = torch.compile(m.quantizer, dynamic=True)
-            self.m = m
-            self.stream = torch.cuda.Stream(device=torch.device(SNAC_DEVICE)) if torch.cuda.is_available() else None
-
-            # Dynamic batching controls
-            self.max_batch = int(os.getenv("SNAC_MAX_BATCH", "64"))
-            self.batch_timeout_ms = int(os.getenv("SNAC_BATCH_TIMEOUT_MS", "10"))
-            self._req_q: asyncio.Queue | None = None
-            self._worker_started = False
-
-        async def _ensure_worker(self):
-            if self._req_q is None:
-                self._req_q = asyncio.Queue()
-            if not self._worker_started:
-                # Start background batcher in current loop
-                asyncio.create_task(self._batch_worker())
-                self._worker_started = True
-
-        async def _batch_worker(self):
-            assert self._req_q is not None
-            while True:
-                # Wait for at least one item
-                first = await self._req_q.get()
-                items = [first]
-                # Small timeout to accumulate more
-                try:
-                    await asyncio.sleep(max(0.0, self.batch_timeout_ms / 1000.0))
-                except Exception:
-                    pass
-                while len(items) < self.max_batch:
-                    try:
-                        items.append(self._req_q.get_nowait())
-                    except Exception:
-                        break
-
-                # Split tuples
-                codes_list = [it[0] for it in items]
-                futs = [it[1] for it in items]
-
-                # Batch if shapes align, else fallback loop
-                try:
-                    with torch.inference_mode():
-                        if self.stream is not None:
-                            with torch.cuda.stream(self.stream):
-                                shapes = [(c[0].shape, c[1].shape, c[2].shape) for c in codes_list]
-                                can_cat = len(set(shapes)) == 1
-                                if can_cat:
-                                    c0 = torch.cat([c[0] for c in codes_list], dim=0)
-                                    c1 = torch.cat([c[1] for c in codes_list], dim=0)
-                                    c2 = torch.cat([c[2] for c in codes_list], dim=0)
-                                    z_q = self.m.quantizer.from_codes([c0, c1, c2])
-                                    audio_hat = self.m.decoder(z_q.to(self.dtype_decoder))[:, :, 2048:4096]
-                                    outs = list(audio_hat.split(1, dim=0))
-                                else:
-                                    outs = []
-                                    for c0, c1, c2 in codes_list:
-                                        z_q = self.m.quantizer.from_codes([c0, c1, c2])
-                                        outs.append(self.m.decoder(z_q.to(self.dtype_decoder))[:, :, 2048:4096])
-                                torch.cuda.synchronize()
-                        else:
-                            shapes = [(c[0].shape, c[1].shape, c[2].shape) for c in codes_list]
-                            can_cat = len(set(shapes)) == 1
-                            if can_cat:
-                                c0 = torch.cat([c[0] for c in codes_list], dim=0)
-                                c1 = torch.cat([c[1] for c in codes_list], dim=0)
-                                c2 = torch.cat([c[2] for c in codes_list], dim=0)
-                                z_q = self.m.quantizer.from_codes([c0, c1, c2])
-                                audio_hat = self.m.decoder(z_q.to(self.dtype_decoder))[:, :, 2048:4096]
-                                outs = list(audio_hat.split(1, dim=0))
-                            else:
-                                outs = []
-                                for c0, c1, c2 in codes_list:
-                                    z_q = self.m.quantizer.from_codes([c0, c1, c2])
-                                    outs.append(self.m.decoder(z_q.to(self.dtype_decoder))[:, :, 2048:4096])
-                    # Deliver results
-                    for fut, out in zip(futs, outs):
-                        if not fut.done():
-                            fut.set_result(out[0].detach().cpu().numpy())
-                except Exception as e:
-                    for fut in futs:
-                        if not fut.done():
-                            fut.set_exception(e)
-
-        async def decode_codes(self, codes_triplet: list[torch.Tensor]) -> np.ndarray:
-            # Enqueue request for dynamic batching and await result
-            await self._ensure_worker()
-            loop = asyncio.get_running_loop()
-            fut = loop.create_future()
-            assert self._req_q is not None
-            await self._req_q.put((codes_triplet, fut))
-            return await fut
-
-    _SNAC_BATCHEX = _SnacBatched()
-    return _SNAC_BATCHEX
-
-# --- Sentence-safe, word-based chunking (latency-first) ---
-FIRST_CHUNK_WORDS = int(os.getenv("FIRST_CHUNK_WORDS", "40"))
-NEXT_CHUNK_WORDS = int(os.getenv("NEXT_CHUNK_WORDS", "140"))
-MIN_TAIL_WORDS = int(os.getenv("MIN_TAIL_WORDS", "12"))
-
-_ABBR = {
-    "mr.", "mrs.", "ms.", "dr.", "prof.", "sr.", "jr.", "vs.", "st.", "no.",
-    "inc.", "ltd.", "etc.", "e.g.", "i.e.", "al.", "fig.", "dept.", "est.",
-    "col.", "gen.", "cmdr.", "u.s.", "u.k.", "u.n.", "a.m.", "p.m.",
-    "jan.", "feb.", "mar.", "apr.", "jun.", "jul.", "aug.", "sep.", "sept.",
-    "oct.", "nov.", "dec."
-}
-_WORD_RE = re.compile(r"\b[\w’'-]+\b", re.UNICODE)
-
-def _split_sentences_fast(text: str) -> List[str]:
-    s = re.sub(r"\s+", " ", text.strip())
-    if not s:
-        return []
-    out: List[str] = []
-    start = 0
-    for m in re.finditer(r"[.!?]+(?=(?:['\")\]]*\s|$))", s):
-        end = m.end()
-        seg = s[start:end].strip()
-        if seg:
-            last = seg.split()[-1].lower()
-            last = re.sub(r"[^a-z.]+", "", last)
-            if last in _ABBR:
-                continue
-            out.append(seg)
-            start = end
-    tail = s[start:].strip()
-    if tail:
-        out.append(tail)
-    return out
-
-def _word_count(s: str) -> int:
-    return len(_WORD_RE.findall(s))
-
-def chunk_by_words(
-    text: str,
-    first_chunk_words: int = FIRST_CHUNK_WORDS,
-    next_chunk_words: int = NEXT_CHUNK_WORDS,
-    min_tail_words: int = MIN_TAIL_WORDS,
-) -> list[str]:
-    sents = _split_sentences_fast(text)
-    if not sents:
-        return []
-
-    chunks: List[str] = []
-    buf: List[str] = []
-    buf_wc = 0
-    target = max(1, first_chunk_words)
-
-    for sent in sents:
-        wc = _word_count(sent)
-
-        if not buf and wc > target:
-            chunks.append(sent.strip())
-            target = max(1, next_chunk_words)
-            continue
-
-        if buf and (buf_wc + wc) > target:
-            chunks.append(" ".join(buf).strip())
-            buf, buf_wc = [sent], wc
-            target = max(1, next_chunk_words)
-        else:
-            buf.append(sent)
-            buf_wc += wc
-
-    if buf:
-        chunks.append(" ".join(buf).strip())
-
-    if min_tail_words > 0 and len(chunks) >= 2 and _word_count(chunks[-1]) < min_tail_words:
-        chunks[-2] = (chunks[-2] + " " + chunks[-1]).strip()
-        chunks.pop()
-
-    return chunks
-
-def _split_custom_tokens(s: str) -> List[int]:
-    return [int(x) for x in _TOKEN_RE.findall(s) if x != "0"]
-
-def _turn_token_into_id(token_number: int, index: int) -> int:
-    # Baseten’s exact rule
-    return token_number - 10 - ((index % 7) * 4096)
-
-async def aiter_pcm_from_custom_tokens(engine, prompt: str, voice: str, sp) -> Iterator[bytes]:
-    """
-    vLLM → detokenized pieces → <custom_token_…> → 28→PCM, Baseten-identical.
-    Monotonic delta consumption (no rescans, no resets) for artifact-free audio.
-    """
-    tok_index = 0  # never reset within a single generation
-    buf_ids: list[int] = []
-    snacx = _get_snac_batched()
-
-    prev_len = 0  # length of detokenized text we have already processed
-    async for out in engine.generate(build_prompt(prompt, resolve_voice(voice)), sp, random_uuid()):
-        outs = out.outputs or []
-        if not outs:
-            continue
-
-        piece = outs[0].text or ""
-        # Only process newly appended text to keep sequence monotonic
-        if len(piece) <= prev_len:
-            continue
-        delta = piece[prev_len:]
-        prev_len = len(piece)
-
-        for n in _split_custom_tokens(delta):
-            tid = _turn_token_into_id(n, tok_index)
-            tok_index += 1
-            buf_ids.append(tid)
-
-            # Every 7 tokens is one frame; after 4 frames (28 ids) → decode
-            if (tok_index % 7 == 0) and len(buf_ids) >= 28:
-                window = buf_ids[-28:]
-                arr = np.asarray(window, dtype=np.int32).reshape(-1, 7)
-                codes_0 = torch.from_numpy(arr[:, 0]).unsqueeze(0).to(SNAC_DEVICE)
-                codes_1 = torch.from_numpy(arr[:, [1, 4]].reshape(-1)).unsqueeze(0).to(SNAC_DEVICE)
-                codes_2 = torch.from_numpy(arr[:, [2, 3, 5, 6]].reshape(-1)).unsqueeze(0).to(SNAC_DEVICE)
-
-                if PREPROCESS_STREAM is not None:
-                    with torch.cuda.stream(PREPROCESS_STREAM):
-                        pass
-                    torch.cuda.synchronize()
-
-                audio = await snacx.decode_codes([codes_0, codes_1, codes_2])
-                pcm = (np.clip(audio, -1.0, 1.0) * 32767.0).astype(np.int16).tobytes()
-                if pcm:
-                    yield pcm
 
 @app.on_event("startup")
 async def _startup():
@@ -281,7 +33,8 @@ async def _startup():
     async def _warmup():
         try:
             # Preload SNAC model to avoid first-request latency
-            _ = _get_snac_batched()
+            from .core.snac_batcher import get_snac_batched
+            _ = get_snac_batched()
             # Small prompts per voice to prime model + SNAC path using tokens→PCM
             sp = SamplingParams(
                 temperature=0.6,

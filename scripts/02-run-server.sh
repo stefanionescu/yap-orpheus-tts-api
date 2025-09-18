@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
-# Load env if present (optional)
-if [ -f ".env" ]; then source ".env"; fi
+# Common helpers and env
+source "scripts/common.sh"
+load_env_if_present
 # Defaults
 : "${VENV_DIR:=$PWD/.venv}"
 : "${HOST:=0.0.0.0}"
@@ -45,15 +46,5 @@ export TRITON_DISABLE_COMPILATION=1
 
 echo "[run] Starting FastAPI on ${HOST:-0.0.0.0}:${PORT:-8000}"
 CMD="uvicorn server.server:app --host \"${HOST:-0.0.0.0}\" --port \"${PORT:-8000}\" --timeout-keep-alive 75 --log-level info"
-
-# Always start detached and write PID + logs
-mkdir -p logs .run
-# Fully detach from TTY so Ctrl-C on this shell won't signal the server
-setsid bash -lc "$CMD" </dev/null > logs/server.log 2>&1 &
-PID=$!
-echo $PID > .run/server.pid
-echo "[run] Server started in background (PID $PID)."
-echo "[run] Following logs (Ctrl-C detaches, server keeps running)"
-touch logs/server.log || true
-exec tail -n +1 -F logs/server.log
+start_background "$CMD" ".run/server.pid" "logs/server.log"
 
