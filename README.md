@@ -200,9 +200,17 @@ The script runs non-interactively.
 ## Performance tuning
 
 - Concurrency: `VLLM_MAX_SEQS` controls continuous batching parallelism (e.g., 16–24 on A100 40GB)
-- Memory packing: `VLLM_GPU_UTIL` (e.g., 0.92)
+- GPU util: `VLLM_GPU_UTIL` (e.g., 0.95). If OOM, drop to 0.92
 - Context: `VLLM_MAX_MODEL_LEN` (default 8192; increase for longer texts if memory allows)
 - Dtype: `VLLM_DTYPE=float16|bfloat16` (Ampere runs FP16/BF16 well)
+- SNAC batching: `SNAC_MAX_BATCH` (default 64), `SNAC_BATCH_TIMEOUT_MS` (default 10). Greatly improves decoder throughput at load
+- Prefix cache: enabled by default (`VLLM_PREFIX_CACHE=1`)
+- Threads: set to 1 to avoid CPU thrash: `OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 NUMEXPR_NUM_THREADS=1`
+- FlashAttention 2: If compatible wheels exist for your Torch/CUDA, install:
+  ```bash
+  pip install --no-build-isolation "flash-attn>=2.5.7"
+  ```
+  vLLM detects it automatically on restart.
 - Eager mode: we disable torch.compile/triton JIT to avoid in-container builds and speed startup.
 
 Install speed knobs:
