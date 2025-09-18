@@ -10,7 +10,7 @@ def main() -> None:
     print(f"[build-trtllm] model={model_id}")
     print(f"[build-trtllm] output dir={out_dir}")
 
-    llm = LLM.from_hugging_face(
+    llm = LLM(
         model=model_id,
         dtype="float16",
         max_batch_size=int(os.getenv("TRTLLM_MAX_BATCH", "24")),
@@ -18,6 +18,7 @@ def main() -> None:
         max_output_len=int(os.getenv("TRTLLM_MAX_OUTPUT", "2048")),
         max_seq_len=int(os.getenv("TRTLLM_MAX_SEQ", "3072")),
         gpt_attention_plugin="auto",
+        gemm_plugin="auto",
         use_paged_context_fmha=True,
         kv_cache_quantization="int8",
         enable_chunked_context=True,
