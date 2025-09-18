@@ -55,19 +55,18 @@ BACKEND=${ORPHEUS_BACKEND:-trtllm}
 if [ "${BACKEND}" != "vllm" ]; then
   echo "[install] Installing TensorRT-LLM runtime via NVIDIA PyPI"
   set +e
+  # Let tensorrt-llm pull a compatible TensorRT (targets CUDA 12.x; prefer 12.6–12.8)
   pip install --extra-index-url https://pypi.nvidia.com \
-    tensorrt_llm==0.21.0 \
-    tensorrt==10.7.0 \
-    cuda-python==12.6.0
+    tensorrt-llm==0.21.0
   STATUS=$?
   set -e
   if [ $STATUS -ne 0 ]; then
-    echo "[install] WARNING: TRT-LLM wheels failed to install; you may need CUDA>=12.6 and recent NVIDIA driver" >&2
+    echo "[install] WARNING: tensorrt-llm install failed. Ensure CUDA 12.6/12.8 and driver r535+ are present." >&2
   fi
 fi
 
 # Optional: Install FlashAttention 2 prebuilt wheel if available (Linux + NVIDIA)
-echo "[install] Checking for FlashAttention prebuilt wheel"
+echo "[install] Checking for FlashAttention prebuilt wheel (optional)"
 if [ "$(uname -s)" = "Linux" ] && command -v nvidia-smi >/dev/null 2>&1; then
   PY_INFO=$(python - <<'PY'
 import torch, platform
@@ -76,7 +75,12 @@ PY
 )
   echo "[install] ${PY_INFO}"
   set +e
-  pip install --no-build-isolation --only-binary=:all: "flash-attn>=2.5.7" && echo "[install] Installed flash-attn" || echo "[install] flash-attn wheel unavailable; skipping"
+  pip install --no-build-isolation --only-binary=:all: "flash-attn>=2.5.7"
+  if [ $? -eq 0 ]; then
+    echo "[install] flash-attn installed"
+  else
+    echo "[install] flash-attn wheel unavailable for torch=$(python -c 'import torch;print(torch.__version__)'); skipping"
+  fi
   set -e
 else
   echo "[install] Non-Linux or no NVIDIA driver detected; skipping flash-attn"

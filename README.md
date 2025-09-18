@@ -19,13 +19,7 @@ Run Orpheus 3B TTS behind a FastAPI server with TensorRT-LLM (default) or vLLM. 
 # 1) Set required token (deployment step)
 export HF_TOKEN="hf_xxx"
 
-# 2) Choose backend (default is TensorRT-LLM)
-export ORPHEUS_BACKEND=trtllm   # or: vllm
-
-# 3) Build TRT-LLM engine once (for trtllm backend)
-python server/build_trtllm_engine.py
-
-# 4) Bootstrap → install → run (tails logs)
+# 2) Bootstrap → install → run (auto-installs TRT-LLM and auto-builds engine on first run)
 bash scripts/run-all.sh
 
 # 3) Health check
@@ -75,6 +69,9 @@ bash scripts/stop.sh --clean-install
 
 # Also clean system apt caches from bootstrap step
 bash scripts/stop.sh --clean-system
+
+# Remove everything
+bash scripts/stop.sh --clean-system --clean-install
 ```
 
 ### Tests (optional)

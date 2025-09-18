@@ -17,6 +17,20 @@ source_env_dir "scripts/env"
 # Print selected backend
 echo "[run] Backend: ${ORPHEUS_BACKEND:-trtllm}"
 
+# Optional: help dynamic loader find TRT/LLM libs if needed
+if [ "${ORPHEUS_BACKEND:-trtllm}" != "vllm" ]; then
+  export LD_LIBRARY_PATH="${LD_LIBRARY_PATH}:$(python - <<'PY'
+import site,glob,os
+paths = []
+for sp in site.getsitepackages():
+    paths += glob.glob(os.path.join(sp, 'tensorrt*'))
+    paths += glob.glob(os.path.join(sp, 'nvidia/cuda_runtime*'))
+if paths:
+    print(os.path.dirname(paths[0]))
+PY
+)"
+fi
+
 echo "[run] Starting FastAPI on ${HOST:-0.0.0.0}:${PORT:-8000}"
 CMD=$(build_uvicorn_cmd)
 start_background "$CMD" ".run/server.pid" "logs/server.log"
