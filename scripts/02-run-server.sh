@@ -27,8 +27,10 @@ export VLLM_MAX_SEQS=${VLLM_MAX_SEQS:-24}
 export SNAC_TORCH_COMPILE=${SNAC_TORCH_COMPILE:-0}
 # Enable vLLM prefix cache to cut prefill on repeated voice/prompt preambles
 export VLLM_PREFIX_CACHE=${VLLM_PREFIX_CACHE:-1}
-# Server-side chunking size for Baseten Mode A (~280 chars recommended)
-export MAX_CHUNK_SIZE=${MAX_CHUNK_SIZE:-280}
+# Sentence-safe, word-based chunking (small first chunk → low TTFB)
+export FIRST_CHUNK_WORDS=${FIRST_CHUNK_WORDS:-40}
+export NEXT_CHUNK_WORDS=${NEXT_CHUNK_WORDS:-140}
+export MIN_TAIL_WORDS=${MIN_TAIL_WORDS:-12}
 # SNAC dynamic batching
 export SNAC_MAX_BATCH=${SNAC_MAX_BATCH:-64}
 export SNAC_BATCH_TIMEOUT_MS=${SNAC_BATCH_TIMEOUT_MS:-10}
