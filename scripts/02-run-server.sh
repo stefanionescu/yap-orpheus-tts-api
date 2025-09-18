@@ -20,7 +20,7 @@ export NUMEXPR_NUM_THREADS=${NUMEXPR_NUM_THREADS:-1}
 export NVIDIA_TF32_OVERRIDE=1
 # vLLM tuning defaults (override via env if needed)
 export VLLM_DTYPE=${VLLM_DTYPE:-float16}
-export VLLM_MAX_MODEL_LEN=${VLLM_MAX_MODEL_LEN:-8192}
+export VLLM_MAX_MODEL_LEN=${VLLM_MAX_MODEL_LEN:-3072}
 export VLLM_GPU_UTIL=${VLLM_GPU_UTIL:-0.95}
 export VLLM_MAX_SEQS=${VLLM_MAX_SEQS:-24}
 # Disable torch.compile for SNAC by default to match Baseten testing
@@ -34,6 +34,8 @@ export MIN_TAIL_WORDS=${MIN_TAIL_WORDS:-12}
 # SNAC dynamic batching
 export SNAC_MAX_BATCH=${SNAC_MAX_BATCH:-64}
 export SNAC_BATCH_TIMEOUT_MS=${SNAC_BATCH_TIMEOUT_MS:-10}
+# Default max tokens per chunk (server SamplingParams default)
+export ORPHEUS_MAX_TOKENS=${ORPHEUS_MAX_TOKENS:-2048}
 # Ensure vLLM uses spawn (safe with CUDA init in background thread)
 export VLLM_WORKER_MULTIPROC_METHOD=spawn
 # Disable torch.compile/inductor to avoid building Triton/C extensions at runtime (vLLM path)

@@ -423,7 +423,7 @@ async def tts_ws(ws: WebSocket):
                         temperature=float(temperature if (temperature is not None) else 0.6),
                         top_p=float(top_p if (top_p is not None) else 0.8),
                         repetition_penalty=float(repetition_penalty if (repetition_penalty is not None) else 1.1),
-                        max_tokens=int(num_predict if (num_predict is not None) else 6144),
+                        max_tokens=int(num_predict if (num_predict is not None) else int(os.getenv("ORPHEUS_MAX_TOKENS", "2048"))),
                         detokenize=True,
                         skip_special_tokens=False,
                         ignore_eos=False,
