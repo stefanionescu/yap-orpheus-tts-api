@@ -6,8 +6,15 @@ import json
 from dotenv import load_dotenv
 
 from .core.utils import ensure_hf_login
-from .engine_vllm import OrpheusTTSEngine
-from vllm import SamplingParams
+from .engine_selector import OrpheusTTSEngine
+try:
+    from vllm import SamplingParams  # type: ignore
+except Exception:
+    # Lightweight fallback for TRT-LLM backend to carry sampling params
+    class SamplingParams:  # type: ignore
+        def __init__(self, **kwargs):
+            for k, v in kwargs.items():
+                setattr(self, k, v)
 
 from .core.chunking import chunk_by_words, FIRST_CHUNK_WORDS, NEXT_CHUNK_WORDS, MIN_TAIL_WORDS
 from .prompts import resolve_voice
@@ -19,7 +26,7 @@ HOST = os.getenv("HOST", "0.0.0.0")
 PORT = int(os.getenv("PORT", "8000"))
 SAMPLE_RATE = 24000
 
-app = FastAPI(title="Orpheus 3B TTS (Runpod / vLLM+SNAC)")
+app = FastAPI(title="Orpheus 3B TTS (A100 / TRT-LLM or vLLM + SNAC)")
 
 engine: OrpheusTTSEngine | None = None
 

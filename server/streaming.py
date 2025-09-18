@@ -1,18 +1,21 @@
 import asyncio
 import os
-from typing import Iterator
+import uuid
+from typing import Iterator, Any
 
 import numpy as np
 import torch
-from vllm import SamplingParams
-from vllm.utils import random_uuid
 
 from .prompts import build_prompt, resolve_voice
 from .core.custom_tokens import split_custom_tokens, turn_token_into_id
 from .core.snac_batcher import get_snac_batched, SNAC_DEVICE
 
 
-async def aiter_pcm_from_custom_tokens(engine, prompt: str, voice: str, sp: SamplingParams) -> Iterator[bytes]:
+def _random_uuid() -> str:
+    return uuid.uuid4().hex
+
+
+async def aiter_pcm_from_custom_tokens(engine: Any, prompt: str, voice: str, sp: Any) -> Iterator[bytes]:
     """
     vLLM → detokenized pieces → <custom_token_…> → 28→PCM, Baseten-identical.
     Monotonic delta consumption (no rescans, no resets) for artifact-free audio.
@@ -22,7 +25,7 @@ async def aiter_pcm_from_custom_tokens(engine, prompt: str, voice: str, sp: Samp
     snacx = get_snac_batched()
 
     prev_len = 0  # length of detokenized text we have already processed
-    async for out in engine.generate(build_prompt(prompt, resolve_voice(voice)), sp, random_uuid()):
+    async for out in engine.generate(build_prompt(prompt, resolve_voice(voice)), sp, _random_uuid()):
         outs = out.outputs or []
         if not outs:
             continue

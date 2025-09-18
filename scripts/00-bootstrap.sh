@@ -27,6 +27,7 @@ if command -v apt-get >/dev/null 2>&1; then
   fi
 else
   echo "[bootstrap] apt-get not available. Skipping system packages."
+  echo "[bootstrap] Note: TRT-LLM pip wheels require recent NVIDIA driver + CUDA runtime present."
 fi
 
 # HF token check

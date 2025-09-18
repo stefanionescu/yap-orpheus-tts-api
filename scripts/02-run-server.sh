@@ -14,6 +14,9 @@ source "${VENV_DIR}/bin/activate"
 # Source modular env snippets
 source_env_dir "scripts/env"
 
+# Print selected backend
+echo "[run] Backend: ${ORPHEUS_BACKEND:-trtllm}"
+
 echo "[run] Starting FastAPI on ${HOST:-0.0.0.0}:${PORT:-8000}"
 CMD=$(build_uvicorn_cmd)
 start_background "$CMD" ".run/server.pid" "logs/server.log"

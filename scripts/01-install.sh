@@ -43,14 +43,28 @@ TORCH_IDX=$(map_torch_index_url "${CUDA_VER:-}")
 echo "[install] Installing Torch from ${TORCH_IDX}"
 pip install --index-url "${TORCH_IDX}" torch --only-binary=:all:
 
-echo "[install] Requirements"
+echo "[install] Requirements (base)"
 if [ -f requirements.txt ]; then
   pip install -r requirements.txt
 else
   pip install -r server/requirements.txt
 fi
 
-# vLLM is pinned in requirements.txt; no separate install needed.
+# Install TensorRT-LLM (Dockerless) if requested backend is TRT-LLM
+BACKEND=${ORPHEUS_BACKEND:-trtllm}
+if [ "${BACKEND}" != "vllm" ]; then
+  echo "[install] Installing TensorRT-LLM runtime via NVIDIA PyPI"
+  set +e
+  pip install --extra-index-url https://pypi.nvidia.com \
+    tensorrt_llm==0.21.0 \
+    tensorrt==10.7.0 \
+    cuda-python==12.6.0
+  STATUS=$?
+  set -e
+  if [ $STATUS -ne 0 ]; then
+    echo "[install] WARNING: TRT-LLM wheels failed to install; you may need CUDA>=12.6 and recent NVIDIA driver" >&2
+  fi
+fi
 
 # Optional: Install FlashAttention 2 prebuilt wheel if available (Linux + NVIDIA)
 echo "[install] Checking for FlashAttention prebuilt wheel"

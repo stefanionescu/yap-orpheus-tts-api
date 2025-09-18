@@ -14,5 +14,17 @@ bash scripts/00-bootstrap.sh
 echo "[run-all] 2/3 install"
 bash scripts/01-install.sh
 
+BACKEND=${1:-${ORPHEUS_BACKEND:-trtllm}}
+export ORPHEUS_BACKEND="$BACKEND"
+if [ "$BACKEND" != "vllm" ]; then
+  # Build engine if missing
+  ENGINE_DIR=${ENGINE_DIR:-engine/orpheus_a100_fp16_kvint8}
+  if [ ! -d "$ENGINE_DIR" ] || [ -z "$(ls -A "$ENGINE_DIR" 2>/dev/null)" ]; then
+    echo "[run-all] Building TRT-LLM engine at $ENGINE_DIR"
+    python server/build_trtllm_engine.py || {
+      echo "[run-all] ERROR: failed to build TRT-LLM engine" >&2; exit 1; }
+  fi
+fi
+
 echo "[run-all] 3/3 start server"
 exec bash scripts/02-run-server.sh

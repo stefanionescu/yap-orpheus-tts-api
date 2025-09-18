@@ -1,6 +1,6 @@
 ## Yap Orpheus TTS API
 
-Run Orpheus 3B TTS behind a FastAPI server with vLLM continuous batching. Optimized for A100 GPU instances (Runpod/AWS) using a plain Python virtualenv.
+Run Orpheus 3B TTS behind a FastAPI server with TensorRT-LLM (default) or vLLM. Optimized for A100 GPU instances (Runpod/AWS) using a plain Python virtualenv (no Docker).
 
 - **Server**: `server/`
 - **Scripts**: `scripts/`
@@ -19,7 +19,13 @@ Run Orpheus 3B TTS behind a FastAPI server with vLLM continuous batching. Optimi
 # 1) Set required token (deployment step)
 export HF_TOKEN="hf_xxx"
 
-# 2) Bootstrap → install → run (tails logs)
+# 2) Choose backend (default is TensorRT-LLM)
+export ORPHEUS_BACKEND=trtllm   # or: vllm
+
+# 3) Build TRT-LLM engine once (for trtllm backend)
+python server/build_trtllm_engine.py
+
+# 4) Bootstrap → install → run (tails logs)
 bash scripts/run-all.sh
 
 # 3) Health check
@@ -52,6 +58,7 @@ PY
   - `FIRST_CHUNK_WORDS` (default 40), `NEXT_CHUNK_WORDS` (140), `MIN_TAIL_WORDS` (12)
   - `SNAC_TORCH_COMPILE` (0), `SNAC_MAX_BATCH` (64), `SNAC_BATCH_TIMEOUT_MS` (10)
   - vLLM: see `server/vllm_config.py` and `scripts/env/vllm.sh`
+  - TensorRT-LLM: `scripts/env/trtllm.sh` — key vars: `ENGINE_DIR`, `TRTLLM_MAX_*`, `TRTLLM_KV_FRACTION`, `ORPHEUS_BACKEND`
 - Inspect current values:
 ```bash
 bash scripts/print-env.sh
@@ -86,6 +93,8 @@ python tests/bench.py
 server/
   server.py
   engine_vllm.py
+    engine_trtllm.py
+    engine_selector.py
   prompts.py
   vllm_config.py
   streaming.py
@@ -99,12 +108,14 @@ scripts/
   00-bootstrap.sh
   01-install.sh
   02-run-server.sh
+  (no python scripts here)
   run-all.sh
   print-env.sh
   stop.sh
   env/
     perf.sh
     vllm.sh
+    trtllm.sh
     tts.sh
   lib/
     common.sh
