@@ -86,4 +86,20 @@ start_background() {
   exec tail -n +1 -F "$log_file"
 }
 
+# Source all .sh files from a directory if it exists
+source_env_dir() {
+  local dir="$1"
+  if [ -d "$dir" ]; then
+    # shellcheck disable=SC1090
+    for f in "$dir"/*.sh; do [ -e "$f" ] && source "$f"; done
+  fi
+}
+
+# Build a uvicorn command string for this server
+build_uvicorn_cmd() {
+  local host="${HOST:-0.0.0.0}"
+  local port="${PORT:-8000}"
+  echo "uvicorn server.server:app --host \"$host\" --port \"$port\" --timeout-keep-alive 75 --log-level info"
+}
+
 

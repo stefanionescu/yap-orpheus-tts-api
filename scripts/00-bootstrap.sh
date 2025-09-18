@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # Common helpers and env
-source "scripts/common.sh"
+source "scripts/lib/common.sh"
 load_env_if_present
 
 echo "[bootstrap] Checking environment…"

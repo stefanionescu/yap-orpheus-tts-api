@@ -1,68 +1,31 @@
-# Yap Orpheus TTS API
+### Yap Orpheus TTS API
 
-This repo provides a docker-free setup to run Orpheus 3B TTS behind a FastAPI server with vLLM continuous batching. It’s designed for Runpod/AWS-style GPU instances and a plain Python virtualenv.
+Run Orpheus 3B TTS behind a FastAPI server with vLLM continuous batching. Optimized for A100 GPU instances (Runpod/AWS) using a plain Python virtualenv.
 
-- Server module lives in `server/`
-- Scripts live in `scripts/`
-- Load/latency tests live in `tests/`
-- All scripts must be run with `bash` (not sh)
+- **Server**: `server/`
+- **Scripts**: `scripts/`
+- **Tests**: `tests/`
 
-## Requirements
+### Prerequisites
 
 - NVIDIA GPU with CUDA 12.x drivers (A100 recommended)
 - Ubuntu-based image with `nvidia-smi`
-- A Hugging Face access token with access to the model
-- Python 3.10 on the instance
+- Python 3.10
+- Hugging Face token (`HF_TOKEN`) with access to the model
 
-## Quickstart (vLLM path)
+### Quickstart
 
-1) Clone and enter the project directory
 ```bash
-cd /Users/dr_stone/Documents/work/yap-orpheus-tts-api
-```
+# 1) Set required token (deployment step)
+export HF_TOKEN="hf_xxx"
 
-2) Set required environment variable (deployment step)
-```bash
-export HF_TOKEN="hf_xxx"  # must be set in the shell/session
-```
-
-3) Bootstrap system packages and checks
-```bash
-bash scripts/00-bootstrap.sh
-```
-
-4) Create virtualenv and install Python deps (Torch, vLLM, deps)
-```bash
-bash scripts/01-install.sh
-```
-
-5) Start the server on port 8000 (vLLM backend) — auto-detached with live logs
-```bash
-bash scripts/02-run-server.sh   # starts in background and tails logs
-# Press Ctrl-C to stop following logs; server keeps running (PID in .run/server.pid)
-# Re-attach later:
-tail -f logs/server.log
-
-# Show last 200 lines of the server log (one-time)
-tail -n 200 logs/server.log
-```
-
-Alternatively, you can run all three steps with one command:
-```bash
+# 2) Bootstrap → install → run (tails logs)
 bash scripts/run-all.sh
-```
 
-## Health check and basic call
-
-- Health
-```bash
+# 3) Health check
 curl -s http://127.0.0.1:8000/healthz
-```
 
-- WebSocket synthesis (server streams raw PCM16, 24 kHz). Mode A (Baseten best-performance): send a single JSON with the full text. The server will split into ~280-char chunks internally and stream audio sequentially.
-
-  Example (Mode A):
-```bash
+# 4) One-off WS synthesis to WAV (24 kHz)
 python - <<'PY'
 import asyncio, json, websockets, wave
 async def main():
@@ -82,174 +45,71 @@ asyncio.run(main())
 PY
 ```
 
-## Voice and parameters
+### Environment
 
-- Voices: `tara` (female), `zac` (male). Aliases supported: `female`→`tara`, `male`→`zac`.
-- WebSocket protocol (Mode A): send a single JSON `{ "text": "...", "voice": "...", "max_tokens": 4096? }`. The server chunks internally using sentence-safe, word-based chunks.
--- Tuning envs (server-side):
-  - `FIRST_CHUNK_WORDS` (default 40): target words for first chunk (low TTFB)
-  - `NEXT_CHUNK_WORDS` (default 140): target words for subsequent chunks
-  - `MIN_TAIL_WORDS` (default 12): merge last small tail into previous chunk
-  - `SNAC_TORCH_COMPILE` (default 0): compile SNAC modules (0 recommended)
-  - vLLM knobs in `server/vllm_config.py` or env
-
-## Running tests (warmup and benchmark)
-
-Enter the virtualenv first:
+- Required: `HF_TOKEN`
+- Optional knobs (already surfaced via `scripts/env/`):
+  - `FIRST_CHUNK_WORDS` (default 40), `NEXT_CHUNK_WORDS` (140), `MIN_TAIL_WORDS` (12)
+  - `SNAC_TORCH_COMPILE` (0), `SNAC_MAX_BATCH` (64), `SNAC_BATCH_TIMEOUT_MS` (10)
+  - vLLM: see `server/vllm_config.py` and `scripts/env/vllm.sh`
+- Inspect current values:
 ```bash
-source .venv/bin/activate
+bash scripts/print-env.sh
 ```
 
-Warmup (defaults, WebSocket):
+### Stop and cleanup
+
 ```bash
+# Stop server and remove .run/ and logs/
+bash scripts/stop.sh
+
+# Also remove venv and caches from install step
+bash scripts/stop.sh --clean-install
+
+# Also clean system apt caches from bootstrap step
+bash scripts/stop.sh --clean-system
+```
+
+### Tests (optional)
+
+```bash
+# Warmup (single WS stream)
 python tests/warmup.py
-```
 
-Warmup (with params):
-```bash
-python tests/warmup.py --server 127.0.0.1:8000 --voice female
-python tests/warmup.py --server 127.0.0.1:8000 --voice male --seed 42
-```
-
-Benchmark (defaults, WebSocket):
-```bash
+# Benchmark (concurrent WS sessions)
 python tests/bench.py
 ```
 
-Benchmark (with params, concurrent WS streaming sessions):
-```bash
-# 32 requests, 16 concurrent, male (Zac)
-python tests/bench.py --server 127.0.0.1:8000 --n 32 --concurrency 16 --voice male
-# with extra generation params
-python tests/bench.py --server 127.0.0.1:8000 --n 32 --concurrency 16 --voice female --seed 123
-```
-
-Defaults:
-- Server: `127.0.0.1:8000`
-- Text: "Oh my god Danny, you're so smart and handsome! You're gonna love talking to me once Stefan is done with the app. Can't wait to see you there sweetie!"
-- Voice: `female` (Tara)
-
-Notes:
-- Tests do not write WAV files; they count streamed bytes to infer audio seconds and compute metrics (TTFB, RTF, xRT, throughput).
-- `tests/bench.py` writes per-session metrics JSONL to `tests/results/bench_metrics.jsonl`.
-
-## Client for remote testing
-
-The `tests/client.py` script connects to a remote Orpheus server and saves audio as WAV files locally. Perfect for testing your RunPod deployment from your laptop.
-
-**Setup local environment (one-time):**
-
-1) Create a local Python virtualenv:
-```bash
-# On your laptop/local machine (not the server)
-cd /path/to/yap-orpheus-tts-api
-python3 -m venv .venv
-source .venv/bin/activate
-```
-
-2) Install minimal client dependencies:
-```bash
-pip install --upgrade pip
-pip install websockets python-dotenv
-```
-
-3) Create `.env` file with your RunPod details:
-```bash
-# .env (in project root)
-RUNPOD_TCP_HOST=your-pod-id-12345.proxy.runpod.net
-RUNPOD_TCP_PORT=8000
-RUNPOD_API_KEY=your-runpod-api-key-if-needed
-```
-
-**Usage:**
-
-Local testing (server running on same machine):
-```bash
-source .venv/bin/activate
-python tests/client.py --server 127.0.0.1:8000 --voice female --text "Hello from my laptop"
-```
-
-Remote RunPod testing (reads from .env):
-```bash
-source .venv/bin/activate
-python tests/client.py --voice tara --text "Testing from my laptop to RunPod"
-```
-
-Custom server:
-```bash
-python tests/client.py --server wss://your-domain.com:8000 --voice zac --max-tokens 4096
-```
-
-**Output:**
-- WAV files saved to `audio/tts_<timestamp>.wav`
-- Metrics printed: TTFB, wall time, audio duration, RTF, xRT
-- Play the WAV files with any audio player to hear the results
-
-## Stopping and cleanup
-
-Stop the server and clean artifacts:
-```bash
-bash scripts/stop.sh                    # stop server, remove .run/ and logs/
-# also remove venv and caches from install step:
-bash scripts/stop.sh --clean-install
-# also clean system apt caches from bootstrap step:
-bash scripts/stop.sh --clean-system
-# combine:
-bash scripts/stop.sh --clean-install --clean-system
-```
-The script runs non-interactively.
-
-## Performance tuning
-
-- Concurrency: `VLLM_MAX_SEQS` controls continuous batching parallelism (e.g., 16–24 on A100 40GB)
-- GPU util: `VLLM_GPU_UTIL` (e.g., 0.95). If OOM, drop to 0.92
-- Context: `VLLM_MAX_MODEL_LEN` (default 8192; increase for longer texts if memory allows)
-- Dtype: `VLLM_DTYPE=float16|bfloat16` (Ampere runs FP16/BF16 well)
-- SNAC batching: `SNAC_MAX_BATCH` (default 64), `SNAC_BATCH_TIMEOUT_MS` (default 10). Greatly improves decoder throughput at load
-- Prefix cache: enabled by default (`VLLM_PREFIX_CACHE=1`)
-- Threads: set to 1 to avoid CPU thrash: `OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 NUMEXPR_NUM_THREADS=1`
-- FlashAttention 2: If compatible wheels exist for your Torch/CUDA, install:
-  ```bash
-  pip install --no-build-isolation "flash-attn>=2.5.7"
-  ```
-  vLLM detects it automatically on restart.
-- Eager mode: we disable torch.compile/triton JIT to avoid in-container builds and speed startup.
-
-Install speed knobs:
-- Skip apt packages: `SKIP_APT=1 bash scripts/00-bootstrap.sh`
-- Skip model prefetch: `PREFETCH=0 bash scripts/01-install.sh`
-
-## Troubleshooting
-
-- Ensure `HF_TOKEN` env is set
-- If Torch install fails, check that `nvidia-smi` reports a CUDA 12.x driver and re-run `bash scripts/01-install.sh`
-- If vLLM issues arise, try setting `VLLM_VERSION_PIN=0.7.3` in `.env`
-
-## Project layout
+### Project layout
 
 ```
-server/                # FastAPI + Orpheus (vLLM)
-  server.py            # FastAPI app (port 8000). WS: /ws/tts (PCM16 frames)
-  engine_vllm.py       # vLLM async engine holder
-  prompts.py           # Prompt helpers and audio control wrappers
-  vllm_config.py       # vLLM tuning knobs
-  streaming.py         # vLLM→custom tokens→SNAC decode→PCM async generator
-  core/                # Core helpers and building blocks
+server/
+  server.py
+  engine_vllm.py
+  prompts.py
+  vllm_config.py
+  streaming.py
+  core/
     __init__.py
-    utils.py           # HF login helper
-    chunking.py        # Sentence-safe, word-based chunking helpers
-    custom_tokens.py   # <custom_token_…> parsing and Baseten token id mapping
-    snac_batcher.py    # SNAC model loader + async dynamic batcher
-scripts/               # All runnable scripts (bash)
+    utils.py
+    chunking.py
+    custom_tokens.py
+    snac_batcher.py
+scripts/
   00-bootstrap.sh
   01-install.sh
-  02-run-server.sh     # vLLM path (default)
-  run-all.sh           # bootstrap → install → start
-  common.sh            # shared helpers (env, CUDA detect, torch index, background)
+  02-run-server.sh
+  run-all.sh
   print-env.sh
   stop.sh
+  env/
+    perf.sh
+    vllm.sh
+    tts.sh
+  lib/
+    common.sh
 tests/
-  warmup.py            # single request warmup test
-  bench.py             # concurrent load testing
-  client.py            # remote client that saves WAV files
+  warmup.py
+  bench.py
+  client.py
 ```
