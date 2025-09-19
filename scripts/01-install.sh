@@ -76,10 +76,28 @@ if [ "${BACKEND}" != "vllm" ]; then
   pip install --no-binary mpi4py "mpi4py>=4.0.0"
   set -e
   echo "[install] Ensuring correct CUDA 12.8 Python bindings (avoid conflicting 'cuda' packages)"
+  WANT_CUDA_PY=12.8
+  HAVE_CUDA_PY=$(python - <<'PY'
+try:
+  import importlib.metadata as m; v=m.version('cuda-python'); print(v)
+except Exception:
+  print('none')
+PY
+)
+  if [[ "$HAVE_CUDA_PY" != 12.8.* ]]; then
+    set +e
+    pip uninstall -y cuda cuda-bindings cuda_pathfinder cuda-pathfinder 2>/dev/null
+    set -e
+    pip install --upgrade --force-reinstall "cuda-python==12.8.*" "cuda-bindings==12.8.*"
+  else
+    echo "[install] cuda-python already $HAVE_CUDA_PY — skipping reinstall"
+  fi
+
+  echo "[install] Removing deprecated pynvml to silence warnings; installing nvidia-ml-py"
   set +e
-  pip uninstall -y cuda cuda-bindings cuda_pathfinder cuda-pathfinder 2>/dev/null
+  pip uninstall -y pynvml 2>/dev/null
   set -e
-  pip install --upgrade --force-reinstall "cuda-python==12.8.*"
+  pip install -U nvidia-ml-py
   # Ensure libpython shared library is present and discoverable for TRT-LLM bindings
   if ! ldconfig -p 2>/dev/null | grep -q "libpython${PY_MAJMIN}\.so"; then
     if command -v apt-get >/dev/null 2>&1; then
