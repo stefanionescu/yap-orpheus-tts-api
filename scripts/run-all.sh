@@ -12,6 +12,10 @@ echo "[run-all] 1/3 bootstrap"
 bash scripts/00-bootstrap.sh
 
 echo "[run-all] 2/3 install"
+# Ensure we use the project venv for install/build/run steps consistently
+if [ -d .venv ]; then
+  source .venv/bin/activate || true
+fi
 bash scripts/01-install.sh
 
 BACKEND=${1:-${ORPHEUS_BACKEND:-trtllm}}
@@ -21,6 +25,8 @@ if [ "$BACKEND" != "vllm" ]; then
   ENGINE_DIR=${ENGINE_DIR:-engine/orpheus_a100_fp16_kvint8}
   if [ ! -d "$ENGINE_DIR" ] || [ -z "$(ls -A "$ENGINE_DIR" 2>/dev/null)" ]; then
     echo "[run-all] Building TRT-LLM engine at $ENGINE_DIR"
+    # Use the same Python/venv as install
+    if [ -d .venv ]; then source .venv/bin/activate || true; fi
     python server/build_trtllm_engine.py || {
       echo "[run-all] ERROR: failed to build TRT-LLM engine" >&2; exit 1; }
   fi

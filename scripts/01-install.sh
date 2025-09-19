@@ -12,6 +12,7 @@ load_env_if_present
 require_env HF_TOKEN
 
 echo "[install] Creating venv at ${VENV_DIR}"
+echo "[install] BACKEND=${ORPHEUS_BACKEND:-trtllm}"
 
 # Resolve Python executable
 PY_EXE=$(choose_python_exe) || { echo "[install] ERROR: Python not found. Please install Python ${PYTHON_VERSION}." >&2; exit 1; }
@@ -63,6 +64,14 @@ if [ "${BACKEND}" != "vllm" ]; then
   if [ $STATUS -ne 0 ]; then
     echo "[install] WARNING: tensorrt-llm install failed. Ensure CUDA 12.6/12.8 and driver r535+ are present." >&2
   fi
+  # Hard check: verify module import resolves in THIS interpreter
+  python - <<'PY' || { echo "[install] ERROR: tensorrt-llm not importable in current env" >&2; exit 1; }
+import sys
+print('[install] python:', sys.executable)
+import tensorrt_llm, tensorrt
+print('[install] tensorrt-llm:', tensorrt_llm.__version__)
+print('[install] tensorrt:', tensorrt.__version__)
+PY
 fi
 
 # Optional: Install FlashAttention 2 prebuilt wheel if available (Linux + NVIDIA)

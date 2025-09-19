@@ -81,6 +81,19 @@ if [ "$CLEAN_INSTALL" = "1" ]; then
   rm -rf ~/.cache/triton || true
   rm -rf ~/.nv || true
 
+  # TensorRT / TRT-LLM caches and built engines
+  # Engine directory in repo (default) and any custom ENGINE_DIR
+  if [ -n "${ENGINE_DIR:-}" ]; then rm -rf "${ENGINE_DIR}" || true; fi
+  rm -rf engine || true
+  rm -rf build || true
+  # User-level caches that may hold TRT artifacts
+  rm -rf ~/.cache/tensorrt* || true
+  rm -rf ~/.cache/nvidia || true
+  rm -rf ~/.cache/cuda || true
+  # Temp/shared-memory leftovers
+  rm -rf /tmp/trt* 2>/dev/null || true
+  rm -rf /dev/shm/trt* 2>/dev/null || true
+
   # Temp files that may accumulate
   rm -rf /tmp/vllm* 2>/dev/null || true
   rm -rf /tmp/huggingface* 2>/dev/null || true
