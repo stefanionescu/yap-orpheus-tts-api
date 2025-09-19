@@ -75,6 +75,15 @@ if [ "${BACKEND}" != "vllm" ]; then
   set +e
   pip install --no-binary mpi4py "mpi4py>=4.0.0"
   set -e
+  # Ensure libpython shared library is present and discoverable for TRT-LLM bindings
+  if ! ldconfig -p 2>/dev/null | grep -q "libpython${PY_MAJMIN}\.so"; then
+    if command -v apt-get >/dev/null 2>&1; then
+      echo "[install] Installing libpython${PY_MAJMIN}(-dev) for TRT-LLM"
+      DEBIAN_FRONTEND=noninteractive apt-get update -y || true
+      DEBIAN_FRONTEND=noninteractive apt-get install -y "libpython${PY_MAJMIN}" "libpython${PY_MAJMIN}-dev" || true
+    fi
+  fi
+  export LD_LIBRARY_PATH="/usr/lib/x86_64-linux-gnu:/usr/lib:${LD_LIBRARY_PATH:-}"
   # Hard check: verify module import resolves in THIS interpreter
   python - <<'PY' || { echo "[install] ERROR: tensorrt-llm not importable in current env" >&2; exit 1; }
 import sys

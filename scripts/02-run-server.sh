@@ -29,6 +29,8 @@ if paths:
     print(os.path.dirname(paths[0]))
 PY
 )"
+  # Common system lib dirs (libpython, openmpi)
+  export LD_LIBRARY_PATH="/usr/lib/x86_64-linux-gnu:/usr/lib:/usr/lib/x86_64-linux-gnu/openmpi/lib:${LD_LIBRARY_PATH}"
 fi
 
 echo "[run] Starting FastAPI on ${HOST:-0.0.0.0}:${PORT:-8000}"
