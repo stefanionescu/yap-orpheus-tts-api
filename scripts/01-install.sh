@@ -12,7 +12,8 @@ load_env_if_present
 require_env HF_TOKEN
 
 echo "[install] Creating venv at ${VENV_DIR}"
-echo "[install] BACKEND=${ORPHEUS_BACKEND:-trtllm}"
+BACKEND=${ORPHEUS_BACKEND:-trtllm}
+echo "[install] BACKEND=${BACKEND}"
 
 # Resolve Python executable
 PY_EXE=$(choose_python_exe) || { echo "[install] ERROR: Python not found. Please install Python ${PYTHON_VERSION}." >&2; exit 1; }
@@ -46,13 +47,19 @@ pip install --index-url "${TORCH_IDX}" torch --only-binary=:all:
 
 echo "[install] Requirements (base)"
 if [ -f requirements.txt ]; then
-  pip install -r requirements.txt
+  if [ "${BACKEND}" != "vllm" ]; then
+    echo "[install] Installing requirements without vLLM (TRT backend)"
+    grep -v -E '^\s*vllm(==|\s|$)' requirements.txt > .tmp.req
+    pip install -r .tmp.req
+    rm -f .tmp.req
+  else
+    pip install -r requirements.txt
+  fi
 else
   pip install -r server/requirements.txt
 fi
 
 # Install TensorRT-LLM (Dockerless) if requested backend is TRT-LLM
-BACKEND=${ORPHEUS_BACKEND:-trtllm}
 if [ "${BACKEND}" != "vllm" ]; then
   echo "[install] Installing TensorRT-LLM runtime via NVIDIA PyPI"
   set +e
@@ -64,6 +71,10 @@ if [ "${BACKEND}" != "vllm" ]; then
   if [ $STATUS -ne 0 ]; then
     echo "[install] WARNING: tensorrt-llm install failed. Ensure CUDA 12.6/12.8 and driver r535+ are present." >&2
   fi
+  echo "[install] Installing mpi4py (requires system MPI runtime)"
+  set +e
+  pip install --no-binary mpi4py "mpi4py>=4.0.0"
+  set -e
   # Hard check: verify module import resolves in THIS interpreter
   python - <<'PY' || { echo "[install] ERROR: tensorrt-llm not importable in current env" >&2; exit 1; }
 import sys

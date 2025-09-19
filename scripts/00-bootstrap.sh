@@ -24,6 +24,11 @@ if command -v apt-get >/dev/null 2>&1; then
     apt-get update -y || true
     DEBIAN_FRONTEND=noninteractive apt-get install -y \
       git wget curl jq || true
+    # If TRT backend in use, install an MPI runtime so mpi4py can link
+    if [ "${ORPHEUS_BACKEND:-trtllm}" != "vllm" ]; then
+      echo "[bootstrap] Installing MPI runtime (openmpi) for TRT-LLM"
+      DEBIAN_FRONTEND=noninteractive apt-get install -y openmpi-bin libopenmpi-dev || true
+    fi
   fi
 else
   echo "[bootstrap] apt-get not available. Skipping system packages."
