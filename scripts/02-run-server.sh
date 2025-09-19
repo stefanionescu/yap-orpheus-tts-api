@@ -19,8 +19,8 @@ echo "[run] Backend: ${ORPHEUS_BACKEND:-trtllm}"
 
 # Optional: help dynamic loader find TRT/LLM libs if needed
 if [ "${ORPHEUS_BACKEND:-trtllm}" != "vllm" ]; then
-  # Ensure TF32 override consistent with engine build (we build with default 0)
-  export NVIDIA_TF32_OVERRIDE=${NVIDIA_TF32_OVERRIDE:-0}
+  # Match TF32 override used during engine build; the engine logs will warn if mismatched
+  export NVIDIA_TF32_OVERRIDE=${NVIDIA_TF32_OVERRIDE:-1}
   export LD_LIBRARY_PATH="${LD_LIBRARY_PATH}:$(python - <<'PY'
 import site,glob,os
 paths = []

@@ -79,8 +79,8 @@ class _VLLMLikeEngine:
 
         self.tokenizer = AutoTokenizer.from_pretrained(self.model_id)
 
-        # Ensure runtime TF32 policy matches build to avoid execution context errors
-        os.environ.setdefault("NVIDIA_TF32_OVERRIDE", "0")
+        # Ensure runtime TF32 policy matches build; we build with TF32 enabled
+        os.environ.setdefault("NVIDIA_TF32_OVERRIDE", "1")
 
         self.runner = ModelRunnerCpp.from_dir(
             self.engine_dir,

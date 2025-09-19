@@ -40,8 +40,9 @@ def main() -> None:
     seq = int(os.getenv("TRTLLM_MAX_SEQ", "3072"))
 
     llm = None
+    # Build with TF32 enabled to match runtime default and avoid Myelin mismatch
+    os.environ.setdefault("NVIDIA_TF32_OVERRIDE", "1")
     try:
-        # Try with shape caps (no plugin-specific args)
         llm = LLM(
             model=local_model_dir,
             dtype="float16",
@@ -50,7 +51,6 @@ def main() -> None:
             max_seq_len=seq,
         )
     except Exception:
-        # Minimal constructor fallback
         llm = LLM(
             model=local_model_dir,
             dtype="float16",
