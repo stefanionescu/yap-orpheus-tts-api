@@ -8,7 +8,7 @@ Run Orpheus 3B TTS behind a FastAPI server with TensorRT-LLM (default) or vLLM. 
 
 ### Prerequisites
 
-- NVIDIA GPU with CUDA 12.x drivers (A100 recommended)
+- NVIDIA GPU with CUDA 12.8 drivers (A100 recommended)
 - Ubuntu-based image with `nvidia-smi`
 - Python 3.10
 - Hugging Face token (`HF_TOKEN`) with access to the model

@@ -28,6 +28,8 @@ if command -v apt-get >/dev/null 2>&1; then
     if [ "${ORPHEUS_BACKEND:-trtllm}" != "vllm" ]; then
       echo "[bootstrap] Installing MPI runtime (openmpi) for TRT-LLM"
       DEBIAN_FRONTEND=noninteractive apt-get install -y openmpi-bin libopenmpi-dev || true
+      echo "[bootstrap] Ensuring CUDA runtime/system libs present (common CUDA paths)"
+      DEBIAN_FRONTEND=noninteractive apt-get install -y libcudnn9-cuda-12 libnccl2 || true
     fi
   fi
 else

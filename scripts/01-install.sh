@@ -69,12 +69,17 @@ if [ "${BACKEND}" != "vllm" ]; then
   STATUS=$?
   set -e
   if [ $STATUS -ne 0 ]; then
-    echo "[install] WARNING: tensorrt-llm install failed. Ensure CUDA 12.6/12.8 and driver r535+ are present." >&2
+    echo "[install] WARNING: tensorrt-llm install failed. Ensure CUDA 12.8 and driver r535+ are present." >&2
   fi
   echo "[install] Installing mpi4py (requires system MPI runtime)"
   set +e
   pip install --no-binary mpi4py "mpi4py>=4.0.0"
   set -e
+  echo "[install] Ensuring correct CUDA 12.8 Python bindings (avoid conflicting 'cuda' packages)"
+  set +e
+  pip uninstall -y cuda cuda-bindings cuda_pathfinder cuda-pathfinder 2>/dev/null
+  set -e
+  pip install --upgrade --force-reinstall "cuda-python==12.8.*"
   # Ensure libpython shared library is present and discoverable for TRT-LLM bindings
   if ! ldconfig -p 2>/dev/null | grep -q "libpython${PY_MAJMIN}\.so"; then
     if command -v apt-get >/dev/null 2>&1; then
@@ -89,6 +94,8 @@ if [ "${BACKEND}" != "vllm" ]; then
 import sys
 print('[install] python:', sys.executable)
 import tensorrt_llm, tensorrt
+import cuda as _cuda
+print('[install] cuda module:', getattr(_cuda, '__file__', _cuda))
 print('[install] tensorrt-llm:', tensorrt_llm.__version__)
 print('[install] tensorrt:', tensorrt.__version__)
 PY
