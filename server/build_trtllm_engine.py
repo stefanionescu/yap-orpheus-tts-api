@@ -55,9 +55,45 @@ def main() -> None:
             model=local_model_dir,
             dtype="float16",
         )
+    # Persist engine to out_dir across TRT-LLM versions
     os.makedirs(out_dir, exist_ok=True)
-    llm.save_engine(out_dir)
-    print("[build-trtllm] Done.")
+    saved = False
+    # 1) Newer API
+    if hasattr(llm, "save_engine"):
+        try:
+            llm.save_engine(out_dir)  # type: ignore[attr-defined]
+            saved = True
+        except Exception:
+            pass
+    # 2) Some versions expose .save()
+    if (not saved) and hasattr(llm, "save"):
+        try:
+            llm.save(out_dir)  # type: ignore[attr-defined]
+            saved = True
+        except Exception:
+            pass
+    # 3) Fallback: copy from resolved engine_dir
+    if not saved:
+        import shutil
+        engine_src = None
+        for attr in ("get_engine_dir", "engine_dir", "_engine_dir"):
+            v = getattr(llm, attr, None)
+            if callable(v):
+                try:
+                    engine_src = v()
+                except Exception:
+                    continue
+            elif isinstance(v, str):
+                engine_src = v
+            if engine_src:
+                break
+        if not engine_src:
+            raise AttributeError("LLM engine save not supported by this version and engine_dir is unknown")
+        if os.path.abspath(engine_src) != os.path.abspath(out_dir):
+            shutil.copytree(engine_src, out_dir, dirs_exist_ok=True)
+        saved = True
+
+    print("[build-trtllm] Engine saved to:", out_dir)
 
 
 if __name__ == "__main__":
