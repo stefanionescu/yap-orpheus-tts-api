@@ -86,10 +86,20 @@ if [ "$CLEAN_INSTALL" = "1" ]; then
   if [ -n "${ENGINE_DIR:-}" ]; then rm -rf "${ENGINE_DIR}" || true; fi
   rm -rf engine || true
   rm -rf build || true
+  # Local HF snapshot used by builder
+  if [ -n "${MODEL_LOCAL_DIR:-}" ]; then rm -rf "${MODEL_LOCAL_DIR}" || true; fi
+  rm -rf models || true
   # User-level caches that may hold TRT artifacts
   rm -rf ~/.cache/tensorrt* || true
+  rm -rf ~/.cache/tensorrt_llm* || true
   rm -rf ~/.cache/nvidia || true
   rm -rf ~/.cache/cuda || true
+  rm -rf ~/.cache/flashinfer* || true
+  rm -rf ~/.cache/tokenizers || true
+  rm -rf ~/.cache/onnx* || true
+  rm -rf ~/.cache/onnxruntime* || true
+  rm -rf ~/.polygraphy || true
+  rm -rf ~/.config/huggingface || true
   # Temp/shared-memory leftovers
   rm -rf /tmp/trt* 2>/dev/null || true
   rm -rf /dev/shm/trt* 2>/dev/null || true
