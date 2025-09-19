@@ -40,8 +40,9 @@ def main() -> None:
     seq = int(os.getenv("TRTLLM_MAX_SEQ", "3072"))
 
     llm = None
-    # Build with TF32 enabled to match runtime default and avoid Myelin mismatch
+    # Build with TF32 enabled and pass to executor environment so workers inherit it
     os.environ.setdefault("NVIDIA_TF32_OVERRIDE", "1")
+    os.environ.setdefault("TRTLLM_MPI_ENV_VARS", "NVIDIA_TF32_OVERRIDE")
     try:
         llm = LLM(
             model=local_model_dir,

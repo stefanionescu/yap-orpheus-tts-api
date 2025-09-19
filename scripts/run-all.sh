@@ -27,6 +27,11 @@ if [ "$BACKEND" != "vllm" ]; then
     echo "[run-all] Building TRT-LLM engine at $ENGINE_DIR"
     # Use the same Python/venv as install
     if [ -d .venv ]; then source .venv/bin/activate || true; fi
+    # Ensure TF32 and arch list are propagated to any MPI workers
+    export NVIDIA_TF32_OVERRIDE=${NVIDIA_TF32_OVERRIDE:-1}
+    export TRTLLM_MPI_ENV_VARS="NVIDIA_TF32_OVERRIDE"
+    # Source perf env (sets TORCH_CUDA_ARCH_LIST=8.0 by default)
+    if [ -f scripts/env/perf.sh ]; then source scripts/env/perf.sh; fi
     python server/build_trtllm_engine.py || {
       echo "[run-all] ERROR: failed to build TRT-LLM engine" >&2; exit 1; }
   fi

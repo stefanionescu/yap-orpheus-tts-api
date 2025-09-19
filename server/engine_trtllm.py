@@ -83,6 +83,7 @@ class _VLLMLikeEngine:
 
         # Ensure runtime TF32 policy matches build; we build with TF32 enabled
         os.environ.setdefault("NVIDIA_TF32_OVERRIDE", "1")
+        os.environ.setdefault("TRTLLM_MPI_ENV_VARS", "NVIDIA_TF32_OVERRIDE")
 
         self.runner = ModelRunnerCpp.from_dir(
             self.engine_dir,
