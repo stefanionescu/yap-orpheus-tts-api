@@ -1,4 +1,6 @@
 import os
+# Ensure TF32 policy is set BEFORE importing TRT-LLM runtime to avoid env capture issues
+os.environ.setdefault("NVIDIA_TF32_OVERRIDE", "1")
 import threading
 import asyncio
 from typing import Any, Iterable, List
