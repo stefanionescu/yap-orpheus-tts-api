@@ -38,7 +38,13 @@ def _decode_full_text(
 
     # Try token id fields
     candidate_ids = None
-    for attr in ("token_ids", "output_token_ids", "new_token_ids"):
+    for attr in (
+        "token_ids",
+        "output_token_ids",
+        "new_token_ids",
+        "output_ids",
+        "generated_token_ids",
+    ):
         ids = getattr(step, attr, None)
         if ids is not None:
             candidate_ids = ids
@@ -111,8 +117,15 @@ class _VLLMLikeEngine:
 
         # Tokenize prompt (batch size 1) and format as np.ndarray expected by TRT-LLM
         token_ids = self.tokenizer.encode(prompt, add_special_tokens=True)
+        # TRT-LLM expects batch-major list of arrays (1D) OR a 2D array shaped (batch, seq)
         input_arr = np.asarray(token_ids, dtype=np.int32)
         batched_ids = [input_arr]
+        if hasattr(self.runner, "tokenizer"):
+            # If runtime exposes a tokenizer interface, let it format inputs
+            try:
+                batched_ids = self.runner.tokenizer.batch_encode([prompt])  # type: ignore[attr-defined]
+            except Exception:
+                pass
 
         # Prepare kwargs with multiple fallbacks for TRT-LLM API names
         gen_kwargs = dict(

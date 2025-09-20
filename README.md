@@ -77,6 +77,9 @@ bash scripts/stop.sh --clean-system --clean-install
 ### Tests (optional)
 
 ```bash
+# Activate venv if not already active
+source .venv/bin/activate
+
 # Warmup (single WS stream)
 python tests/warmup.py
 
