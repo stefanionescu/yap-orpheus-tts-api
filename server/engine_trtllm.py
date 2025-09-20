@@ -6,6 +6,7 @@ import asyncio
 from typing import Any, Iterable, List
 
 from transformers import AutoTokenizer
+import numpy as np
 
 
 class _CompatOutput:
@@ -108,9 +109,10 @@ class _VLLMLikeEngine:
         max_new_tokens = int(getattr(sp, "max_tokens", getattr(sp, "max_new_tokens", 2048)) or 2048)
         stop_ids = list(getattr(sp, "stop_token_ids", []) or [])
 
-        # Tokenize prompt (batch size 1)
-        input_ids = self.tokenizer.encode(prompt, add_special_tokens=True)
-        batched_ids = [input_ids]
+        # Tokenize prompt (batch size 1) and format as np.ndarray expected by TRT-LLM
+        token_ids = self.tokenizer.encode(prompt, add_special_tokens=True)
+        input_arr = np.asarray(token_ids, dtype=np.int32)
+        batched_ids = [input_arr]
 
         # Prepare kwargs with multiple fallbacks for TRT-LLM API names
         gen_kwargs = dict(
