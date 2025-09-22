@@ -77,47 +77,12 @@ bash scripts/stop.sh --clean-system --clean-install
 ### Tests (optional)
 
 ```bash
+# Activate venv if not already active
+source .venv/bin/activate
+
 # Warmup (single WS stream)
 python tests/warmup.py
 
 # Benchmark (concurrent WS sessions)
 python tests/bench.py
-```
-
-### Project layout
-
-```
-server/
-  server.py
-  engine_vllm.py
-    engine_trtllm.py
-    engine_selector.py
-  prompts.py
-  vllm_config.py
-  streaming.py
-  core/
-    __init__.py
-    utils.py
-    chunking.py
-    custom_tokens.py
-    snac_batcher.py
-scripts/
-  00-bootstrap.sh
-  01-install.sh
-  02-run-server.sh
-  (no python scripts here)
-  run-all.sh
-  print-env.sh
-  stop.sh
-  env/
-    perf.sh
-    vllm.sh
-    trtllm.sh
-    tts.sh
-  lib/
-    common.sh
-tests/
-  warmup.py
-  bench.py
-  client.py
 ```
