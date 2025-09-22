@@ -8,6 +8,10 @@ from typing import Any, Iterable, List
 from transformers import AutoTokenizer
 import numpy as np
 
+from .core.logging_config import get_logger
+
+logger = get_logger(__name__)
+
 
 class _CompatOutput:
     def __init__(self, text: str) -> None:
@@ -70,6 +74,7 @@ class _VLLMLikeEngine:
     """
 
     def __init__(self) -> None:
+        logger.info("Initializing TensorRT-LLM engine...")
         # Lazy imports to avoid import errors on non-GPU systems
         from tensorrt_llm.runtime import ModelRunnerCpp  # type: ignore
 
@@ -80,22 +85,34 @@ class _VLLMLikeEngine:
         self.max_output_len = int(os.getenv("TRTLLM_MAX_OUTPUT", "2048"))
         self.kv_fraction = float(os.getenv("TRTLLM_KV_FRACTION", "0.90"))
 
+        logger.info(f"TRT-LLM config: model_id={self.model_id}, engine_dir={self.engine_dir}, "
+                   f"max_batch={self.max_batch_size}, max_input={self.max_input_len}, "
+                   f"max_output={self.max_output_len}, kv_fraction={self.kv_fraction}")
+
+        logger.debug("Loading tokenizer...")
         self.tokenizer = AutoTokenizer.from_pretrained(self.model_id)
+        logger.debug("Tokenizer loaded successfully")
 
         # Ensure runtime TF32 policy matches build; we build with TF32 enabled
         os.environ.setdefault("NVIDIA_TF32_OVERRIDE", "1")
         os.environ.setdefault("TRTLLM_MPI_ENV_VARS", "NVIDIA_TF32_OVERRIDE")
 
+        logger.debug("Initializing ModelRunnerCpp...")
         self.runner = ModelRunnerCpp.from_dir(
             self.engine_dir,
             max_batch_size=self.max_batch_size,
             max_input_len=self.max_input_len,
             max_output_len=self.max_output_len,
         )
+        logger.debug("ModelRunnerCpp initialized")
+        
         try:
             self.runner.set_kv_cache_free_gpu_memory_fraction(self.kv_fraction)
-        except Exception:
-            pass
+            logger.debug(f"KV cache fraction set to {self.kv_fraction}")
+        except Exception as e:
+            logger.warning(f"Failed to set KV cache fraction: {e}")
+        
+        logger.info("TensorRT-LLM engine initialized successfully")
 
     async def generate(self, prompt: str, sp: Any, *_: Any) -> Iterable[_CompatResult]:
         """
@@ -108,6 +125,10 @@ class _VLLMLikeEngine:
         repetition_penalty = float(getattr(sp, "repetition_penalty", 1.0) or 1.0)
         max_new_tokens = int(getattr(sp, "max_tokens", getattr(sp, "max_new_tokens", 2048)) or 2048)
         stop_ids = list(getattr(sp, "stop_token_ids", []) or [])
+        
+        logger.debug(f"TRT-LLM generation request: prompt_len={len(prompt)}, temp={temperature}, "
+                    f"top_p={top_p}, rep_penalty={repetition_penalty}, max_tokens={max_new_tokens}, "
+                    f"stop_ids={stop_ids}")
 
         # Tokenize prompt (batch size 1) and format as np.ndarray expected by TRT-LLM
         token_ids = self.tokenizer.encode(prompt, add_special_tokens=True)
@@ -130,21 +151,29 @@ class _VLLMLikeEngine:
         def _worker() -> None:
             # Try common positional and keyword forms for input ids
             try:
+                logger.debug("Starting TRT-LLM generation worker...")
                 generator = self.runner.generate(batched_ids, **gen_kwargs)
-            except TypeError:
+            except TypeError as e1:
+                logger.debug(f"First generation call failed, trying input_ids: {e1}")
                 try:
                     generator = self.runner.generate(input_ids=batched_ids, **gen_kwargs)
-                except TypeError:
+                except TypeError as e2:
+                    logger.debug(f"Second generation call failed, trying input_token_ids: {e2}")
                     generator = self.runner.generate(input_token_ids=batched_ids, **gen_kwargs)
 
             cumulative_text = ""
+            step_count = 0
             try:
+                logger.debug("Starting TRT-LLM generation streaming...")
                 for step in generator:
+                    step_count += 1
                     cumulative_text = _decode_full_text(self.tokenizer, cumulative_text, step)
                     if not cumulative_text:
                         continue
                     q.put_nowait(_CompatResult([_CompatOutput(cumulative_text)]))
+                logger.debug(f"TRT-LLM generation completed with {step_count} steps")
             except Exception as e:  # surface to async side
+                logger.error(f"TRT-LLM generation error after {step_count} steps: {e}", exc_info=True)
                 q.put_nowait(e)
             finally:
                 q.put_nowait(None)
