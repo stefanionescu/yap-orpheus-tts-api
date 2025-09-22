@@ -24,25 +24,6 @@ bash scripts/run-all.sh
 
 # 3) Health check
 curl -s http://127.0.0.1:8000/healthz
-
-# 4) One-off WS synthesis to WAV (24 kHz)
-python - <<'PY'
-import asyncio, json, websockets, wave
-async def main():
-    uri = "ws://127.0.0.1:8000/ws/tts"
-    async with websockets.connect(uri, max_size=None) as ws:
-        await ws.send(json.dumps({"text": "hello from orpheus", "voice": "female"}))
-        with wave.open("out.wav", "wb") as wf:
-            wf.setnchannels(1); wf.setsampwidth(2); wf.setframerate(24000)
-            while True:
-                try:
-                    msg = await asyncio.wait_for(ws.recv(), timeout=1.0)
-                except asyncio.TimeoutError:
-                    break
-                if isinstance(msg, (bytes, bytearray)):
-                    wf.writeframes(msg)
-asyncio.run(main())
-PY
 ```
 
 ### Environment
@@ -56,6 +37,59 @@ PY
 - Inspect current values:
 ```bash
 bash scripts/print-env.sh
+```
+
+### Logging & Monitoring
+
+The server provides comprehensive logging for debugging, monitoring, and performance analysis:
+
+**View real-time logs:**
+```bash
+# Follow live server logs (default location)
+tail -f logs/orpheus-tts.log
+
+# View recent logs with timestamps
+tail -100 logs/orpheus-tts.log
+
+# Monitor logs with automatic refresh
+watch -n 2 'tail -20 logs/orpheus-tts.log'
+```
+
+**Configure logging:**
+```bash
+# Set log level (DEBUG is default for detailed info, INFO for normal, WARNING for errors only)
+export LOG_LEVEL="INFO"  # Override default DEBUG level if you want less verbose logging
+
+# Custom log file location
+export LOG_FILE="/path/to/custom/server.log"
+
+# Log rotation settings
+export LOG_MAX_BYTES=20971520    # 20MB before rotation
+export LOG_BACKUP_COUNT=10       # Keep 10 backup files
+```
+
+**What gets logged:**
+- Server startup/shutdown and component initialization
+- WebSocket connections and client interactions
+- TTS generation requests with parameters and performance metrics
+- Audio processing pipeline (tokenization → SNAC → PCM streaming)
+- Engine operations (TRT-LLM/vLLM generation, batching)
+- All errors with full context and stack traces
+- Resource usage and processing statistics
+
+**Log analysis examples:**
+```bash
+# Find all errors
+grep "ERROR" logs/orpheus-tts.log
+
+# Monitor WebSocket connections
+grep "WebSocket" logs/orpheus-tts.log
+
+# Track TTS generation performance
+grep "TTS generation completed" logs/orpheus-tts.log
+
+# View SNAC batch processing stats
+grep "SNAC batch" logs/orpheus-tts.log
 ```
 
 ### Stop and cleanup

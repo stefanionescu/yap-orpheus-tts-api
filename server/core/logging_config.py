@@ -8,7 +8,7 @@ from typing import Optional
 
 def setup_logging(
     log_file: Optional[str] = None,
-    level: str = "INFO",
+    level: str = "DEBUG",
     max_bytes: int = 10 * 1024 * 1024,  # 10MB
     backup_count: int = 5,
     log_format: Optional[str] = None
@@ -18,7 +18,7 @@ def setup_logging(
     
     Args:
         log_file: Path to log file. If None, defaults to 'logs/orpheus-tts.log'
-        level: Logging level (DEBUG, INFO, WARNING, ERROR, CRITICAL)
+        level: Logging level (DEBUG is default for maximum verbosity, INFO, WARNING, ERROR, CRITICAL)
         max_bytes: Maximum size of log file before rotation
         backup_count: Number of backup log files to keep
         log_format: Custom log format string
@@ -85,7 +85,7 @@ def ensure_logging_initialized():
     global _initialized
     if not _initialized:
         # Get configuration from environment variables
-        log_level = os.getenv("LOG_LEVEL", "INFO")
+        log_level = os.getenv("LOG_LEVEL", "DEBUG")
         log_file = os.getenv("LOG_FILE", None)
         max_bytes = int(os.getenv("LOG_MAX_BYTES", "10485760"))  # 10MB
         backup_count = int(os.getenv("LOG_BACKUP_COUNT", "5"))

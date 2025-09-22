@@ -6,3 +6,6 @@ export SNAC_TORCH_COMPILE=${SNAC_TORCH_COMPILE:-0}
 export SNAC_MAX_BATCH=${SNAC_MAX_BATCH:-64}
 export SNAC_BATCH_TIMEOUT_MS=${SNAC_BATCH_TIMEOUT_MS:-10}
 export ORPHEUS_MAX_TOKENS=${ORPHEUS_MAX_TOKENS:-2048}
+
+# Logging configuration - enable DEBUG level by default for comprehensive monitoring
+export LOG_LEVEL=${LOG_LEVEL:-DEBUG}
