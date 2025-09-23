@@ -85,10 +85,10 @@ async def aiter_pcm_from_custom_tokens(engine: Any, prompt: str, voice: str, sp:
             # Every 7 tokens is one frame; after 4 frames (28 ids) → decode
             if (tok_index % 7 == 0) and len(buf_ids) >= 28:
                 window = buf_ids[-28:]
-                arr = np.asarray(window, dtype=np.int32).reshape(-1, 7)
-                codes_0 = torch.from_numpy(arr[:, 0]).unsqueeze(0).to(SNAC_DEVICE)
-                codes_1 = torch.from_numpy(arr[:, [1, 4]].reshape(-1)).unsqueeze(0).to(SNAC_DEVICE)
-                codes_2 = torch.from_numpy(arr[:, [2, 3, 5, 6]].reshape(-1)).unsqueeze(0).to(SNAC_DEVICE)
+                arr = np.asarray(window, dtype=np.int64).reshape(-1, 7)
+                codes_0 = torch.from_numpy(arr[:, 0]).unsqueeze(0).to(SNAC_DEVICE, dtype=torch.long)
+                codes_1 = torch.from_numpy(arr[:, [1, 4]].reshape(-1)).unsqueeze(0).to(SNAC_DEVICE, dtype=torch.long)
+                codes_2 = torch.from_numpy(arr[:, [2, 3, 5, 6]].reshape(-1)).unsqueeze(0).to(SNAC_DEVICE, dtype=torch.long)
 
                 logger.debug(f"[{session_id}] Decoding SNAC frame {tok_index // 7}")
                 audio = await snacx.decode_codes([codes_0, codes_1, codes_2])
@@ -105,10 +105,10 @@ async def aiter_pcm_from_custom_tokens(engine: Any, prompt: str, voice: str, sp:
             # Pad with the last seen id to complete one hop (or zero if none)
             pad_id = (buf_ids[-1] if buf_ids else 0)
             flush_window = (buf_ids + [pad_id] * pad_needed)[-28:]
-            arr = np.asarray(flush_window, dtype=np.int32).reshape(-1, 7)
-            codes_0 = torch.from_numpy(arr[:, 0]).unsqueeze(0).to(SNAC_DEVICE)
-            codes_1 = torch.from_numpy(arr[:, [1, 4]].reshape(-1)).unsqueeze(0).to(SNAC_DEVICE)
-            codes_2 = torch.from_numpy(arr[:, [2, 3, 5, 6]].reshape(-1)).unsqueeze(0).to(SNAC_DEVICE)
+            arr = np.asarray(flush_window, dtype=np.int64).reshape(-1, 7)
+            codes_0 = torch.from_numpy(arr[:, 0]).unsqueeze(0).to(SNAC_DEVICE, dtype=torch.long)
+            codes_1 = torch.from_numpy(arr[:, [1, 4]].reshape(-1)).unsqueeze(0).to(SNAC_DEVICE, dtype=torch.long)
+            codes_2 = torch.from_numpy(arr[:, [2, 3, 5, 6]].reshape(-1)).unsqueeze(0).to(SNAC_DEVICE, dtype=torch.long)
             logger.debug(f"[{session_id}] Flushing residual SNAC codes: pending={pending}, pad={pad_needed}")
             audio = await snacx.decode_codes([codes_0, codes_1, codes_2])
             pcm = (np.clip(audio, -1.0, 1.0) * 32767.0).astype(np.int16).tobytes()

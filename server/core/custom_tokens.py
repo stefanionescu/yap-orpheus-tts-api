@@ -73,7 +73,8 @@ def split_custom_tokens(s: str, tokenizer: Any = None) -> list[int]:
 
 
 def turn_token_into_id(token_number: int, index: int) -> int:
-    # Baseten’s exact rule
-    return token_number - 10 - ((index % 7) * 4096)
+    # Map to lane-local 12-bit code (wrap within [0, 4096)) to avoid negatives/overflow
+    lane = index % 7
+    return int(((token_number - 10) - lane * 4096) & 0xFFF)
 
 

@@ -91,12 +91,44 @@ class SnacBatched:
                                 c0 = torch.cat([c[0] for c in codes_list], dim=0)
                                 c1 = torch.cat([c[1] for c in codes_list], dim=0)
                                 c2 = torch.cat([c[2] for c in codes_list], dim=0)
+                                # Clamp to codebook sizes to avoid device-side asserts
+                                try:
+                                    q0, q1, q2 = self.m.quantizer.quantizers
+                                    def _cb_size(q):
+                                        for name in ("n_embed", "num_embeddings", "num_codes", "size"):
+                                            if hasattr(q.codebook, name):
+                                                return int(getattr(q.codebook, name))
+                                        return 4096
+                                    n0, n1, n2 = _cb_size(q0), _cb_size(q1), _cb_size(q2)
+                                    c0 = c0.long().remainder(n0)
+                                    c1 = c1.long().remainder(n1)
+                                    c2 = c2.long().remainder(n2)
+                                except Exception:
+                                    # Best effort; if quantizer API changes, proceed without clamp
+                                    c0 = c0.long()
+                                    c1 = c1.long()
+                                    c2 = c2.long()
                                 z_q = self.m.quantizer.from_codes([c0, c1, c2])
                                 audio_hat = self.m.decoder(z_q.to(self.dtype_decoder))[:, :, 2048:4096]
                                 outs = list(audio_hat.split(1, dim=0))
                             else:
                                 outs = []
                                 for c0, c1, c2 in codes_list:
+                                    try:
+                                        q0, q1, q2 = self.m.quantizer.quantizers
+                                        def _cb_size(q):
+                                            for name in ("n_embed", "num_embeddings", "num_codes", "size"):
+                                                if hasattr(q.codebook, name):
+                                                    return int(getattr(q.codebook, name))
+                                            return 4096
+                                        n0, n1, n2 = _cb_size(q0), _cb_size(q1), _cb_size(q2)
+                                        c0 = c0.long().remainder(n0)
+                                        c1 = c1.long().remainder(n1)
+                                        c2 = c2.long().remainder(n2)
+                                    except Exception:
+                                        c0 = c0.long()
+                                        c1 = c1.long()
+                                        c2 = c2.long()
                                     z_q = self.m.quantizer.from_codes([c0, c1, c2])
                                     outs.append(self.m.decoder(z_q.to(self.dtype_decoder))[:, :, 2048:4096])
                             torch.cuda.synchronize()
@@ -107,12 +139,42 @@ class SnacBatched:
                             c0 = torch.cat([c[0] for c in codes_list], dim=0)
                             c1 = torch.cat([c[1] for c in codes_list], dim=0)
                             c2 = torch.cat([c[2] for c in codes_list], dim=0)
+                            try:
+                                q0, q1, q2 = self.m.quantizer.quantizers
+                                def _cb_size(q):
+                                    for name in ("n_embed", "num_embeddings", "num_codes", "size"):
+                                        if hasattr(q.codebook, name):
+                                            return int(getattr(q.codebook, name))
+                                    return 4096
+                                n0, n1, n2 = _cb_size(q0), _cb_size(q1), _cb_size(q2)
+                                c0 = c0.long().remainder(n0)
+                                c1 = c1.long().remainder(n1)
+                                c2 = c2.long().remainder(n2)
+                            except Exception:
+                                c0 = c0.long()
+                                c1 = c1.long()
+                                c2 = c2.long()
                             z_q = self.m.quantizer.from_codes([c0, c1, c2])
                             audio_hat = self.m.decoder(z_q.to(self.dtype_decoder))[:, :, 2048:4096]
                             outs = list(audio_hat.split(1, dim=0))
                         else:
                             outs = []
                             for c0, c1, c2 in codes_list:
+                                try:
+                                    q0, q1, q2 = self.m.quantizer.quantizers
+                                    def _cb_size(q):
+                                        for name in ("n_embed", "num_embeddings", "num_codes", "size"):
+                                            if hasattr(q.codebook, name):
+                                                return int(getattr(q.codebook, name))
+                                        return 4096
+                                    n0, n1, n2 = _cb_size(q0), _cb_size(q1), _cb_size(q2)
+                                    c0 = c0.long().remainder(n0)
+                                    c1 = c1.long().remainder(n1)
+                                    c2 = c2.long().remainder(n2)
+                                except Exception:
+                                    c0 = c0.long()
+                                    c1 = c1.long()
+                                    c2 = c2.long()
                                 z_q = self.m.quantizer.from_codes([c0, c1, c2])
                                 outs.append(self.m.decoder(z_q.to(self.dtype_decoder))[:, :, 2048:4096])
                 for fut, out in zip(futs, outs):
