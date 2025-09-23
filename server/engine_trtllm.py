@@ -259,41 +259,63 @@ class _BatchScheduler:
                             await req.fut_q.put(None)
                         raise step
 
-                    # Extract per-sequence token ids using the most universal attribute
-                    per_seq_ids = getattr(step, "output_token_ids", None)
-                    if per_seq_ids is None:
-                        per_seq_ids = getattr(step, "token_ids", None)
-                    if per_seq_ids is None:
-                        per_seq_ids = getattr(step, "new_token_ids", None)
+                    # 1) Try to get token ids (handle multiple field names)
+                    per_seq_ids = (
+                        getattr(step, "output_token_ids", None)
+                        or getattr(step, "output_ids", None)         # NEW: some TRT-LLM builds
+                        or getattr(step, "token_ids", None)
+                        or getattr(step, "new_token_ids", None)
+                    )
 
-                    if per_seq_ids is None:
-                        # Last fallback: maybe step.text per-seq?
-                        per_seq_texts = getattr(step, "texts", None) or getattr(step, "text", None)
-                        if isinstance(per_seq_texts, list):
-                            # emit per index
-                            for i, req in enumerate(batch):
-                                # cumulative text path
-                                req.cumulative_text = _decode_full_text(self.tokenizer, req.cumulative_text, step)
-                                await req.fut_q.put(_CompatResult([_CompatOutput(req.cumulative_text)]))
+                    if per_seq_ids is not None:
+                        # Normalize to a list-of-1D token sequences
+                        seqs = None
+                        if isinstance(per_seq_ids, np.ndarray):
+                            # shape could be (B, T) or (T,)
+                            if per_seq_ids.ndim == 2:
+                                seqs = [per_seq_ids[i].tolist() for i in range(per_seq_ids.shape[0])]
+                            else:
+                                seqs = [per_seq_ids.tolist()]
+                        elif isinstance(per_seq_ids, (list, tuple)) and per_seq_ids and isinstance(per_seq_ids[0], (list, tuple, np.ndarray)):
+                            # already [B, T]
+                            seqs = []
+                            for s in per_seq_ids:
+                                if isinstance(s, np.ndarray):
+                                    seqs.append(s.tolist())
+                                else:
+                                    seqs.append(list(s))
                         else:
-                            # ignore; no visible delta
-                            continue
+                            # flat / ambiguous -> broadcast the same step to all
+                            seqs = [per_seq_ids] * len(batch)
+
+                        # Emit per request
+                        for i, req in enumerate(batch):
+                            toks = seqs[i] if i < len(seqs) else []
+                            # Use safe decoder to keep cumulative text
+                            req.cumulative_text = _decode_full_text(self.tokenizer, req.cumulative_text,
+                                                                    type("S", (), {"token_ids": toks}))
+                            await req.fut_q.put(_CompatResult([_CompatOutput(req.cumulative_text)]))
+
                     else:
-                        # Defensive: sometimes a step can contain empty lists for early-finished seqs
-                        if isinstance(per_seq_ids, list) and all((isinstance(x, list) and len(x) == 0) for x in per_seq_ids):
-                            continue
-                        # per_seq_ids is [B, …] or flat+index; normalize to list per request
-                        if isinstance(per_seq_ids, (list, tuple)) and per_seq_ids and isinstance(per_seq_ids[0], (list, tuple, np.ndarray)):
-                            # shape [B, T]
+                        # 2) Fall back to texts/text
+                        per_seq_texts = getattr(step, "texts", None)
+                        if isinstance(per_seq_texts, list):
                             for i, req in enumerate(batch):
-                                # use our safe decoder (keeps cumulative)
-                                req.cumulative_text = _decode_full_text(self.tokenizer, req.cumulative_text, type("S", (), {"token_ids": per_seq_ids[i]}))
+                                # Construct a tiny step-like object so _decode_full_text can append
+                                st = type("S", (), {"text": per_seq_texts[i] if i < len(per_seq_texts) else ""})
+                                req.cumulative_text = _decode_full_text(self.tokenizer, req.cumulative_text, st)
                                 await req.fut_q.put(_CompatResult([_CompatOutput(req.cumulative_text)]))
                         else:
-                            # ambiguous; decode once and broadcast (rare)
-                            for req in batch:
-                                req.cumulative_text = _decode_full_text(self.tokenizer, req.cumulative_text, step)
-                                await req.fut_q.put(_CompatResult([_CompatOutput(req.cumulative_text)]))
+                            # Single string for the whole batch? Broadcast it.
+                            single_text = getattr(step, "text", None)
+                            if isinstance(single_text, str) and single_text:
+                                st = type("S", (), {"text": single_text})
+                                for req in batch:
+                                    req.cumulative_text = _decode_full_text(self.tokenizer, req.cumulative_text, st)
+                                    await req.fut_q.put(_CompatResult([_CompatOutput(req.cumulative_text)]))
+                            else:
+                                # Nothing usable in this step
+                                continue
                 # 7) close all queues for this batch
                 for req in batch:
                     await req.fut_q.put(None)
