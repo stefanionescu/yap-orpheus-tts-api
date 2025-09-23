@@ -475,6 +475,21 @@ class _VLLMLikeEngine:
         else:
             logger.debug(f"Using existing pad_token_id: {self.tokenizer.pad_token_id}")
             
+        try:
+            from .core.custom_tokens import get_audio_token_regex
+            rx = get_audio_token_regex(self.tokenizer)
+            logger.info(f"Audio token regex: {rx.pattern}")
+            # show a small sample for sanity
+            try:
+                added = getattr(self.tokenizer, "get_added_vocab", lambda: {})()
+                sample = [k for k in added.keys() if rx.search(k)][:5]
+                logger.info(f"audio_token_samples={sample}")
+                logger.info(f"added_tokens={len(added)}")
+            except Exception:
+                pass
+        except Exception:
+            pass
+
         logger.debug("Tokenizer loaded successfully")
 
         # Ensure runtime TF32 policy matches build; we build with TF32 enabled

@@ -69,7 +69,7 @@ async def aiter_pcm_from_custom_tokens(engine: Any, prompt: str, voice: str, sp:
         if delta:
             logger.debug(f"[{session_id}] Step {generation_step}: Processing delta: '{delta[:50]}{'...' if len(delta) > 50 else ''}'")
 
-        for n in split_custom_tokens(delta):
+        for n in split_custom_tokens(delta, tokenizer=tok):
             tid = turn_token_into_id(n, tok_index)
             tok_index += 1
             buf_ids.append(tid)
