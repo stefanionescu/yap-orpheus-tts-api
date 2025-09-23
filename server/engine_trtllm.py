@@ -163,13 +163,27 @@ class _BatchScheduler:
             logger.debug(f"Processing batch of {len(batch)} requests")
 
             # 3) Encode prompts and assign req indices
-            batched_ids: List[np.ndarray] = []
+            token_arrays: List[np.ndarray] = []
             for i, req in enumerate(batch):
                 req.req_id = i
                 req.tok_ids = self._encode(req.prompt)
-                batched_ids.append(req.tok_ids)
+                token_arrays.append(req.tok_ids)
+            
+            # 4) Pad sequences to same length for proper batching
+            max_len = max(len(tokens) for tokens in token_arrays)
+            pad_token_id = getattr(self.tokenizer, 'pad_token_id', 0) or 0
+            logger.debug(f"Padding batch to max_len={max_len} with pad_token_id={pad_token_id}")
+            
+            batched_ids = []
+            for tokens in token_arrays:
+                if len(tokens) < max_len:
+                    # Pad with tokenizer's pad token
+                    padded = np.pad(tokens, (0, max_len - len(tokens)), mode='constant', constant_values=pad_token_id)
+                    batched_ids.append(padded)
+                else:
+                    batched_ids.append(tokens)
 
-            # 4) Build kwargs (take from first req's sp; could fan-out per-req if needed)
+            # 5) Build kwargs (take from first req's sp; could fan-out per-req if needed)
             sp0 = batch[0].sp
             temperature = float(getattr(sp0, "temperature", 0.6) or 0.6)
             top_p = float(getattr(sp0, "top_p", 0.8) or 0.8)
@@ -190,7 +204,7 @@ class _BatchScheduler:
             logger.debug(f"Batch generation: temp={temperature}, top_p={top_p}, "
                         f"rep_penalty={repetition_penalty}, max_tokens={max_new_tokens}")
 
-            # 5) Run ONE streaming generator covering the whole batch
+            # 6) Run ONE streaming generator covering the whole batch
             def _run():
                 # Fall back across param names if needed
                 gen = None
@@ -225,7 +239,7 @@ class _BatchScheduler:
             t = threading.Thread(target=_worker, daemon=True)
             t.start()
 
-            # 6) Demux steps back to each request
+            # 7) Demux steps back to each request
             try:
                 while True:
                     step = await q.get()
