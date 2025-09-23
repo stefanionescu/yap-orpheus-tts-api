@@ -388,6 +388,19 @@ class _BatchScheduler:
                             tok_matrix = [step.detach().cpu().tolist()]
                     else:
                         tok_matrix = _get_token_matrix(step)
+                    # Squeeze leading singleton dims (e.g., [1, B, T] -> [B, T])
+                    if tok_matrix is not None:
+                        try:
+                            while (
+                                isinstance(tok_matrix, list)
+                                and len(tok_matrix) == 1
+                                and isinstance(tok_matrix[0], list)
+                                and (len(tok_matrix[0]) > 0)
+                                and isinstance(tok_matrix[0][0], (list, tuple, _np.ndarray))
+                            ):
+                                tok_matrix = tok_matrix[0]
+                        except Exception:
+                            pass
                     if tok_matrix is not None:
                         # Early debug: show a sample of token ids for the first few steps
                         if demux_step_idx <= 3:

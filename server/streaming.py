@@ -97,7 +97,28 @@ async def aiter_pcm_from_custom_tokens(engine: Any, prompt: str, voice: str, sp:
                     pcm_count += 1
                     logger.debug(f"[{session_id}] Yielding PCM chunk {pcm_count} ({len(pcm)} bytes)")
                     yield pcm
-    
+    # Optional: flush partial residual codes at end to ensure at least one chunk on very short inputs
+    try:
+        pending = len(buf_ids) % 28
+        if pcm_count == 0 and pending > 0:
+            pad_needed = 28 - pending
+            # Pad with the last seen id to complete one hop (or zero if none)
+            pad_id = (buf_ids[-1] if buf_ids else 0)
+            flush_window = (buf_ids + [pad_id] * pad_needed)[-28:]
+            arr = np.asarray(flush_window, dtype=np.int32).reshape(-1, 7)
+            codes_0 = torch.from_numpy(arr[:, 0]).unsqueeze(0).to(SNAC_DEVICE)
+            codes_1 = torch.from_numpy(arr[:, [1, 4]].reshape(-1)).unsqueeze(0).to(SNAC_DEVICE)
+            codes_2 = torch.from_numpy(arr[:, [2, 3, 5, 6]].reshape(-1)).unsqueeze(0).to(SNAC_DEVICE)
+            logger.debug(f"[{session_id}] Flushing residual SNAC codes: pending={pending}, pad={pad_needed}")
+            audio = await snacx.decode_codes([codes_0, codes_1, codes_2])
+            pcm = (np.clip(audio, -1.0, 1.0) * 32767.0).astype(np.int16).tobytes()
+            if pcm:
+                pcm_count += 1
+                logger.debug(f"[{session_id}] Yielding final flushed PCM chunk ({len(pcm)} bytes)")
+                yield pcm
+    except Exception:
+        pass
+
     logger.info(f"[{session_id}] PCM generation completed: {generation_step} generation steps, "
                 f"{tokens_processed} tokens processed, {pcm_count} PCM chunks yielded")
 
