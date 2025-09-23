@@ -177,6 +177,7 @@ class _BatchScheduler:
             pad_id = int(self.tokenizer.pad_token_id)
             eos_id = int(self.tokenizer.eos_token_id) if (self.tokenizer.eos_token_id is not None) else pad_id
             bos_id = int(self.tokenizer.bos_token_id) if (self.tokenizer.bos_token_id is not None) else eos_id
+            assert pad_id != eos_id, f"pad_id ({pad_id}) must not equal eos_id ({eos_id})"
             
             sp0 = batch[0].sp
             temperature = float(getattr(sp0, "temperature", 0.6) or 0.6)
@@ -427,16 +428,18 @@ class _VLLMLikeEngine:
         logger.debug("Loading tokenizer...")
         self.tokenizer = AutoTokenizer.from_pretrained(self.model_id)
         
-        # Ensure we have a valid pad_token_id; fall back to EOS if needed
-        if self.tokenizer.pad_token_id is None:
-            if self.tokenizer.eos_token_id is not None:
-                # Assign EOS as pad (common for causal decoders)
-                self.tokenizer.pad_token = self.tokenizer.eos_token
-                logger.debug(f"Set pad_token to eos_token: {self.tokenizer.eos_token_id}")
+        # Ensure pad_token_id exists and is NOT equal to EOS
+        if (self.tokenizer.pad_token_id is None) or (self.tokenizer.pad_token_id == self.tokenizer.eos_token_id):
+            if getattr(self.tokenizer, "unk_token_id", None) is not None:
+                self.tokenizer.pad_token = self.tokenizer.unk_token
+                logger.debug(f"Set pad_token to unk_token: {self.tokenizer.unk_token_id}")
             else:
-                # Last resort: use BOS
-                self.tokenizer.pad_token = self.tokenizer.bos_token
-                logger.debug(f"Set pad_token to bos_token: {self.tokenizer.bos_token_id}")
+                # Last resort: use id 0 if safe in this vocab
+                try:
+                    self.tokenizer.pad_token_id = 0  # type: ignore[attr-defined]
+                    logger.debug("Set pad_token_id to 0 as fallback")
+                except Exception:
+                    logger.warning("Failed to set pad_token_id; pad may equal EOS which can break streaming")
         else:
             logger.debug(f"Using existing pad_token_id: {self.tokenizer.pad_token_id}")
             
