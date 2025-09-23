@@ -211,6 +211,7 @@ class _BatchScheduler:
             logger.debug(f"Batch generation: temp={temperature}, top_p={top_p}, "
                         f"rep_penalty={repetition_penalty}, max_tokens={max_new_tokens}")
             logger.debug(f"Special tokens: pad_id={pad_id}, end_id={eos_id}, bos_id={bos_id}")
+            logger.debug(f"Final stop_token_ids passed to TRT: {gen_kwargs.get('stop_token_ids')}")
 
             # 5) Run ONE streaming generator covering the whole batch
             def _run():
@@ -312,6 +313,11 @@ class _BatchScheduler:
                                 continue
                             # torch / np / list cases
                             if (_torch is not None) and isinstance(v, _torch.Tensor):
+                                # Ensure integer dtype for decoder compatibility
+                                try:
+                                    v = v.to(dtype=_torch.int64)
+                                except Exception:
+                                    pass
                                 if v.ndim == 2:
                                     return [v[i].detach().cpu().tolist() for i in range(v.shape[0])]
                                 return [v.detach().cpu().tolist()]
@@ -347,6 +353,11 @@ class _BatchScheduler:
                     # NEW: handle bare tensor steps from TRT-LLM as token matrix directly
                     tok_matrix = None
                     if (_torch is not None) and isinstance(step, _torch.Tensor):
+                        # Force integer dtype to avoid decode exceptions
+                        try:
+                            step = step.to(dtype=_torch.int64)
+                        except Exception:
+                            pass
                         if step.ndim == 2:
                             tok_matrix = [step[i].detach().cpu().tolist() for i in range(step.shape[0])]
                         else:
@@ -354,6 +365,12 @@ class _BatchScheduler:
                     else:
                         tok_matrix = _get_token_matrix(step)
                     if tok_matrix is not None:
+                        # Early debug: show a sample of token ids for the first few steps
+                        if demux_step_idx <= 3:
+                            try:
+                                logger.debug(f"tok_matrix[0][:10]={tok_matrix[0][:10] if tok_matrix and tok_matrix[0] else tok_matrix}")
+                            except Exception:
+                                pass
                         # Have tokens → decode per sequence and emit cumulative text
                         for i, req in enumerate(batch):
                             toks = tok_matrix[i] if i < len(tok_matrix) else []
