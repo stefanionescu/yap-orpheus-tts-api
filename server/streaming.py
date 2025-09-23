@@ -6,7 +6,7 @@ from typing import Iterator, Any
 import numpy as np
 import torch
 
-from .prompts import build_prompt, resolve_voice
+from .prompts import build_prompt, build_prompt_ids, resolve_voice
 from .core.custom_tokens import split_custom_tokens, turn_token_into_id
 from .core.snac_batcher import get_snac_batched, SNAC_DEVICE
 from .core.logging_config import get_logger
@@ -38,7 +38,22 @@ async def aiter_pcm_from_custom_tokens(engine: Any, prompt: str, voice: str, sp:
     pcm_count = 0
     tokens_processed = 0
     
-    async for out in engine.generate(build_prompt(prompt, resolve_voice(voice)), sp, _random_uuid()):
+    # Prefer pre-tokenized prompt ids when backend supports it (TRT-LLM wrapper accepts list[int])
+    try:
+        tok = getattr(engine, "tokenizer", None)
+        use_ids = (tok is not None)
+    except Exception:
+        tok = None
+        use_ids = False
+    encoded = build_prompt(prompt, resolve_voice(voice))
+    if use_ids and tok is not None:
+        try:
+            encoded = build_prompt_ids(prompt, resolve_voice(voice), tok)
+            logger.info(f"PROMPT_TAIL={encoded[-16:] if isinstance(encoded, list) and len(encoded) > 16 else encoded}")
+        except Exception:
+            pass
+
+    async for out in engine.generate(encoded, sp, _random_uuid()):
         generation_step += 1
         outs = out.outputs or []
         if not outs:

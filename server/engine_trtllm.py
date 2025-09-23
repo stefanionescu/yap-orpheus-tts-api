@@ -72,7 +72,7 @@ def _decode_full_text(
 @dataclass
 class _Req:
     """Single websocket generation request for batch processing."""
-    prompt: str
+    prompt: Any
     sp: Any
     fut_q: asyncio.Queue  # carries _CompatResult or Exception or None sentinel
     req_id: int = -1      # assigned at batch build time
@@ -132,10 +132,18 @@ class _BatchScheduler:
         return fut_q
 
     def _encode(self, s: str) -> np.ndarray:
-        """Encode text to token IDs with length limiting."""
-        ids = self.tokenizer.encode(s, add_special_tokens=True)
+        """Encode text to token IDs with length limiting, no auto specials, strip trailing EOS."""
+        ids = self.tokenizer.encode(s, add_special_tokens=False)
+        eos = int(self.tokenizer.eos_token_id) if (self.tokenizer.eos_token_id is not None) else None
+        if eos is not None:
+            while len(ids) > 0 and ids[-1] == eos:
+                ids.pop()
         if len(ids) > self.max_input_len:
             ids = ids[-self.max_input_len:]  # hard clip from left to respect engine input
+        try:
+            logger.debug(f"prompt_ids_tail={ids[-12:] if len(ids) > 12 else ids}")
+        except Exception:
+            pass
         return np.asarray(ids, dtype=np.int32)
 
     async def _loop(self) -> None:
@@ -166,7 +174,20 @@ class _BatchScheduler:
             batched_ids: List[np.ndarray] = []
             for i, req in enumerate(batch):
                 req.req_id = i
-                req.tok_ids = self._encode(req.prompt)
+                # Accept either pre-tokenized ids or raw text
+                if isinstance(req.prompt, (list, tuple, np.ndarray)):
+                    try:
+                        # Convert to list[int] then ndarray
+                        _lst = list(req.prompt)
+                    except Exception:
+                        _lst = []
+                    req.tok_ids = np.asarray(_lst, dtype=np.int32)
+                    try:
+                        logger.debug(f"prompt_ids_tail[{i}]={_lst[-12:] if len(_lst) > 12 else _lst}")
+                    except Exception:
+                        pass
+                else:
+                    req.tok_ids = self._encode(str(req.prompt))
                 if len(req.tok_ids) == 0:
                     # ensure at least one token; use pad_id
                     req.tok_ids = np.asarray([int(self.tokenizer.pad_token_id)], dtype=np.int32)
@@ -184,16 +205,8 @@ class _BatchScheduler:
             top_p = float(getattr(sp0, "top_p", 0.8) or 0.8)
             repetition_penalty = float(getattr(sp0, "repetition_penalty", 1.0) or 1.0)
             max_new_tokens = int(getattr(sp0, "max_tokens", getattr(sp0, "max_new_tokens", self.max_output_len)) or self.max_output_len)
-            stop_ids = list(getattr(sp0, "stop_token_ids", []) or [])
-            # Drop EOS from stop ids to avoid early termination on audio streams; TRT-LLM will still honor end_id
-            real_eos = getattr(self.tokenizer, "eos_token_id", None)
-            if real_eos is not None:
-                try:
-                    _e = int(real_eos)
-                    if _e in stop_ids:
-                        stop_ids = [i for i in stop_ids if i != _e]
-                except Exception:
-                    pass
+            # Debugging audio: do not provide any stop ids to TRT; rely on end_id only
+            stop_ids = []
 
             gen_kwargs = dict(
                 max_new_tokens=max_new_tokens,
@@ -208,6 +221,14 @@ class _BatchScheduler:
                 end_id=eos_id,
                 bos_id=bos_id,
             )
+
+            # Optional debug: allow disabling EOS end_id to test EOS-stall scenarios
+            try:
+                if os.getenv("ORPHEUS_DISABLE_EOS", "0").strip() in ("1", "true", "True"):
+                    gen_kwargs["end_id"] = -1
+                    logger.warning("ORPHEUS_DISABLE_EOS is set: end_id forced to -1 for debugging")
+            except Exception:
+                pass
 
             logger.debug(f"Batch generation: temp={temperature}, top_p={top_p}, "
                         f"rep_penalty={repetition_penalty}, max_tokens={max_new_tokens}")
