@@ -196,6 +196,18 @@ class _BatchScheduler:
                     logger.warning(f"Request {i} had empty token sequence, using pad token for prompt: '{req.prompt}'")
                 batched_ids.append(req.tok_ids)
 
+            # Convert to pure python lists of ints for TRT-LLM
+            batch_input_ids: List[List[int]] = []
+            for arr in batched_ids:
+                try:
+                    if hasattr(arr, "tolist"):
+                        lst = arr.tolist()
+                    else:
+                        lst = list(arr)
+                except Exception:
+                    lst = [int(x) for x in arr]
+                batch_input_ids.append([int(x) for x in lst])
+
             # 4) Build kwargs with explicit special IDs to avoid TRT-LLM ambiguity
             pad_id = int(self.tokenizer.pad_token_id)
             eos_id = int(self.tokenizer.eos_token_id) if (self.tokenizer.eos_token_id is not None) else pad_id
@@ -210,21 +222,16 @@ class _BatchScheduler:
             top_p = float(getattr(sp0, "top_p", 0.8) or 0.8)
             repetition_penalty = float(getattr(sp0, "repetition_penalty", 1.0) or 1.0)
             max_new_tokens = int(getattr(sp0, "max_tokens", getattr(sp0, "max_new_tokens", self.max_output_len)) or self.max_output_len)
-            # Honor caller-provided stop ids (e.g., end-of-audio sentinel)
+            # Prefer stop_words (sequence(s) of ids) for TRT-LLM; default to END_OF_SPEECH (128258)
             stop_ids = list(getattr(sp0, "stop_token_ids", []) or [])
-            # Prefer stop_words_list (sequence(s) of ids) for TRT-LLM; default to END_OF_SPEECH (128258)
-            try:
-                stop_words_list = [[sid] for sid in stop_ids] if stop_ids else [[128258]]
-            except Exception:
-                stop_words_list = [[128258]]
+            stop_words = [[sid] for sid in stop_ids] if stop_ids else [[128258]]
 
             gen_kwargs = dict(
                 max_new_tokens=max_new_tokens,
                 temperature=temperature,
                 top_p=top_p,
                 repetition_penalty=repetition_penalty,
-                stop_token_ids=stop_ids,
-                stop_words_list=stop_words_list,
+                stop_words=stop_words,
                 streaming=True,
                 enable_chunked_context=True,
                 # Tell TRT-LLM exactly what special IDs are to avoid ambiguity
@@ -244,25 +251,14 @@ class _BatchScheduler:
             logger.debug(f"Batch generation: temp={temperature}, top_p={top_p}, "
                         f"rep_penalty={repetition_penalty}, max_tokens={max_new_tokens}")
             logger.debug(f"Special tokens: pad_id={pad_id}, end_id={eos_id}, bos_id={bos_id}")
-            logger.debug(f"Final stop_token_ids passed to TRT: {gen_kwargs.get('stop_token_ids')}")
-            logger.debug(f"Final stop_words_list passed to TRT: {gen_kwargs.get('stop_words_list')}")
+            logger.debug(f"Final stop_words passed to TRT: {gen_kwargs.get('stop_words')}")
 
             # 5) Run ONE streaming generator covering the whole batch
             def _run():
-                # Fall back across param names if needed
-                gen = None
-                logger.debug(f"Attempting batched generation with {len(batched_ids)} sequences, lengths: {[len(seq) for seq in batched_ids]}")
-                logger.debug(f"Input types: {[type(x) for x in batched_ids]}, dtypes: {[x.dtype for x in batched_ids]}")
-                try:
-                    gen = self.runner.generate(batched_ids, **gen_kwargs)
-                except TypeError as e1:
-                    logger.debug(f"First generation call failed, trying input_ids: {e1}")
-                    try:
-                        gen = self.runner.generate(input_ids=batched_ids, **gen_kwargs)
-                    except TypeError as e2:
-                        logger.debug(f"Second generation call failed, trying input_token_ids: {e2}")
-                        gen = self.runner.generate(input_token_ids=batched_ids, **gen_kwargs)
-                return gen
+                logger.debug(
+                    f"Attempting batched generation with {len(batch_input_ids)} sequences, lengths: {[len(seq) for seq in batch_input_ids]}"
+                )
+                return self.runner.generate(batch_input_ids=batch_input_ids, **gen_kwargs)
 
             # NOTE: keep the whole generator in one thread to avoid any races
             loop = asyncio.get_running_loop()
