@@ -1,5 +1,6 @@
 import re
 from typing import Optional, Tuple, Pattern, Any
+import os
 
 _AUDIO_RX: Optional[Pattern[str]] = None
 
@@ -21,6 +22,15 @@ def get_audio_token_regex(tokenizer: Any = None) -> Pattern[str]:
     global _AUDIO_RX
     if _AUDIO_RX is not None:
         return _AUDIO_RX
+
+    # Allow explicit override via environment for fast debugging
+    override = os.getenv("ORPHEUS_AUDIO_TOKEN_REGEX")
+    if override:
+        try:
+            _AUDIO_RX = re.compile(override)
+            return _AUDIO_RX
+        except Exception:
+            pass
 
     # Fallback if tokenizer isn't provided or get_added_vocab not available
     default_rx = re.compile(r"<custom_token_(\d+)>")

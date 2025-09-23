@@ -68,6 +68,13 @@ async def aiter_pcm_from_custom_tokens(engine: Any, prompt: str, voice: str, sp:
         
         if delta:
             logger.debug(f"[{session_id}] Step {generation_step}: Processing delta: '{delta[:50]}{'...' if len(delta) > 50 else ''}'")
+            # Early tail logging to confirm custom tokens are present
+            if generation_step <= 6:
+                try:
+                    logger.debug(f"[{session_id}] piece_tail={repr(piece[-120:])}")
+                    logger.debug(f"[{session_id}] delta_tail={repr(delta[-120:])}")
+                except Exception:
+                    pass
 
         for n in split_custom_tokens(delta, tokenizer=tok):
             tid = turn_token_into_id(n, tok_index)

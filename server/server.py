@@ -67,7 +67,8 @@ async def _startup():
                 detokenize=True,
                 skip_special_tokens=False,
                 ignore_eos=False,
-                stop_token_ids=[128258, 128009],
+                # Only end-of-audio sentinel; do not include EOS during generation
+                stop_token_ids=[128258],
             )
             async def _prime(voice: str):
                 logger.debug(f"Priming voice: {voice}")
@@ -224,7 +225,8 @@ async def tts_ws(ws: WebSocket):
                         detokenize=True,
                         skip_special_tokens=False,
                         ignore_eos=False,
-                        stop_token_ids=[128258, 128009],
+                        # Only end-of-audio sentinel; do not include EOS during generation
+                        stop_token_ids=[128258],
                     )
                     logger.debug(f"Sampling params: temp={final_temp}, top_p={final_top_p}, rep_penalty={final_rep_penalty}, max_tokens={final_max_tokens}")
 

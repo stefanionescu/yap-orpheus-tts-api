@@ -199,7 +199,10 @@ class _BatchScheduler:
             # 4) Build kwargs with explicit special IDs to avoid TRT-LLM ambiguity
             pad_id = int(self.tokenizer.pad_token_id)
             eos_id = int(self.tokenizer.eos_token_id) if (self.tokenizer.eos_token_id is not None) else pad_id
-            bos_id = int(self.tokenizer.bos_token_id) if (self.tokenizer.bos_token_id is not None) else eos_id
+            # Never alias BOS to EOS; use -1 when BOS is missing or equals EOS
+            bos_id = int(self.tokenizer.bos_token_id) if (self.tokenizer.bos_token_id is not None) else -1
+            if bos_id == eos_id:
+                bos_id = -1
             assert pad_id != eos_id, f"pad_id ({pad_id}) must not equal eos_id ({eos_id})"
             
             sp0 = batch[0].sp
@@ -207,8 +210,8 @@ class _BatchScheduler:
             top_p = float(getattr(sp0, "top_p", 0.8) or 0.8)
             repetition_penalty = float(getattr(sp0, "repetition_penalty", 1.0) or 1.0)
             max_new_tokens = int(getattr(sp0, "max_tokens", getattr(sp0, "max_new_tokens", self.max_output_len)) or self.max_output_len)
-            # Debugging audio: do not provide any stop ids to TRT; rely on end_id only
-            stop_ids = []
+            # Honor caller-provided stop ids (e.g., end-of-audio sentinel)
+            stop_ids = list(getattr(sp0, "stop_token_ids", []) or [])
 
             gen_kwargs = dict(
                 max_new_tokens=max_new_tokens,
