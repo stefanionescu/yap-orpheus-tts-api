@@ -76,7 +76,7 @@ class _Req:
     sp: Any
     fut_q: asyncio.Queue  # carries _CompatResult or Exception or None sentinel
     req_id: int = -1      # assigned at batch build time
-    tok_ids: Optional[np.ndarray] = None
+    tok_ids: Optional[list[int]] = None
     # streaming decode state
     cumulative_text: str = ""
 
@@ -131,12 +131,12 @@ class _BatchScheduler:
         await self._in_q.put(_Req(prompt=prompt, sp=sp, fut_q=fut_q))
         return fut_q
 
-    def _encode(self, s: str) -> np.ndarray:
+    def _encode(self, s: str) -> list[int]:
         """Encode text to token IDs with length limiting."""
         ids = self.tokenizer.encode(s, add_special_tokens=True)
         if len(ids) > self.max_input_len:
             ids = ids[-self.max_input_len:]  # hard clip from left to respect engine input
-        return np.asarray(ids, dtype=np.int32)
+        return list(map(int, ids))
 
     async def _loop(self) -> None:
         """Main background loop that processes batches."""
@@ -163,49 +163,29 @@ class _BatchScheduler:
             logger.debug(f"Processing batch of {len(batch)} requests")
 
             # 3) Encode prompts and assign req indices
-            token_arrays: List[np.ndarray] = []
+            batched_ids: List[List[int]] = []
             for i, req in enumerate(batch):
                 req.req_id = i
                 req.tok_ids = self._encode(req.prompt)
-                token_arrays.append(req.tok_ids)
-            
-            # 4) Pad sequences to same length for proper batching
-            if not token_arrays:
-                logger.error("No token arrays to process in batch")
-                continue
-                
-            # Check for empty sequences and log warning
-            for i, tokens in enumerate(token_arrays):
-                if len(tokens) == 0:
-                    logger.warning(f"Request {i} has empty token sequence, prompt: '{batch[i].prompt}'")
-                    
-            max_len = max(len(tokens) if len(tokens) > 0 else 1 for tokens in token_arrays)
-            pad_token_id = getattr(self.tokenizer, 'pad_token_id', 0) or 0
-            logger.debug(f"Padding batch to max_len={max_len} with pad_token_id={pad_token_id}")
-            
-            batched_arrays = []
-            for tokens in token_arrays:
-                if len(tokens) == 0:
-                    # Create a minimal valid sequence for empty prompts
-                    padded = np.full(max_len, pad_token_id, dtype=np.int32)
-                    batched_arrays.append(padded)
-                elif len(tokens) < max_len:
-                    # Pad with tokenizer's pad token
-                    padded = np.pad(tokens, (0, max_len - len(tokens)), mode='constant', constant_values=pad_token_id)
-                    batched_arrays.append(padded)
-                else:
-                    batched_arrays.append(tokens)
-            
-            # Try both formats: list of arrays (like single-request) and stacked array
-            batched_ids = batched_arrays  # Keep as list for now, but could try np.stack(batched_arrays) if needed
+                if len(req.tok_ids) == 0:
+                    # ensure at least one token; use pad_id
+                    req.tok_ids = [self.tokenizer.pad_token_id]
+                    logger.warning(f"Request {i} had empty token sequence, using pad token for prompt: '{req.prompt}'")
+                batched_ids.append(req.tok_ids)
 
-            # 5) Build kwargs (take from first req's sp; could fan-out per-req if needed)
+            # 4) Build kwargs with explicit special IDs to avoid TRT-LLM ambiguity
+            pad_id = int(self.tokenizer.pad_token_id)
+            eos_id = int(self.tokenizer.eos_token_id) if (self.tokenizer.eos_token_id is not None) else pad_id
+            bos_id = int(self.tokenizer.bos_token_id) if (self.tokenizer.bos_token_id is not None) else eos_id
+            
             sp0 = batch[0].sp
             temperature = float(getattr(sp0, "temperature", 0.6) or 0.6)
             top_p = float(getattr(sp0, "top_p", 0.8) or 0.8)
             repetition_penalty = float(getattr(sp0, "repetition_penalty", 1.0) or 1.0)
             max_new_tokens = int(getattr(sp0, "max_tokens", getattr(sp0, "max_new_tokens", self.max_output_len)) or self.max_output_len)
             stop_ids = list(getattr(sp0, "stop_token_ids", []) or [])
+            if not stop_ids and eos_id is not None:
+                stop_ids = [eos_id]
 
             gen_kwargs = dict(
                 max_new_tokens=max_new_tokens,
@@ -215,16 +195,21 @@ class _BatchScheduler:
                 stop_token_ids=stop_ids,
                 streaming=True,
                 enable_chunked_context=True,
+                # Tell TRT-LLM exactly what special IDs are to avoid ambiguity
+                pad_id=pad_id,
+                end_id=eos_id,
+                bos_id=bos_id,
             )
 
             logger.debug(f"Batch generation: temp={temperature}, top_p={top_p}, "
                         f"rep_penalty={repetition_penalty}, max_tokens={max_new_tokens}")
+            logger.debug(f"Special tokens: pad_id={pad_id}, end_id={eos_id}, bos_id={bos_id}")
 
-            # 6) Run ONE streaming generator covering the whole batch
+            # 5) Run ONE streaming generator covering the whole batch
             def _run():
                 # Fall back across param names if needed
                 gen = None
-                logger.debug(f"Attempting batched generation with {len(batched_ids)} sequences, shapes: {[arr.shape for arr in batched_ids]}")
+                logger.debug(f"Attempting batched generation with {len(batched_ids)} sequences, lengths: {[len(seq) for seq in batched_ids]}")
                 try:
                     gen = self.runner.generate(batched_ids, **gen_kwargs)
                 except TypeError as e1:
@@ -258,7 +243,7 @@ class _BatchScheduler:
             t = threading.Thread(target=_worker, daemon=True)
             t.start()
 
-            # 7) Demux steps back to each request
+            # 6) Demux steps back to each request
             try:
                 while True:
                     step = await q.get()
@@ -293,6 +278,9 @@ class _BatchScheduler:
                             # ignore; no visible delta
                             continue
                     else:
+                        # Defensive: sometimes a step can contain empty lists for early-finished seqs
+                        if isinstance(per_seq_ids, list) and all((isinstance(x, list) and len(x) == 0) for x in per_seq_ids):
+                            continue
                         # per_seq_ids is [B, …] or flat+index; normalize to list per request
                         if isinstance(per_seq_ids, (list, tuple)) and per_seq_ids and isinstance(per_seq_ids[0], (list, tuple, np.ndarray)):
                             # shape [B, T]
@@ -305,7 +293,7 @@ class _BatchScheduler:
                             for req in batch:
                                 req.cumulative_text = _decode_full_text(self.tokenizer, req.cumulative_text, step)
                                 await req.fut_q.put(_CompatResult([_CompatOutput(req.cumulative_text)]))
-                # 8) close all queues for this batch
+                # 7) close all queues for this batch
                 for req in batch:
                     await req.fut_q.put(None)
 
@@ -339,6 +327,20 @@ class _VLLMLikeEngine:
 
         logger.debug("Loading tokenizer...")
         self.tokenizer = AutoTokenizer.from_pretrained(self.model_id)
+        
+        # Ensure we have a valid pad_token_id; fall back to EOS if needed
+        if self.tokenizer.pad_token_id is None:
+            if self.tokenizer.eos_token_id is not None:
+                # Assign EOS as pad (common for causal decoders)
+                self.tokenizer.pad_token = self.tokenizer.eos_token
+                logger.debug(f"Set pad_token to eos_token: {self.tokenizer.eos_token_id}")
+            else:
+                # Last resort: use BOS
+                self.tokenizer.pad_token = self.tokenizer.bos_token
+                logger.debug(f"Set pad_token to bos_token: {self.tokenizer.bos_token_id}")
+        else:
+            logger.debug(f"Using existing pad_token_id: {self.tokenizer.pad_token_id}")
+            
         logger.debug("Tokenizer loaded successfully")
 
         # Ensure runtime TF32 policy matches build; we build with TF32 enabled
