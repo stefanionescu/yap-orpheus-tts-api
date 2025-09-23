@@ -212,6 +212,11 @@ class _BatchScheduler:
             max_new_tokens = int(getattr(sp0, "max_tokens", getattr(sp0, "max_new_tokens", self.max_output_len)) or self.max_output_len)
             # Honor caller-provided stop ids (e.g., end-of-audio sentinel)
             stop_ids = list(getattr(sp0, "stop_token_ids", []) or [])
+            # Prefer stop_words_list (sequence(s) of ids) for TRT-LLM; default to END_OF_SPEECH (128258)
+            try:
+                stop_words_list = [[sid] for sid in stop_ids] if stop_ids else [[128258]]
+            except Exception:
+                stop_words_list = [[128258]]
 
             gen_kwargs = dict(
                 max_new_tokens=max_new_tokens,
@@ -219,6 +224,7 @@ class _BatchScheduler:
                 top_p=top_p,
                 repetition_penalty=repetition_penalty,
                 stop_token_ids=stop_ids,
+                stop_words_list=stop_words_list,
                 streaming=True,
                 enable_chunked_context=True,
                 # Tell TRT-LLM exactly what special IDs are to avoid ambiguity
@@ -239,6 +245,7 @@ class _BatchScheduler:
                         f"rep_penalty={repetition_penalty}, max_tokens={max_new_tokens}")
             logger.debug(f"Special tokens: pad_id={pad_id}, end_id={eos_id}, bos_id={bos_id}")
             logger.debug(f"Final stop_token_ids passed to TRT: {gen_kwargs.get('stop_token_ids')}")
+            logger.debug(f"Final stop_words_list passed to TRT: {gen_kwargs.get('stop_words_list')}")
 
             # 5) Run ONE streaming generator covering the whole batch
             def _run():
