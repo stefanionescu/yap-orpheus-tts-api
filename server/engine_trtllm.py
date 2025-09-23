@@ -196,17 +196,11 @@ class _BatchScheduler:
                     logger.warning(f"Request {i} had empty token sequence, using pad token for prompt: '{req.prompt}'")
                 batched_ids.append(req.tok_ids)
 
-            # Convert to pure python lists of ints for TRT-LLM
-            batch_input_ids: List[List[int]] = []
-            for arr in batched_ids:
-                try:
-                    if hasattr(arr, "tolist"):
-                        lst = arr.tolist()
-                    else:
-                        lst = list(arr)
-                except Exception:
-                    lst = [int(x) for x in arr]
-                batch_input_ids.append([int(x) for x in lst])
+            # Use NumPy int32 arrays for TRT-LLM (ModelRunnerCpp will .tolist() each)
+            batch_input_ids = [
+                (arr if isinstance(arr, np.ndarray) else np.asarray(arr, dtype=np.int32)).astype(np.int32, copy=False)
+                for arr in batched_ids
+            ]
 
             # 4) Build kwargs with explicit special IDs to avoid TRT-LLM ambiguity
             pad_id = int(self.tokenizer.pad_token_id)
