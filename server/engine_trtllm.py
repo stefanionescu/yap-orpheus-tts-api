@@ -184,8 +184,15 @@ class _BatchScheduler:
             repetition_penalty = float(getattr(sp0, "repetition_penalty", 1.0) or 1.0)
             max_new_tokens = int(getattr(sp0, "max_tokens", getattr(sp0, "max_new_tokens", self.max_output_len)) or self.max_output_len)
             stop_ids = list(getattr(sp0, "stop_token_ids", []) or [])
-            if not stop_ids and eos_id is not None:
-                stop_ids = [eos_id]
+            # Drop EOS from stop ids to avoid early termination on audio streams; TRT-LLM will still honor end_id
+            real_eos = getattr(self.tokenizer, "eos_token_id", None)
+            if real_eos is not None:
+                try:
+                    _e = int(real_eos)
+                    if _e in stop_ids:
+                        stop_ids = [i for i in stop_ids if i != _e]
+                except Exception:
+                    pass
 
             gen_kwargs = dict(
                 max_new_tokens=max_new_tokens,
@@ -246,6 +253,7 @@ class _BatchScheduler:
 
             # 6) Demux steps back to each request
             try:
+                demux_step_idx = 0
                 while True:
                     step = await q.get()
                     if step is None:
@@ -258,64 +266,107 @@ class _BatchScheduler:
                             await req.fut_q.put(step)
                             await req.fut_q.put(None)
                         raise step
+                    demux_step_idx += 1
+                    if demux_step_idx == 1:
+                        try:
+                            typ = type(step)
+                            keys = list(step.keys()) if isinstance(step, dict) else dir(step)[:8]
+                            logger.debug(f"stream step type={typ} keys={keys}")
+                        except Exception:
+                            pass
 
-                    # 1) Try to get token ids (handle multiple field names)
-                    per_seq_ids = (
-                        getattr(step, "output_token_ids", None)
-                        or getattr(step, "output_ids", None)         # NEW: some TRT-LLM builds
-                        or getattr(step, "token_ids", None)
-                        or getattr(step, "new_token_ids", None)
-                    )
+                    # --- DEMUX: normalize step to per-sequence texts, then emit ---
+                    import numpy as _np
+                    try:
+                        import torch as _torch  # type: ignore
+                    except Exception:
+                        _torch = None  # type: ignore
 
-                    if per_seq_ids is not None:
-                        # Normalize to a list-of-1D token sequences
-                        seqs = None
-                        if isinstance(per_seq_ids, np.ndarray):
-                            # shape could be (B, T) or (T,)
-                            if per_seq_ids.ndim == 2:
-                                seqs = [per_seq_ids[i].tolist() for i in range(per_seq_ids.shape[0])]
-                            else:
-                                seqs = [per_seq_ids.tolist()]
-                        elif isinstance(per_seq_ids, (list, tuple)) and per_seq_ids and isinstance(per_seq_ids[0], (list, tuple, np.ndarray)):
-                            # already [B, T]
-                            seqs = []
-                            for s in per_seq_ids:
-                                if isinstance(s, np.ndarray):
-                                    seqs.append(s.tolist())
-                                else:
-                                    seqs.append(list(s))
-                        else:
-                            # flat / ambiguous -> broadcast the same step to all
-                            seqs = [per_seq_ids] * len(batch)
+                    def _to_list_1d(x):
+                        # Convert single sequence of token ids to list[int]
+                        if x is None:
+                            return []
+                        if (_torch is not None) and isinstance(x, _torch.Tensor):
+                            return x.detach().cpu().tolist()
+                        if isinstance(x, _np.ndarray):
+                            return x.tolist()
+                        if isinstance(x, (list, tuple)):
+                            return list(x)
+                        # last-resort: single int
+                        try:
+                            return [int(x)]
+                        except Exception:
+                            return []
 
-                        # Emit per request
+                    def _extract(_step, key):
+                        # Works for dict or attr objects
+                        if isinstance(_step, dict):
+                            return _step.get(key, None)
+                        return getattr(_step, key, None)
+
+                    def _get_token_matrix(_step):
+                        # Try all known field names
+                        for k in ("output_token_ids", "output_ids", "token_ids", "new_token_ids"):
+                            v = _extract(_step, k)
+                            if v is None:
+                                continue
+                            # torch / np / list cases
+                            if (_torch is not None) and isinstance(v, _torch.Tensor):
+                                if v.ndim == 2:
+                                    return [v[i].detach().cpu().tolist() for i in range(v.shape[0])]
+                                return [v.detach().cpu().tolist()]
+                            if isinstance(v, _np.ndarray):
+                                if v.ndim == 2:
+                                    return [v[i].tolist() for i in range(v.shape[0])]
+                                return [v.tolist()]
+                            if isinstance(v, (list, tuple)):
+                                # Could be [B, T] or [T]
+                                if (
+                                    (len(v) > 0 and isinstance(v[0], (list, tuple, _np.ndarray)))
+                                    or ((_torch is not None) and len(v) > 0 and isinstance(v[0], _torch.Tensor))
+                                ):
+                                    out = []
+                                    for row in v:
+                                        out.append(_to_list_1d(row))
+                                    return out
+                                # Flat -> broadcast later
+                                return [_to_list_1d(v)]
+                            # Unknown type → try to coerce
+                            return [_to_list_1d(v)]
+                        return None  # no token field found
+
+                    def _get_texts(_step):
+                        v = _extract(_step, "texts")
+                        if isinstance(v, list) and all(isinstance(t, str) for t in v):
+                            return v
+                        v = _extract(_step, "text")
+                        if isinstance(v, str):
+                            return [v]
+                        return None
+
+                    tok_matrix = _get_token_matrix(step)
+                    if tok_matrix is not None:
+                        # Have tokens → decode per sequence and emit cumulative text
                         for i, req in enumerate(batch):
-                            toks = seqs[i] if i < len(seqs) else []
-                            # Use safe decoder to keep cumulative text
-                            req.cumulative_text = _decode_full_text(self.tokenizer, req.cumulative_text,
-                                                                    type("S", (), {"token_ids": toks}))
+                            toks = tok_matrix[i] if i < len(tok_matrix) else []
+                            req.cumulative_text = _decode_full_text(
+                                self.tokenizer,
+                                req.cumulative_text,
+                                type("S", (), {"token_ids": toks}),
+                            )
                             await req.fut_q.put(_CompatResult([_CompatOutput(req.cumulative_text)]))
-
                     else:
-                        # 2) Fall back to texts/text
-                        per_seq_texts = getattr(step, "texts", None)
-                        if isinstance(per_seq_texts, list):
+                        # Fall back to texts/text (string) and broadcast if needed
+                        tlist = _get_texts(step)
+                        if tlist is not None and len(tlist) > 0:
                             for i, req in enumerate(batch):
-                                # Construct a tiny step-like object so _decode_full_text can append
-                                st = type("S", (), {"text": per_seq_texts[i] if i < len(per_seq_texts) else ""})
+                                txt = tlist[i] if i < len(tlist) else tlist[0]
+                                st = type("S", (), {"text": txt})
                                 req.cumulative_text = _decode_full_text(self.tokenizer, req.cumulative_text, st)
                                 await req.fut_q.put(_CompatResult([_CompatOutput(req.cumulative_text)]))
                         else:
-                            # Single string for the whole batch? Broadcast it.
-                            single_text = getattr(step, "text", None)
-                            if isinstance(single_text, str) and single_text:
-                                st = type("S", (), {"text": single_text})
-                                for req in batch:
-                                    req.cumulative_text = _decode_full_text(self.tokenizer, req.cumulative_text, st)
-                                    await req.fut_q.put(_CompatResult([_CompatOutput(req.cumulative_text)]))
-                            else:
-                                # Nothing usable in this step
-                                continue
+                            # Nothing usable in this step; skip
+                            continue
                 # 7) close all queues for this batch
                 for req in batch:
                     await req.fut_q.put(None)
