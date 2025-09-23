@@ -76,7 +76,7 @@ class _Req:
     sp: Any
     fut_q: asyncio.Queue  # carries _CompatResult or Exception or None sentinel
     req_id: int = -1      # assigned at batch build time
-    tok_ids: Optional[list[int]] = None
+    tok_ids: Optional[np.ndarray] = None
     # streaming decode state
     cumulative_text: str = ""
 
@@ -131,12 +131,12 @@ class _BatchScheduler:
         await self._in_q.put(_Req(prompt=prompt, sp=sp, fut_q=fut_q))
         return fut_q
 
-    def _encode(self, s: str) -> list[int]:
+    def _encode(self, s: str) -> np.ndarray:
         """Encode text to token IDs with length limiting."""
         ids = self.tokenizer.encode(s, add_special_tokens=True)
         if len(ids) > self.max_input_len:
             ids = ids[-self.max_input_len:]  # hard clip from left to respect engine input
-        return list(map(int, ids))
+        return np.asarray(ids, dtype=np.int32)
 
     async def _loop(self) -> None:
         """Main background loop that processes batches."""
@@ -163,13 +163,13 @@ class _BatchScheduler:
             logger.debug(f"Processing batch of {len(batch)} requests")
 
             # 3) Encode prompts and assign req indices
-            batched_ids: List[List[int]] = []
+            batched_ids: List[np.ndarray] = []
             for i, req in enumerate(batch):
                 req.req_id = i
                 req.tok_ids = self._encode(req.prompt)
                 if len(req.tok_ids) == 0:
                     # ensure at least one token; use pad_id
-                    req.tok_ids = [self.tokenizer.pad_token_id]
+                    req.tok_ids = np.asarray([int(self.tokenizer.pad_token_id)], dtype=np.int32)
                     logger.warning(f"Request {i} had empty token sequence, using pad token for prompt: '{req.prompt}'")
                 batched_ids.append(req.tok_ids)
 
@@ -210,6 +210,7 @@ class _BatchScheduler:
                 # Fall back across param names if needed
                 gen = None
                 logger.debug(f"Attempting batched generation with {len(batched_ids)} sequences, lengths: {[len(seq) for seq in batched_ids]}")
+                logger.debug(f"Input types: {[type(x) for x in batched_ids]}, dtypes: {[x.dtype for x in batched_ids]}")
                 try:
                     gen = self.runner.generate(batched_ids, **gen_kwargs)
                 except TypeError as e1:
