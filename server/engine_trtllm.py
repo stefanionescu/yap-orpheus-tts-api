@@ -60,7 +60,9 @@ def _decode_full_text(
         token_ids = list(candidate_ids)
 
     try:
-        decoded = tokenizer.decode(token_ids, skip_special_tokens=False)
+        # Use convert_ids_to_tokens to preserve literal special tokens like <custom_token_...>
+        pieces = tokenizer.convert_ids_to_tokens(token_ids, skip_special_tokens=False)
+        decoded = "".join(pieces)
     except Exception:
         return cumulative_text
 
@@ -449,6 +451,15 @@ class _VLLMLikeEngine:
         logger.debug("Loading tokenizer...")
         self.tokenizer = AutoTokenizer.from_pretrained(self.model_id)
         
+        try:
+            logger.info(
+                f"Tokenizer specials: bos={self.tokenizer.bos_token_id}, "
+                f"eos={self.tokenizer.eos_token_id}, pad={self.tokenizer.pad_token_id}, "
+                f"unk={getattr(self.tokenizer, 'unk_token_id', None)}"
+            )
+        except Exception:
+            pass
+
         # Ensure pad_token_id exists and is NOT equal to EOS
         if (self.tokenizer.pad_token_id is None) or (self.tokenizer.pad_token_id == self.tokenizer.eos_token_id):
             if getattr(self.tokenizer, "unk_token_id", None) is not None:
