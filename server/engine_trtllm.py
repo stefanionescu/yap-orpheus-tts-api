@@ -170,18 +170,34 @@ class _BatchScheduler:
                 token_arrays.append(req.tok_ids)
             
             # 4) Pad sequences to same length for proper batching
-            max_len = max(len(tokens) for tokens in token_arrays)
+            if not token_arrays:
+                logger.error("No token arrays to process in batch")
+                continue
+                
+            # Check for empty sequences and log warning
+            for i, tokens in enumerate(token_arrays):
+                if len(tokens) == 0:
+                    logger.warning(f"Request {i} has empty token sequence, prompt: '{batch[i].prompt}'")
+                    
+            max_len = max(len(tokens) if len(tokens) > 0 else 1 for tokens in token_arrays)
             pad_token_id = getattr(self.tokenizer, 'pad_token_id', 0) or 0
             logger.debug(f"Padding batch to max_len={max_len} with pad_token_id={pad_token_id}")
             
-            batched_ids = []
+            batched_arrays = []
             for tokens in token_arrays:
-                if len(tokens) < max_len:
+                if len(tokens) == 0:
+                    # Create a minimal valid sequence for empty prompts
+                    padded = np.full(max_len, pad_token_id, dtype=np.int32)
+                    batched_arrays.append(padded)
+                elif len(tokens) < max_len:
                     # Pad with tokenizer's pad token
                     padded = np.pad(tokens, (0, max_len - len(tokens)), mode='constant', constant_values=pad_token_id)
-                    batched_ids.append(padded)
+                    batched_arrays.append(padded)
                 else:
-                    batched_ids.append(tokens)
+                    batched_arrays.append(tokens)
+            
+            # Try both formats: list of arrays (like single-request) and stacked array
+            batched_ids = batched_arrays  # Keep as list for now, but could try np.stack(batched_arrays) if needed
 
             # 5) Build kwargs (take from first req's sp; could fan-out per-req if needed)
             sp0 = batch[0].sp
@@ -208,12 +224,15 @@ class _BatchScheduler:
             def _run():
                 # Fall back across param names if needed
                 gen = None
+                logger.debug(f"Attempting batched generation with {len(batched_ids)} sequences, shapes: {[arr.shape for arr in batched_ids]}")
                 try:
                     gen = self.runner.generate(batched_ids, **gen_kwargs)
-                except TypeError:
+                except TypeError as e1:
+                    logger.debug(f"First generation call failed, trying input_ids: {e1}")
                     try:
                         gen = self.runner.generate(input_ids=batched_ids, **gen_kwargs)
-                    except TypeError:
+                    except TypeError as e2:
+                        logger.debug(f"Second generation call failed, trying input_token_ids: {e2}")
                         gen = self.runner.generate(input_token_ids=batched_ids, **gen_kwargs)
                 return gen
 
@@ -286,7 +305,7 @@ class _BatchScheduler:
                             for req in batch:
                                 req.cumulative_text = _decode_full_text(self.tokenizer, req.cumulative_text, step)
                                 await req.fut_q.put(_CompatResult([_CompatOutput(req.cumulative_text)]))
-                # 7) close all queues for this batch
+                # 8) close all queues for this batch
                 for req in batch:
                     await req.fut_q.put(None)
 
