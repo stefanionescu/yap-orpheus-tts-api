@@ -344,7 +344,15 @@ class _BatchScheduler:
                             return [v]
                         return None
 
-                    tok_matrix = _get_token_matrix(step)
+                    # NEW: handle bare tensor steps from TRT-LLM as token matrix directly
+                    tok_matrix = None
+                    if (_torch is not None) and isinstance(step, _torch.Tensor):
+                        if step.ndim == 2:
+                            tok_matrix = [step[i].detach().cpu().tolist() for i in range(step.shape[0])]
+                        else:
+                            tok_matrix = [step.detach().cpu().tolist()]
+                    else:
+                        tok_matrix = _get_token_matrix(step)
                     if tok_matrix is not None:
                         # Have tokens → decode per sequence and emit cumulative text
                         for i, req in enumerate(batch):
