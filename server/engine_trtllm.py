@@ -81,6 +81,8 @@ class _Req:
     tok_ids: Optional[np.ndarray] = None
     # streaming decode state
     cumulative_text: str = ""
+    # number of leading prompt tokens to ignore in first emission (when step outputs include prompt)
+    skip_token_prefix: int = 0
 
 
 class _BatchScheduler:
@@ -195,6 +197,11 @@ class _BatchScheduler:
                     req.tok_ids = np.asarray([int(self.tokenizer.pad_token_id)], dtype=np.int32)
                     logger.warning(f"Request {i} had empty token sequence, using pad token for prompt: '{req.prompt}'")
                 batched_ids.append(req.tok_ids)
+                # Initialize skip of prompt tokens for first emission when needed
+                try:
+                    req.skip_token_prefix = int(len(req.tok_ids))
+                except Exception:
+                    req.skip_token_prefix = 0
 
             # Use NumPy int32 arrays for TRT-LLM (ModelRunnerCpp will .tolist() each)
             batch_input_ids = [
@@ -428,8 +435,40 @@ class _BatchScheduler:
                             return [v]
                         return None
 
-                    # NEW: handle bare tensor steps from TRT-LLM as token matrix directly
+                    # Prefer 'new_token_ids' when available (already excludes prompt)
                     tok_matrix = None
+                    _src_key = None
+                    def _to_matrix_from_value(v):
+                        if (_torch is not None) and isinstance(v, _torch.Tensor):
+                            try:
+                                v = v.to(dtype=_torch.int64)
+                            except Exception:
+                                pass
+                            if v.ndim == 2:
+                                return [v[i].detach().cpu().tolist() for i in range(v.shape[0])]
+                            return [v.detach().cpu().tolist()]
+                        if isinstance(v, _np.ndarray):
+                            if v.ndim == 2:
+                                return [v[i].tolist() for i in range(v.shape[0])]
+                            return [v.tolist()]
+                        if isinstance(v, (list, tuple)):
+                            if len(v) > 0 and isinstance(v[0], (list, tuple, _np.ndarray)):
+                                out = []
+                                for row in v:
+                                    out.append(_to_list_1d(row))
+                                return out
+                            return [_to_list_1d(v)]
+                        return [_to_list_1d(v)]
+
+                    try:
+                        v_new = _extract(step, "new_token_ids")
+                        if v_new is not None:
+                            tok_matrix = _to_matrix_from_value(v_new)
+                            _src_key = "new_token_ids"
+                    except Exception:
+                        pass
+
+                    # NEW: handle bare tensor steps from TRT-LLM as token matrix directly
                     if (_torch is not None) and isinstance(step, _torch.Tensor):
                         # Force integer dtype to avoid decode exceptions
                         try:
@@ -440,8 +479,11 @@ class _BatchScheduler:
                             tok_matrix = [step[i].detach().cpu().tolist() for i in range(step.shape[0])]
                         else:
                             tok_matrix = [step.detach().cpu().tolist()]
+                        _src_key = _src_key or "tensor"
                     else:
-                        tok_matrix = _get_token_matrix(step)
+                        if tok_matrix is None:
+                            tok_matrix = _get_token_matrix(step)
+                        _src_key = _src_key or "fallback"
                     # Squeeze leading singleton dims (e.g., [1, B, T] -> [B, T])
                     if tok_matrix is not None:
                         try:
@@ -465,6 +507,17 @@ class _BatchScheduler:
                         # Have tokens → decode per sequence and emit cumulative text
                         for i, req in enumerate(batch):
                             toks = tok_matrix[i] if i < len(tok_matrix) else []
+                            # If not using 'new_token_ids', strip the prompt prefix tokens once
+                            if _src_key != "new_token_ids" and getattr(req, "skip_token_prefix", 0) > 0:
+                                try:
+                                    skip = min(int(req.skip_token_prefix), len(toks))
+                                except Exception:
+                                    skip = 0
+                                toks = toks[skip:]
+                                try:
+                                    req.skip_token_prefix = max(0, int(req.skip_token_prefix) - len(tok_matrix[i]))
+                                except Exception:
+                                    req.skip_token_prefix = 0
                             req.cumulative_text = _decode_full_text(
                                 self.tokenizer,
                                 req.cumulative_text,

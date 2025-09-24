@@ -41,7 +41,11 @@ def build_prompt(text: str, voice: str = "tara") -> str:
 def build_prompt_ids(text: str, voice: str, tok: AutoTokenizer) -> list[int]:
     v = resolve_voice(voice)
     bos = tok.bos_token_id if tok.bos_token_id is not None else None
-    pre = ([bos] if bos is not None else []) + [SOH_ID, SOT_ID]
+    # Avoid duplicate BOS/SOT when BOS equals SOT (128000 for Orpheus)
+    pre: list[int] = []
+    if (bos is not None) and (bos != SOT_ID):
+        pre.append(int(bos))
+    pre += [SOH_ID, SOT_ID]
     voice_and_text_ids = tok.encode(f"{v}: {text}", add_special_tokens=False)
     ids = pre + voice_and_text_ids + [EOTXT_ID, EOH_ID, SOAI_ID, SOSPEECH_ID]
     return ids
