@@ -255,7 +255,6 @@ class _BatchScheduler:
                 pad_id=pad_id,
                 bos_id=bos_id,
                 end_id=EO_SPEECH_ID,
-                return_all_generated_tokens=True,
             )
 
             # Prefer end_id over stop_words for TRT-LLM; add stop_words as fallback only if needed
@@ -608,7 +607,6 @@ class _VLLMLikeEngine:
             max_batch_size=self.max_batch_size,
             max_input_len=self.max_input_len,
             max_output_len=self.max_output_len,
-            return_all_generated_tokens=True,  # <-- add
         )
         logger.debug("ModelRunnerCpp initialized")
         
