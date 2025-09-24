@@ -166,6 +166,7 @@ allow = [
     "tokenizer.json",
     "tokenizer_config.json",
     "special_tokens_map.json",
+    "added_tokens.json",
     "vocab.json",
     "merges.txt",
     "*.safetensors",

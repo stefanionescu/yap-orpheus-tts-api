@@ -3,6 +3,7 @@ from typing import Optional, Tuple, Pattern, Any
 import os
 
 _AUDIO_RX: Optional[Pattern[str]] = None
+_AUDIO_ID_TO_CODE = None
 
 
 def _family_key(s: str) -> Optional[Tuple[str, str]]:
@@ -71,6 +72,34 @@ def split_custom_tokens(s: str, tokenizer: Any = None) -> list[int]:
     rx = get_audio_token_regex(tokenizer)
     # Allow zero code as valid; do not filter out 0
     return [int(x) for x in rx.findall(s)]
+
+
+def build_audio_id_lookup(tokenizer) -> dict[int, int]:
+    """
+    Map token_id -> audio_code (e.g., 3929) for all <custom_token_####> entries.
+    """
+    global _AUDIO_ID_TO_CODE
+    if _AUDIO_ID_TO_CODE is not None:
+        return _AUDIO_ID_TO_CODE
+    id2code = {}
+    # Hugging Face gives us all tokens via convert_ids_to_tokens
+    vocab_size = tokenizer.vocab_size
+    # Scan a reasonable superset
+    for tid in range(vocab_size, vocab_size + 6000):  # audio tokens are usually added after base vocab
+        try:
+            s = tokenizer.convert_ids_to_tokens(tid)
+        except Exception:
+            continue
+        if not isinstance(s, str):
+            continue
+        if s.startswith("<custom_token_") and s.endswith(">"):
+            try:
+                code = int(s[len("<custom_token_"):-1])
+            except Exception:
+                continue
+            id2code[tid] = code
+    _AUDIO_ID_TO_CODE = id2code
+    return id2code
 
 
 def turn_token_into_id(token_number: int, index: int) -> int:

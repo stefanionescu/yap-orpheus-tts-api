@@ -72,11 +72,15 @@ async def aiter_pcm_from_custom_tokens(engine: Any, prompt: str, voice: str, sp:
 
     async for out in engine.generate(encoded, sp, _random_uuid()):
         generation_step += 1
-        outs = out.outputs or []
-        if not outs:
-            continue
-
-        piece = outs[0].text or ""
+        if isinstance(out, dict):
+            piece = out.get("text", "")
+            codes = out.get("audio_codes_delta", [])
+        else:
+            # Back-compat: your old _CompatResult path
+            outs = getattr(out, "outputs", []) or []
+            piece = outs[0].text if outs else ""
+            codes = []  # no id path, but we don't rely on regex anymore
+            
         # Only process newly appended text to keep sequence monotonic
         if len(piece) <= prev_len:
             continue
@@ -93,19 +97,10 @@ async def aiter_pcm_from_custom_tokens(engine: Any, prompt: str, voice: str, sp:
                 except Exception:
                     pass
 
-        # Trim at END_OF_SPEECH if surfaced in this delta; process prefix only, then stop
-        eos_hit_this_step = False
-        try:
-            if EOSPEECH_STR and (EOSPEECH_STR in delta):
-                prefix, _, _ = delta.partition(EOSPEECH_STR)
-                delta = prefix
-                eos_hit_this_step = True
-                logger.info(f"[{session_id}] END_OF_SPEECH detected in stream; terminating generation after processing prefix")
-        except Exception:
-            pass
+        saw_eos = EOSPEECH_STR and (EOSPEECH_STR in piece)  # use full piece for safety
 
-        # Extract audio tokens once to allow counting and iteration without rescanning
-        tokens_in_delta = split_custom_tokens(delta, tokenizer=tok)
+        # Use audio codes from IDs instead of regex extraction
+        tokens_in_delta = codes
         try:
             logger.debug(f"[{session_id}] audio_tokens_in_delta={len(tokens_in_delta)}")
         except Exception:
@@ -139,8 +134,10 @@ async def aiter_pcm_from_custom_tokens(engine: Any, prompt: str, voice: str, sp:
                         pcm_count += 1
                         logger.debug(f"[{session_id}] Yielding PCM chunk {pcm_count} ({len(pcm)} bytes)")
                         yield pcm
-        if eos_hit_this_step:
-            break
+        
+        if saw_eos and pcm_count > 0:
+            break  # ok to stop; we streamed at least one hop
+        # if saw_eos but no frames yet, keep looping until we accumulate 28 tokens or hit generator end
     # Optional: flush partial residual codes at end to ensure at least one chunk on very short inputs
     try:
         pending = len(buf_ids) % 28

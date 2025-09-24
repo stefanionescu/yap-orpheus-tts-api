@@ -11,6 +11,7 @@ from transformers import AutoTokenizer
 import numpy as np
 
 from .core.logging_config import get_logger
+from .core.custom_tokens import build_audio_id_lookup
 
 logger = get_logger(__name__)
 
@@ -248,27 +249,32 @@ class _BatchScheduler:
                 temperature=temperature,
                 top_p=top_p,
                 repetition_penalty=repetition_penalty,
-                stop_words=stop_words,
                 streaming=True,
                 enable_chunked_context=True,
                 # Tell TRT-LLM exactly what special IDs are to avoid ambiguity
                 pad_id=pad_id,
                 bos_id=bos_id,
                 end_id=EO_SPEECH_ID,
+                return_all_generated_tokens=True,
             )
 
-            # Support both TRT-LLM kw names for stop words (stop_words_list vs stop_words)
+            # Prefer end_id over stop_words for TRT-LLM; add stop_words as fallback only if needed
             try:
                 import inspect as _inspect
                 _sig = _inspect.signature(self.runner.generate)
-                if ("stop_words_list" in _sig.parameters) and ("stop_words" in gen_kwargs):
-                    gen_kwargs["stop_words_list"] = gen_kwargs.pop("stop_words")
-                    logger.debug("Using stop_words_list kwarg for TRT-LLM")
-                elif "stop_words" in _sig.parameters:
-                    logger.debug("Using stop_words kwarg for TRT-LLM")
+                # Only add stop words if end_id isn't supported
+                if "end_id" not in _sig.parameters:
+                    # Fallback to stop words if end_id not supported
+                    if ("stop_words_list" in _sig.parameters):
+                        gen_kwargs["stop_words_list"] = stop_words
+                        logger.debug("Using stop_words_list kwarg for TRT-LLM (end_id not supported)")
+                    elif "stop_words" in _sig.parameters:
+                        gen_kwargs["stop_words"] = stop_words
+                        logger.debug("Using stop_words kwarg for TRT-LLM (end_id not supported)")
+                    else:
+                        logger.debug("TRT-LLM runner has no stop_words* or end_id parameter")
                 else:
-                    gen_kwargs.pop("stop_words", None)
-                    logger.debug("TRT-LLM runner has no stop_words* parameter; skipping")
+                    logger.debug("Using end_id for TRT-LLM")
             except Exception:
                 pass
 
@@ -289,6 +295,10 @@ class _BatchScheduler:
                     _msg = str(te)
                     _local_kwargs = dict(gen_kwargs)
                     try:
+                        if ("return_all_generated_tokens" in _msg) and ("return_all_generated_tokens" in _local_kwargs):
+                            _local_kwargs.pop("return_all_generated_tokens", None)
+                            logger.debug("Retrying generate() without return_all_generated_tokens due to TypeError")
+                            return self.runner.generate(batch_input_ids=batch_input_ids, **_local_kwargs)
                         if "stop_words_list" in _msg and ("stop_words" in _local_kwargs):
                             _local_kwargs.pop("stop_words", None)
                             logger.debug("Retrying generate() without stop_words due to TypeError: stop_words_list mismatch")
@@ -300,13 +310,14 @@ class _BatchScheduler:
                             return self.runner.generate(batch_input_ids=batch_input_ids, **_local_kwargs)
                     except Exception:
                         pass
-                    # Last resort: remove any stop_words* and rely on end_id for stopping
+                    # Last resort: remove any problematic kwargs and rely on end_id for stopping
                     try:
                         _local_kwargs.pop("stop_words", None)
                         _local_kwargs.pop("stop_words_list", None)
+                        _local_kwargs.pop("return_all_generated_tokens", None)
                         # Ensure end_id remains present
                         _local_kwargs.setdefault("end_id", EO_SPEECH_ID)
-                        logger.debug("Retrying generate() without stop words; relying on end_id")
+                        logger.debug("Retrying generate() with minimal kwargs; relying on end_id")
                         return self.runner.generate(batch_input_ids=batch_input_ids, **_local_kwargs)
                     except Exception:
                         raise te
@@ -468,13 +479,26 @@ class _BatchScheduler:
                         # Have tokens → decode per sequence and emit cumulative text
                         for i, req in enumerate(batch):
                             toks = tok_matrix[i] if i < len(tok_matrix) else []
+                            
+                            # Build audio ID lookup if needed
+                            if not hasattr(req, "_audio_id2code"):
+                                req._audio_id2code = build_audio_id_lookup(self.tokenizer)
+
+                            # Gather any audio ids in this step so the streaming stage can consume them directly
+                            req._audio_codes_delta = [req._audio_id2code[t] for t in toks if t in req._audio_id2code]
+                            
                             req.cumulative_text = _decode_full_text(
                                 self.tokenizer,
                                 req.cumulative_text,
                                 type("S", (), {"token_ids": toks}),
                                 prompt_len=req.prompt_len,
                             )
-                            await req.fut_q.put(_CompatResult([_CompatOutput(req.cumulative_text)]))
+                            
+                            # Send a dict with both text and audio codes
+                            await req.fut_q.put({
+                                "text": req.cumulative_text,
+                                "audio_codes_delta": getattr(req, "_audio_codes_delta", [])
+                            })
                     else:
                         # Fall back to texts/text (string) and broadcast if needed
                         tlist = _get_texts(step)
@@ -483,7 +507,11 @@ class _BatchScheduler:
                                 txt = tlist[i] if i < len(tlist) else tlist[0]
                                 st = type("S", (), {"text": txt})
                                 req.cumulative_text = _decode_full_text(self.tokenizer, req.cumulative_text, st, prompt_len=req.prompt_len)
-                                await req.fut_q.put(_CompatResult([_CompatOutput(req.cumulative_text)]))
+                                # Send dict with empty audio codes for text fallback
+                                await req.fut_q.put({
+                                    "text": req.cumulative_text,
+                                    "audio_codes_delta": []
+                                })
                         else:
                             # Nothing usable in this step; skip
                             continue
@@ -580,6 +608,7 @@ class _VLLMLikeEngine:
             max_batch_size=self.max_batch_size,
             max_input_len=self.max_input_len,
             max_output_len=self.max_output_len,
+            return_all_generated_tokens=True,  # <-- add
         )
         logger.debug("ModelRunnerCpp initialized")
         
