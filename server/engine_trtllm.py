@@ -519,8 +519,9 @@ class _BatchScheduler:
                                     audio_codes_delta.append(int(c))
                             
                             # Early debug: show a sample of audio codes for the first few steps
-                            if demux_step_idx <= 3:
-                                logger.debug(f"audio_delta_sample={audio_codes_delta[:21]}")
+                            if demux_step_idx <= 3 and audio_codes_delta:
+                                mn, mx = min(audio_codes_delta), max(audio_codes_delta)
+                                logger.debug(f"audio_delta_sample[:28]={audio_codes_delta[:28]} range=[{mn},{mx}] len={len(audio_codes_delta)}")
 
                             # Update cumulative text using ONLY the delta after prompt
                             req.cumulative_text = _decode_full_text(

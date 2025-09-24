@@ -140,18 +140,65 @@ async def aiter_pcm_from_custom_tokens(engine: Any, prompt: str, voice: str, sp:
             assert all(isinstance(x, (int, np.integer)) and 0 <= x < 4096 for x in chunk_codes), \
                    f"Bad codes in chunk: {chunk_codes[:14]}"
 
-            arr = np.asarray(chunk_codes, dtype=np.int64).reshape(-1, TOKENS_PER_FRAME)
-            codes_0 = torch.from_numpy(arr[:, 0]).unsqueeze(0).to(SNAC_DEVICE, dtype=torch.long)
-            codes_1 = torch.from_numpy(arr[:, [1, 4]].reshape(1, -1)).to(SNAC_DEVICE, dtype=torch.long)
-            codes_2 = torch.from_numpy(arr[:, [2, 3, 5, 6]].reshape(1, -1)).to(SNAC_DEVICE, dtype=torch.long)
+            arr = np.asarray(chunk_codes, dtype=np.int64).reshape(-1, TOKENS_PER_FRAME)  # [F, 7]
+            F = arr.shape[0]
+
+            # Always build the three code streams from positions:
+            codes0_np = arr[:, 0]                         # [F]
+            codes1_np = arr[:, [1, 4]]                    # [F, 2]
+            codes2_np = arr[:, [2, 3, 5, 6]]              # [F, 4]
+
+            # Shapes v1 (flat): [B, F] / [B, 2F] / [B, 4F]  (this is what we used before)
+            codes_0_v1 = torch.from_numpy(codes0_np).unsqueeze(0).to(SNAC_DEVICE, dtype=torch.long)               # [1, F]
+            codes_1_v1 = torch.from_numpy(codes1_np.reshape(-1)).unsqueeze(0).to(SNAC_DEVICE, dtype=torch.long)   # [1, 2F]
+            codes_2_v1 = torch.from_numpy(codes2_np.reshape(-1)).unsqueeze(0).to(SNAC_DEVICE, dtype=torch.long)   # [1, 4F]
+
+            # Shapes v2 (stacked): [B, F] / [B, 2, F] / [B, 4, F]
+            codes_0_v2 = codes_0_v1                                                                                 # [1, F]
+            codes_1_v2 = torch.from_numpy(codes1_np.T).unsqueeze(0).to(SNAC_DEVICE, dtype=torch.long).contiguous()  # [1, 2, F]
+            codes_2_v2 = torch.from_numpy(codes2_np.T).unsqueeze(0).to(SNAC_DEVICE, dtype=torch.long).contiguous()  # [1, 4, F]
+
+            # Try v1, then fall back to v2 if empty
+            async def _decode_triplet(triplet):
+                a = await snacx.decode_codes(triplet)
+                try:
+                    # Normalize to numpy
+                    if hasattr(a, "detach"):
+                        a = a.detach().cpu().numpy()
+                    elif isinstance(a, torch.Tensor):
+                        a = a.cpu().numpy()
+                    return a
+                except Exception:
+                    return a
 
             logger.debug(f"[{session_id}] Decoding SNAC frame {pcm_count + 1}")
-            audio = await snacx.decode_codes([codes_0, codes_1, codes_2])
-            pcm = (np.clip(audio, -1.0, 1.0) * 32767.0).astype(np.int16).tobytes()
-            if pcm:
-                pcm_count += 1
-                logger.debug(f"[{session_id}] Yielding PCM chunk {pcm_count} ({len(pcm)} bytes)")
-                yield pcm
+            
+            # First attempt (flat)
+            audio = await _decode_triplet([codes_0_v1, codes_1_v1, codes_2_v1])
+
+            # If empty or None, try stacked layout
+            if audio is None or (hasattr(audio, "size") and int(getattr(audio, "size", 0)) == 0):
+                logger.debug(f"[{session_id}] SNAC returned empty audio with flat layout; retrying stacked layout")
+                audio = await _decode_triplet([codes_0_v2, codes_1_v2, codes_2_v2])
+
+            # Log what we got
+            try:
+                sz = int(getattr(audio, "size", 0)) if audio is not None else 0
+                shp = tuple(getattr(audio, "shape", [])) if audio is not None else ()
+                logger.debug(f"[{session_id}] SNAC audio shape={shp} size={sz}")
+            except Exception:
+                pass
+
+            # Convert to PCM only if we actually got samples
+            if audio is not None:
+                # Expect 1D or 2D (B, T); flatten to mono stream
+                audio = np.asarray(audio).astype(np.float32).reshape(-1)
+                if audio.size > 0:
+                    pcm = (np.clip(audio, -1.0, 1.0) * 32767.0).astype(np.int16).tobytes()
+                    if pcm:
+                        pcm_count += 1
+                        logger.debug(f"[{session_id}] Yielding PCM chunk {pcm_count} ({len(pcm)} bytes)")
+                        yield pcm
         
         if saw_eos and pcm_count > 0:
             break  # ok to stop; we streamed at least one hop
@@ -164,17 +211,57 @@ async def aiter_pcm_from_custom_tokens(engine: Any, prompt: str, voice: str, sp:
             start = emit_from
             end = emit_from + frames_to_emit * TOKENS_PER_FRAME
             chunk_codes = buf_codes[start:end]
-            arr = np.asarray(chunk_codes, dtype=np.int64).reshape(-1, TOKENS_PER_FRAME)
-            codes_0 = torch.from_numpy(arr[:, 0]).unsqueeze(0).to(SNAC_DEVICE, dtype=torch.long)
-            codes_1 = torch.from_numpy(arr[:, [1, 4]].reshape(1, -1)).to(SNAC_DEVICE, dtype=torch.long)
-            codes_2 = torch.from_numpy(arr[:, [2, 3, 5, 6]].reshape(1, -1)).to(SNAC_DEVICE, dtype=torch.long)
+            arr = np.asarray(chunk_codes, dtype=np.int64).reshape(-1, TOKENS_PER_FRAME)  # [F, 7]
+            F = arr.shape[0]
+
+            # Always build the three code streams from positions:
+            codes0_np = arr[:, 0]                         # [F]
+            codes1_np = arr[:, [1, 4]]                    # [F, 2]
+            codes2_np = arr[:, [2, 3, 5, 6]]              # [F, 4]
+
+            # Shapes v1 (flat): [B, F] / [B, 2F] / [B, 4F]
+            codes_0_v1 = torch.from_numpy(codes0_np).unsqueeze(0).to(SNAC_DEVICE, dtype=torch.long)               # [1, F]
+            codes_1_v1 = torch.from_numpy(codes1_np.reshape(-1)).unsqueeze(0).to(SNAC_DEVICE, dtype=torch.long)   # [1, 2F]
+            codes_2_v1 = torch.from_numpy(codes2_np.reshape(-1)).unsqueeze(0).to(SNAC_DEVICE, dtype=torch.long)   # [1, 4F]
+
+            # Shapes v2 (stacked): [B, F] / [B, 2, F] / [B, 4, F]
+            codes_0_v2 = codes_0_v1                                                                                 # [1, F]
+            codes_1_v2 = torch.from_numpy(codes1_np.T).unsqueeze(0).to(SNAC_DEVICE, dtype=torch.long).contiguous()  # [1, 2, F]
+            codes_2_v2 = torch.from_numpy(codes2_np.T).unsqueeze(0).to(SNAC_DEVICE, dtype=torch.long).contiguous()  # [1, 4, F]
+
+            # Try v1, then fall back to v2 if empty
+            async def _decode_triplet(triplet):
+                a = await snacx.decode_codes(triplet)
+                try:
+                    # Normalize to numpy
+                    if hasattr(a, "detach"):
+                        a = a.detach().cpu().numpy()
+                    elif isinstance(a, torch.Tensor):
+                        a = a.cpu().numpy()
+                    return a
+                except Exception:
+                    return a
+
             logger.debug(f"[{session_id}] Flushing final {frames_to_emit} full frames")
-            audio = await snacx.decode_codes([codes_0, codes_1, codes_2])
-            pcm = (np.clip(audio, -1.0, 1.0) * 32767.0).astype(np.int16).tobytes()
-            if pcm:
-                pcm_count += 1
-                logger.debug(f"[{session_id}] Yielding final flushed PCM chunk ({len(pcm)} bytes)")
-                yield pcm
+            
+            # First attempt (flat)
+            audio = await _decode_triplet([codes_0_v1, codes_1_v1, codes_2_v1])
+
+            # If empty or None, try stacked layout
+            if audio is None or (hasattr(audio, "size") and int(getattr(audio, "size", 0)) == 0):
+                logger.debug(f"[{session_id}] SNAC returned empty audio with flat layout; retrying stacked layout for flush")
+                audio = await _decode_triplet([codes_0_v2, codes_1_v2, codes_2_v2])
+
+            # Convert to PCM only if we actually got samples
+            if audio is not None:
+                # Expect 1D or 2D (B, T); flatten to mono stream
+                audio = np.asarray(audio).astype(np.float32).reshape(-1)
+                if audio.size > 0:
+                    pcm = (np.clip(audio, -1.0, 1.0) * 32767.0).astype(np.int16).tobytes()
+                    if pcm:
+                        pcm_count += 1
+                        logger.debug(f"[{session_id}] Yielding final flushed PCM chunk ({len(pcm)} bytes)")
+                        yield pcm
     except Exception:
         pass
 
