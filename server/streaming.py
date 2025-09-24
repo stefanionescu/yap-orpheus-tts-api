@@ -28,6 +28,10 @@ async def aiter_pcm_from_custom_tokens(engine: Any, prompt: str, voice: str, sp:
     
     tok_index = 0  # never reset within a single generation
     buf_ids: list[int] = []
+    # before the generate loop:
+    emit_from = 0                # number of audio tokens already decoded
+    first_emitted = False
+    
     # Early TTFB controls (treat values as TOKENS, not frames). Fallback to older names if present.
     def _env_int(name: str, default: int) -> int:
         try:
@@ -36,8 +40,13 @@ async def aiter_pcm_from_custom_tokens(engine: Any, prompt: str, voice: str, sp:
         except Exception:
             return default
     MIN_TOKENS_FIRST = _env_int("MIN_TOKENS_FIRST", _env_int("MIN_FRAMES_FIRST", 7))
-    MIN_TOKENS_SUBSEQ = _env_int("MIN_TOKENS_SUBSEQ", _env_int("MIN_FRAMES_SUBSEQ", 28))
+    MIN_TOKENS_SUBSEQ = _env_int("MIN_TOKENS_SUBSEQ", _env_int("MIN_FRAMES_SUBSEQ", 7))
     TOKENS_EVERY = _env_int("TOKENS_EVERY", _env_int("PROCESS_EVERY", 7))
+    
+    # choose frames, not windows
+    TOKENS_PER_FRAME = 7
+    FIRST_FRAMES = max(1, MIN_TOKENS_FIRST // TOKENS_PER_FRAME)      # e.g. 14 -> 2
+    SUBSEQ_FRAMES = max(1, MIN_TOKENS_SUBSEQ // TOKENS_PER_FRAME)    # e.g. 7  -> 1
     
     logger.debug(f"[{session_id}] Loading SNAC model...")
     snacx = get_snac_batched()
@@ -46,7 +55,6 @@ async def aiter_pcm_from_custom_tokens(engine: Any, prompt: str, voice: str, sp:
     prev_len = 0  # length of detokenized text we have already processed
     generation_step = 0
     pcm_count = 0
-    first_emitted = False
     tokens_processed = 0
     
     # Prefer pre-tokenized prompt ids when backend supports it (TRT-LLM wrapper accepts list[int])
@@ -105,52 +113,61 @@ async def aiter_pcm_from_custom_tokens(engine: Any, prompt: str, voice: str, sp:
             logger.debug(f"[{session_id}] audio_tokens_in_delta={len(tokens_in_delta)}")
         except Exception:
             pass
-        for n in tokens_in_delta:
+        for n in tokens_in_delta:                 # n are audio code indices (not token ids)
             tid = turn_token_into_id(n, tok_index)
             tok_index += 1
             buf_ids.append(tid)
             tokens_processed += 1
-            # Every 7 tokens is one frame; only attempt decode on frame boundary
-            if (tok_index % 7 == 0):
-                should_emit = False
-                if not first_emitted and len(buf_ids) >= MIN_TOKENS_FIRST:
-                    # emit after first N TOKENS (e.g., 7 tokens = 1 frame)
-                    window = buf_ids[-MIN_TOKENS_FIRST:]
-                    first_emitted = True
-                    should_emit = True
-                elif first_emitted and len(buf_ids) >= MIN_TOKENS_SUBSEQ and (tok_index % TOKENS_EVERY == 0):
-                    window = buf_ids[-MIN_TOKENS_SUBSEQ:]
-                    should_emit = True
-                if should_emit:
-                    arr = np.asarray(window, dtype=np.int64).reshape(-1, 7)
-                    codes_0 = torch.from_numpy(arr[:, 0]).unsqueeze(0).to(SNAC_DEVICE, dtype=torch.long)
-                    codes_1 = torch.from_numpy(arr[:, [1, 4]].reshape(-1)).unsqueeze(0).to(SNAC_DEVICE, dtype=torch.long)
-                    codes_2 = torch.from_numpy(arr[:, [2, 3, 5, 6]].reshape(-1)).unsqueeze(0).to(SNAC_DEVICE, dtype=torch.long)
 
-                    logger.debug(f"[{session_id}] Decoding SNAC frame {tok_index // 7}")
-                    audio = await snacx.decode_codes([codes_0, codes_1, codes_2])
-                    pcm = (np.clip(audio, -1.0, 1.0) * 32767.0).astype(np.int16).tobytes()
-                    if pcm:
-                        pcm_count += 1
-                        logger.debug(f"[{session_id}] Yielding PCM chunk {pcm_count} ({len(pcm)} bytes)")
-                        yield pcm
+        # try to emit whole NEW frames only
+        while (len(buf_ids) - emit_from) >= TOKENS_PER_FRAME:
+            frames_ready = (len(buf_ids) - emit_from) // TOKENS_PER_FRAME
+            if not first_emitted:
+                need = FIRST_FRAMES
+                if frames_ready < need:
+                    break
+                frames_to_emit = need
+                first_emitted = True
+            else:
+                need = SUBSEQ_FRAMES
+                if frames_ready < need:
+                    break
+                frames_to_emit = need
+
+            start = emit_from
+            end   = emit_from + frames_to_emit * TOKENS_PER_FRAME
+            chunk_ids = buf_ids[start:end]                       # <-- strictly new frames
+            emit_from = end
+
+            arr = np.asarray(chunk_ids, dtype=np.int64).reshape(-1, TOKENS_PER_FRAME)
+            codes_0 = torch.from_numpy(arr[:, 0]).unsqueeze(0).to(SNAC_DEVICE, dtype=torch.long)
+            codes_1 = torch.from_numpy(arr[:, [1, 4]].reshape(-1)).unsqueeze(0).to(SNAC_DEVICE, dtype=torch.long)
+            codes_2 = torch.from_numpy(arr[:, [2, 3, 5, 6]].reshape(-1)).unsqueeze(0).to(SNAC_DEVICE, dtype=torch.long)
+
+            logger.debug(f"[{session_id}] Decoding SNAC frame {pcm_count + 1}")
+            audio = await snacx.decode_codes([codes_0, codes_1, codes_2])
+            pcm = (np.clip(audio, -1.0, 1.0) * 32767.0).astype(np.int16).tobytes()
+            if pcm:
+                pcm_count += 1
+                logger.debug(f"[{session_id}] Yielding PCM chunk {pcm_count} ({len(pcm)} bytes)")
+                yield pcm
         
         if saw_eos and pcm_count > 0:
             break  # ok to stop; we streamed at least one hop
         # if saw_eos but no frames yet, keep looping until we accumulate 28 tokens or hit generator end
-    # Optional: flush partial residual codes at end to ensure at least one chunk on very short inputs
+    # flush any remaining full frames (ignore leftovers < 7 tokens)
     try:
-        pending = len(buf_ids) % 28
-        if pcm_count == 0 and pending > 0:
-            pad_needed = 28 - pending
-            # Pad with the last seen id to complete one hop (or zero if none)
-            pad_id = (buf_ids[-1] if buf_ids else 0)
-            flush_window = (buf_ids + [pad_id] * pad_needed)[-28:]
-            arr = np.asarray(flush_window, dtype=np.int64).reshape(-1, 7)
+        pending = len(buf_ids) - emit_from
+        if pending >= TOKENS_PER_FRAME and pcm_count == 0:
+            frames_to_emit = pending // TOKENS_PER_FRAME
+            start = emit_from
+            end = emit_from + frames_to_emit * TOKENS_PER_FRAME
+            chunk_ids = buf_ids[start:end]
+            arr = np.asarray(chunk_ids, dtype=np.int64).reshape(-1, TOKENS_PER_FRAME)
             codes_0 = torch.from_numpy(arr[:, 0]).unsqueeze(0).to(SNAC_DEVICE, dtype=torch.long)
             codes_1 = torch.from_numpy(arr[:, [1, 4]].reshape(-1)).unsqueeze(0).to(SNAC_DEVICE, dtype=torch.long)
             codes_2 = torch.from_numpy(arr[:, [2, 3, 5, 6]].reshape(-1)).unsqueeze(0).to(SNAC_DEVICE, dtype=torch.long)
-            logger.debug(f"[{session_id}] Flushing residual SNAC codes: pending={pending}, pad={pad_needed}")
+            logger.debug(f"[{session_id}] Flushing final {frames_to_emit} full frames")
             audio = await snacx.decode_codes([codes_0, codes_1, codes_2])
             pcm = (np.clip(audio, -1.0, 1.0) * 32767.0).astype(np.int16).tobytes()
             if pcm:

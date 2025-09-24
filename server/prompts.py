@@ -21,8 +21,7 @@ SOSPEECH_ID = 128257      # START_OF_SPEECH (not used in new prompt)
 EO_SPEECH_ID = 128258     # <|end_of_speech|>
 EOS_ID = 128009
 
-PRIME_L = 3   # <custom_token_3>
-PRIME_R = [4, 5, 1]  # post-text seed tokens
+PRIME = [3, 4, 5, 1]       # tiny kick to enter audio manifold
 
 def resolve_voice(v: str) -> str:
     if not v:
@@ -32,15 +31,16 @@ def resolve_voice(v: str) -> str:
 
 def build_prompt(text: str, voice: str = "tara") -> str:
     v = resolve_voice(voice)
-    # String form using new prompt format: <custom_token_3><|begin_of_text|>voice: text<|eot_id|><custom_token_4><custom_token_5><custom_token_1>
+    # String form using proper speech boundary format
     from .core.custom_tokens import turn_token_into_id
     # Build token IDs and then decode for string compatibility
-    ids = [turn_token_into_id(PRIME_L, 0)]  # <custom_token_3>
-    ids += [SOT_ID]                         # <|begin_of_text|>
+    ids: list[int] = []
+    ids.append(SOT_ID)
     ids += _tok.encode(f"{v}: {text}", add_special_tokens=False)
-    ids += [EOTXT_ID]
-    for i, n in enumerate(PRIME_R):
-        ids.append(turn_token_into_id(n, i+1))  # <custom_token_4><_5><_1>
+    ids.append(EOTXT_ID)
+    ids.append(SOSPEECH_ID)                       # <-- OPEN speech section
+    for i, n in enumerate(PRIME):
+        ids.append(turn_token_into_id(n, i))      # small audio seed AFTER SOS
     return _tok.decode(ids, skip_special_tokens=False)
 
 
@@ -48,15 +48,12 @@ def build_prompt_ids(text: str, voice: str, tok) -> list[int]:
     from .core.custom_tokens import turn_token_into_id
     v = resolve_voice(voice)
     ids: list[int] = []
-    # pre-seed one audio token + BOS
-    ids.append(turn_token_into_id(PRIME_L, 0))   # <custom_token_3>
-    ids.append(SOT_ID)                           # <|begin_of_text|>
-    # "tara: {text}"
+    ids.append(SOT_ID)
     ids += tok.encode(f"{v}: {text}", add_special_tokens=False)
-    # close text and sprinkle a few audio primes
-    ids.append(EOTXT_ID)                         # <|end_of_text|>
-    for i, n in enumerate(PRIME_R, start=1):
-        ids.append(turn_token_into_id(n, i))     # <custom_token_4><_5><_1>
+    ids.append(EOTXT_ID)
+    ids.append(SOSPEECH_ID)                       # <-- OPEN speech section
+    for i, n in enumerate(PRIME):
+        ids.append(turn_token_into_id(n, i))      # small audio seed AFTER SOS
     return ids
 
 
