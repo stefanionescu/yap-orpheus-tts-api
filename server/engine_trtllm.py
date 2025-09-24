@@ -15,6 +15,10 @@ from .core.logging_config import get_logger
 logger = get_logger(__name__)
 
 
+# End-of-speech token id used by Orpheus models
+EO_SPEECH_ID = 128258
+
+
 class _CompatOutput:
     def __init__(self, text: str) -> None:
         self.text = text
@@ -226,7 +230,7 @@ class _BatchScheduler:
             max_new_tokens = int(getattr(sp0, "max_tokens", getattr(sp0, "max_new_tokens", self.max_output_len)) or self.max_output_len)
             # Prefer stop_words (sequence(s) of ids) for TRT-LLM; default to END_OF_SPEECH (128258)
             stop_ids = list(getattr(sp0, "stop_token_ids", []) or [])
-            stop_words = [[sid] for sid in stop_ids] if stop_ids else [[128258]]
+            stop_words = [[sid] for sid in stop_ids] if stop_ids else [[EO_SPEECH_ID]]
             # Defensive duration-based ceiling on tokens to avoid runaway generations
             try:
                 def _tokens_for_seconds(seconds: float, frames_per_second: float = 100.0, tokens_per_frame: int = 7) -> int:
@@ -250,6 +254,7 @@ class _BatchScheduler:
                 # Tell TRT-LLM exactly what special IDs are to avoid ambiguity
                 pad_id=pad_id,
                 bos_id=bos_id,
+                end_id=EO_SPEECH_ID,
             )
 
             # Support both TRT-LLM kw names for stop words (stop_words_list vs stop_words)
@@ -269,7 +274,7 @@ class _BatchScheduler:
 
             logger.debug(f"Batch generation: temp={temperature}, top_p={top_p}, "
                         f"rep_penalty={repetition_penalty}, max_tokens={max_new_tokens}")
-            logger.debug(f"Special tokens: pad_id={pad_id}, bos_id={bos_id}")
+            logger.debug(f"Special tokens: pad_id={pad_id}, bos_id={bos_id}, end_id={EO_SPEECH_ID}")
             logger.debug(f"Final stop_words passed to TRT: {gen_kwargs.get('stop_words') or gen_kwargs.get('stop_words_list')}")
 
             # 5) Run ONE streaming generator covering the whole batch
@@ -295,11 +300,13 @@ class _BatchScheduler:
                             return self.runner.generate(batch_input_ids=batch_input_ids, **_local_kwargs)
                     except Exception:
                         pass
-                    # Last resort: remove any stop_words* and rely on max_new_tokens only
+                    # Last resort: remove any stop_words* and rely on end_id for stopping
                     try:
                         _local_kwargs.pop("stop_words", None)
                         _local_kwargs.pop("stop_words_list", None)
-                        logger.debug("Retrying generate() without stop words; relying on max_new_tokens")
+                        # Ensure end_id remains present
+                        _local_kwargs.setdefault("end_id", EO_SPEECH_ID)
+                        logger.debug("Retrying generate() without stop words; relying on end_id")
                         return self.runner.generate(batch_input_ids=batch_input_ids, **_local_kwargs)
                     except Exception:
                         raise te
