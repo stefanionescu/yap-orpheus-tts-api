@@ -509,10 +509,18 @@ class _BatchScheduler:
 
                             audio_codes_delta = []
                             aid2c = req._audio_id2code
-                            for t in delta_ids:
+                            for t in delta_ids:                      # t is a token id
                                 c = aid2c.get(t)
-                                if c is not None:
-                                    audio_codes_delta.append(c)
+                                if c is None:
+                                    continue
+                                if isinstance(c, (list, tuple)):
+                                    audio_codes_delta.extend(int(x) for x in c)   # flatten if needed
+                                else:
+                                    audio_codes_delta.append(int(c))
+                            
+                            # Early debug: show a sample of audio codes for the first few steps
+                            if demux_step_idx <= 3:
+                                logger.debug(f"audio_delta_sample={audio_codes_delta[:21]}")
 
                             # Update cumulative text using ONLY the delta after prompt
                             req.cumulative_text = _decode_full_text(

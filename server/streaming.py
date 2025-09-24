@@ -26,8 +26,7 @@ async def aiter_pcm_from_custom_tokens(engine: Any, prompt: str, voice: str, sp:
     session_id = _random_uuid()[:8]
     logger.debug(f"[{session_id}] Starting PCM generation: voice={voice}, prompt_len={len(prompt)}")
     
-    tok_index = 0  # never reset within a single generation
-    buf_ids: list[int] = []
+    buf_codes: list[int] = []
     # before the generate loop:
     emit_from = 0                # number of audio tokens already decoded
     first_emitted = False
@@ -114,14 +113,12 @@ async def aiter_pcm_from_custom_tokens(engine: Any, prompt: str, voice: str, sp:
         except Exception:
             pass
         for n in tokens_in_delta:                 # n are audio code indices (not token ids)
-            tid = turn_token_into_id(n, tok_index)
-            tok_index += 1
-            buf_ids.append(tid)
+            buf_codes.append(int(n))
             tokens_processed += 1
 
         # try to emit whole NEW frames only
-        while (len(buf_ids) - emit_from) >= TOKENS_PER_FRAME:
-            frames_ready = (len(buf_ids) - emit_from) // TOKENS_PER_FRAME
+        while (len(buf_codes) - emit_from) >= TOKENS_PER_FRAME:
+            frames_ready = (len(buf_codes) - emit_from) // TOKENS_PER_FRAME
             if not first_emitted:
                 need = FIRST_FRAMES
                 if frames_ready < need:
@@ -136,13 +133,17 @@ async def aiter_pcm_from_custom_tokens(engine: Any, prompt: str, voice: str, sp:
 
             start = emit_from
             end   = emit_from + frames_to_emit * TOKENS_PER_FRAME
-            chunk_ids = buf_ids[start:end]                       # <-- strictly new frames
+            chunk_codes = buf_codes[start:end]                    # <-- strictly new frames
             emit_from = end
 
-            arr = np.asarray(chunk_ids, dtype=np.int64).reshape(-1, TOKENS_PER_FRAME)
+            # Optional sanity check while debugging
+            assert all(isinstance(x, (int, np.integer)) and 0 <= x < 4096 for x in chunk_codes), \
+                   f"Bad codes in chunk: {chunk_codes[:14]}"
+
+            arr = np.asarray(chunk_codes, dtype=np.int64).reshape(-1, TOKENS_PER_FRAME)
             codes_0 = torch.from_numpy(arr[:, 0]).unsqueeze(0).to(SNAC_DEVICE, dtype=torch.long)
-            codes_1 = torch.from_numpy(arr[:, [1, 4]].reshape(-1)).unsqueeze(0).to(SNAC_DEVICE, dtype=torch.long)
-            codes_2 = torch.from_numpy(arr[:, [2, 3, 5, 6]].reshape(-1)).unsqueeze(0).to(SNAC_DEVICE, dtype=torch.long)
+            codes_1 = torch.from_numpy(arr[:, [1, 4]].reshape(1, -1)).to(SNAC_DEVICE, dtype=torch.long)
+            codes_2 = torch.from_numpy(arr[:, [2, 3, 5, 6]].reshape(1, -1)).to(SNAC_DEVICE, dtype=torch.long)
 
             logger.debug(f"[{session_id}] Decoding SNAC frame {pcm_count + 1}")
             audio = await snacx.decode_codes([codes_0, codes_1, codes_2])
@@ -157,16 +158,16 @@ async def aiter_pcm_from_custom_tokens(engine: Any, prompt: str, voice: str, sp:
         # if saw_eos but no frames yet, keep looping until we accumulate 28 tokens or hit generator end
     # flush any remaining full frames (ignore leftovers < 7 tokens)
     try:
-        pending = len(buf_ids) - emit_from
+        pending = len(buf_codes) - emit_from
         if pending >= TOKENS_PER_FRAME and pcm_count == 0:
             frames_to_emit = pending // TOKENS_PER_FRAME
             start = emit_from
             end = emit_from + frames_to_emit * TOKENS_PER_FRAME
-            chunk_ids = buf_ids[start:end]
-            arr = np.asarray(chunk_ids, dtype=np.int64).reshape(-1, TOKENS_PER_FRAME)
+            chunk_codes = buf_codes[start:end]
+            arr = np.asarray(chunk_codes, dtype=np.int64).reshape(-1, TOKENS_PER_FRAME)
             codes_0 = torch.from_numpy(arr[:, 0]).unsqueeze(0).to(SNAC_DEVICE, dtype=torch.long)
-            codes_1 = torch.from_numpy(arr[:, [1, 4]].reshape(-1)).unsqueeze(0).to(SNAC_DEVICE, dtype=torch.long)
-            codes_2 = torch.from_numpy(arr[:, [2, 3, 5, 6]].reshape(-1)).unsqueeze(0).to(SNAC_DEVICE, dtype=torch.long)
+            codes_1 = torch.from_numpy(arr[:, [1, 4]].reshape(1, -1)).to(SNAC_DEVICE, dtype=torch.long)
+            codes_2 = torch.from_numpy(arr[:, [2, 3, 5, 6]].reshape(1, -1)).to(SNAC_DEVICE, dtype=torch.long)
             logger.debug(f"[{session_id}] Flushing final {frames_to_emit} full frames")
             audio = await snacx.decode_codes([codes_0, codes_1, codes_2])
             pcm = (np.clip(audio, -1.0, 1.0) * 32767.0).astype(np.int16).tobytes()
