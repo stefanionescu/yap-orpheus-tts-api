@@ -44,18 +44,19 @@ def build_prompt(text: str, voice: str = "tara") -> str:
     return _tok.decode(ids, skip_special_tokens=False)
 
 
-def build_prompt_ids(text: str, voice: str, tok: AutoTokenizer) -> list[int]:
+def build_prompt_ids(text: str, voice: str, tok) -> list[int]:
     from .core.custom_tokens import turn_token_into_id
     v = resolve_voice(voice)
-    # prefix audio token + BOS
-    ids = [turn_token_into_id(PRIME_L, 0)]  # <custom_token_3>
-    ids += [SOT_ID]                         # <|begin_of_text|>
-    # "tara: hello world"
+    ids: list[int] = []
+    # pre-seed one audio token + BOS
+    ids.append(turn_token_into_id(PRIME_L, 0))   # <custom_token_3>
+    ids.append(SOT_ID)                           # <|begin_of_text|>
+    # "tara: {text}"
     ids += tok.encode(f"{v}: {text}", add_special_tokens=False)
-    # end-of-text + 3 priming audio tokens
-    ids += [EOTXT_ID]
-    for i, n in enumerate(PRIME_R):
-        ids.append(turn_token_into_id(n, i+1))  # <custom_token_4><_5><_1>
+    # close text and sprinkle a few audio primes
+    ids.append(EOTXT_ID)                         # <|end_of_text|>
+    for i, n in enumerate(PRIME_R, start=1):
+        ids.append(turn_token_into_id(n, i))     # <custom_token_4><_5><_1>
     return ids
 
 

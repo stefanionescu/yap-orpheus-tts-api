@@ -16,6 +16,21 @@ from .core.custom_tokens import build_audio_id_lookup
 logger = get_logger(__name__)
 
 
+def _flatten_ints(x):
+    out = []
+    stack = [x]
+    while stack:
+        cur = stack.pop()
+        if isinstance(cur, (list, tuple)):
+            stack.extend(reversed(cur))
+        else:
+            try:
+                out.append(int(cur))
+            except Exception:
+                pass
+    return out
+
+
 # End-of-speech token id used by Orpheus models
 EO_SPEECH_ID = 128258
 
@@ -201,8 +216,10 @@ class _BatchScheduler:
                 # Record prompt length so we can skip it during streamed decode
                 try:
                     req.prompt_len = int(len(req.tok_ids))
+                    req._seen_len = req.prompt_len   # Initialize seen counter to skip prompt on step 1
                 except Exception:
                     req.prompt_len = 0
+                    req._seen_len = 0
                 if len(req.tok_ids) == 0:
                     # ensure at least one token; use pad_id
                     req.tok_ids = np.asarray([int(self.tokenizer.pad_token_id)], dtype=np.int32)
@@ -477,26 +494,40 @@ class _BatchScheduler:
                                 pass
                         # Have tokens → decode per sequence and emit cumulative text
                         for i, req in enumerate(batch):
-                            toks = tok_matrix[i] if i < len(tok_matrix) else []
-                            
-                            # Build audio ID lookup if needed
+                            raw = tok_matrix[i] if i < len(tok_matrix) else []
+                            toks = _flatten_ints(raw)           # Make it a flat List[int]
+
+                            # Only take the newly generated tail since last step
+                            prev = getattr(req, "_seen_len", 0)
+                            cur = len(toks)
+                            delta_ids = toks[prev:cur]
+                            req._seen_len = cur
+
+                            # Map token id -> audio code (no regex)
                             if not hasattr(req, "_audio_id2code"):
                                 req._audio_id2code = build_audio_id_lookup(self.tokenizer)
 
-                            # Gather any audio ids in this step so the streaming stage can consume them directly
-                            req._audio_codes_delta = [req._audio_id2code[t] for t in toks if t in req._audio_id2code]
-                            
+                            audio_codes_delta = []
+                            aid2c = req._audio_id2code
+                            for t in delta_ids:
+                                c = aid2c.get(t)
+                                if c is not None:
+                                    audio_codes_delta.append(c)
+
+                            # Update cumulative text using ONLY the delta after prompt
                             req.cumulative_text = _decode_full_text(
                                 self.tokenizer,
                                 req.cumulative_text,
-                                type("S", (), {"token_ids": toks}),
-                                prompt_len=req.prompt_len,
+                                type("S", (), {"token_ids": delta_ids}),
+                                prompt_len=0,  # we already sliced the delta above
                             )
-                            
-                            # Send a dict with both text and audio codes
+
+                            # Debug log to verify delta processing
+                            logger.debug(f"delta_ids_tail={delta_ids[-12:]}, audio_delta_len={len(audio_codes_delta)}")
+
                             await req.fut_q.put({
                                 "text": req.cumulative_text,
-                                "audio_codes_delta": getattr(req, "_audio_codes_delta", [])
+                                "audio_codes_delta": audio_codes_delta
                             })
                     else:
                         # Fall back to texts/text (string) and broadcast if needed
