@@ -10,8 +10,8 @@ export ORPHEUS_MAX_TOKENS=${ORPHEUS_MAX_TOKENS:-2048}
 # Logging configuration - enable DEBUG level by default for comprehensive monitoring
 export LOG_LEVEL=${LOG_LEVEL:-DEBUG}
 
-export MIN_TOKENS_FIRST=${MIN_TOKENS_FIRST:-7}
-export MIN_TOKENS_SUBSEQ=${MIN_TOKENS_SUBSEQ:-7}
+export MIN_TOKENS_FIRST=${MIN_TOKENS_FIRST:-56}
+export MIN_TOKENS_SUBSEQ=${MIN_TOKENS_SUBSEQ:-28}
 export TOKENS_EVERY=${TOKENS_EVERY:-7}
 # Backward-compat names (if users still set frames-based vars)
 export MIN_FRAMES_FIRST=${MIN_FRAMES_FIRST:-14}
