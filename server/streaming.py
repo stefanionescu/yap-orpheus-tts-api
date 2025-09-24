@@ -28,6 +28,16 @@ async def aiter_pcm_from_custom_tokens(engine: Any, prompt: str, voice: str, sp:
     
     tok_index = 0  # never reset within a single generation
     buf_ids: list[int] = []
+    # Early TTFB controls (treat values as TOKENS, not frames). Fallback to older names if present.
+    def _env_int(name: str, default: int) -> int:
+        try:
+            v = os.getenv(name)
+            return int(v) if (v is not None and str(v).strip() != "") else default
+        except Exception:
+            return default
+    MIN_TOKENS_FIRST = _env_int("MIN_TOKENS_FIRST", _env_int("MIN_FRAMES_FIRST", 7))
+    MIN_TOKENS_SUBSEQ = _env_int("MIN_TOKENS_SUBSEQ", _env_int("MIN_FRAMES_SUBSEQ", 28))
+    TOKENS_EVERY = _env_int("TOKENS_EVERY", _env_int("PROCESS_EVERY", 7))
     
     logger.debug(f"[{session_id}] Loading SNAC model...")
     snacx = get_snac_batched()
@@ -36,6 +46,7 @@ async def aiter_pcm_from_custom_tokens(engine: Any, prompt: str, voice: str, sp:
     prev_len = 0  # length of detokenized text we have already processed
     generation_step = 0
     pcm_count = 0
+    first_emitted = False
     tokens_processed = 0
     
     # Prefer pre-tokenized prompt ids when backend supports it (TRT-LLM wrapper accepts list[int])
@@ -93,27 +104,41 @@ async def aiter_pcm_from_custom_tokens(engine: Any, prompt: str, voice: str, sp:
         except Exception:
             pass
 
-        for n in split_custom_tokens(delta, tokenizer=tok):
+        # Extract audio tokens once to allow counting and iteration without rescanning
+        tokens_in_delta = split_custom_tokens(delta, tokenizer=tok)
+        try:
+            logger.debug(f"[{session_id}] audio_tokens_in_delta={len(tokens_in_delta)}")
+        except Exception:
+            pass
+        for n in tokens_in_delta:
             tid = turn_token_into_id(n, tok_index)
             tok_index += 1
             buf_ids.append(tid)
             tokens_processed += 1
+            # Every 7 tokens is one frame; only attempt decode on frame boundary
+            if (tok_index % 7 == 0):
+                should_emit = False
+                if not first_emitted and len(buf_ids) >= MIN_TOKENS_FIRST:
+                    # emit after first N TOKENS (e.g., 7 tokens = 1 frame)
+                    window = buf_ids[-MIN_TOKENS_FIRST:]
+                    first_emitted = True
+                    should_emit = True
+                elif first_emitted and len(buf_ids) >= MIN_TOKENS_SUBSEQ and (tok_index % TOKENS_EVERY == 0):
+                    window = buf_ids[-MIN_TOKENS_SUBSEQ:]
+                    should_emit = True
+                if should_emit:
+                    arr = np.asarray(window, dtype=np.int64).reshape(-1, 7)
+                    codes_0 = torch.from_numpy(arr[:, 0]).unsqueeze(0).to(SNAC_DEVICE, dtype=torch.long)
+                    codes_1 = torch.from_numpy(arr[:, [1, 4]].reshape(-1)).unsqueeze(0).to(SNAC_DEVICE, dtype=torch.long)
+                    codes_2 = torch.from_numpy(arr[:, [2, 3, 5, 6]].reshape(-1)).unsqueeze(0).to(SNAC_DEVICE, dtype=torch.long)
 
-            # Every 7 tokens is one frame; after 4 frames (28 ids) → decode
-            if (tok_index % 7 == 0) and len(buf_ids) >= 28:
-                window = buf_ids[-28:]
-                arr = np.asarray(window, dtype=np.int64).reshape(-1, 7)
-                codes_0 = torch.from_numpy(arr[:, 0]).unsqueeze(0).to(SNAC_DEVICE, dtype=torch.long)
-                codes_1 = torch.from_numpy(arr[:, [1, 4]].reshape(-1)).unsqueeze(0).to(SNAC_DEVICE, dtype=torch.long)
-                codes_2 = torch.from_numpy(arr[:, [2, 3, 5, 6]].reshape(-1)).unsqueeze(0).to(SNAC_DEVICE, dtype=torch.long)
-
-                logger.debug(f"[{session_id}] Decoding SNAC frame {tok_index // 7}")
-                audio = await snacx.decode_codes([codes_0, codes_1, codes_2])
-                pcm = (np.clip(audio, -1.0, 1.0) * 32767.0).astype(np.int16).tobytes()
-                if pcm:
-                    pcm_count += 1
-                    logger.debug(f"[{session_id}] Yielding PCM chunk {pcm_count} ({len(pcm)} bytes)")
-                    yield pcm
+                    logger.debug(f"[{session_id}] Decoding SNAC frame {tok_index // 7}")
+                    audio = await snacx.decode_codes([codes_0, codes_1, codes_2])
+                    pcm = (np.clip(audio, -1.0, 1.0) * 32767.0).astype(np.int16).tobytes()
+                    if pcm:
+                        pcm_count += 1
+                        logger.debug(f"[{session_id}] Yielding PCM chunk {pcm_count} ({len(pcm)} bytes)")
+                        yield pcm
         if eos_hit_this_step:
             break
     # Optional: flush partial residual codes at end to ensure at least one chunk on very short inputs

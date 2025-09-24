@@ -22,7 +22,8 @@ EO_SPEECH_ID = 128258     # END_OF_SPEECH
 EOS_ID = 128009
 
 # String segments for engines that accept string prompts (e.g., vLLM path)
-_SOH = _tok.decode([SOH_ID, SOT_ID])
+# Important: mirror TRT prompt precisely — start with SOH only (no extra SOT/BOS)
+_SOH = _tok.decode([SOH_ID])
 _END = _tok.decode([EOTXT_ID, EOH_ID, SOAI_ID, SOSPEECH_ID])
 
 def resolve_voice(v: str) -> str:
@@ -40,12 +41,8 @@ def build_prompt(text: str, voice: str = "tara") -> str:
 
 def build_prompt_ids(text: str, voice: str, tok: AutoTokenizer) -> list[int]:
     v = resolve_voice(voice)
-    bos = tok.bos_token_id if tok.bos_token_id is not None else None
-    # Avoid duplicate BOS/SOT when BOS equals SOT (128000 for Orpheus)
-    pre: list[int] = []
-    if (bos is not None) and (bos != SOT_ID):
-        pre.append(int(bos))
-    pre += [SOH_ID, SOT_ID]
+    # Mirror TRT scaffolding exactly: SOH only, no additional SOT/BOS
+    pre = [SOH_ID]
     voice_and_text_ids = tok.encode(f"{v}: {text}", add_special_tokens=False)
     ids = pre + voice_and_text_ids + [EOTXT_ID, EOH_ID, SOAI_ID, SOSPEECH_ID]
     return ids

@@ -69,7 +69,8 @@ def split_custom_tokens(s: str, tokenizer: Any = None) -> list[int]:
     Provide `tokenizer` when available to auto-detect the correct pattern.
     """
     rx = get_audio_token_regex(tokenizer)
-    return [int(x) for x in rx.findall(s) if x != "0"]
+    # Allow zero code as valid; do not filter out 0
+    return [int(x) for x in rx.findall(s)]
 
 
 def turn_token_into_id(token_number: int, index: int) -> int:

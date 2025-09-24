@@ -29,15 +29,17 @@ def _decode_full_text(
     tokenizer: Any,
     cumulative_text: str,
     step: Any,
+    prompt_len: int,
 ) -> str:
     """
     Build a cumulative text string from a TRT-LLM streaming step.
-    Handles multiple possible field names across TRT-LLM versions.
+    - If the step has raw text, append diffs against cumulative_text.
+    - If the step has token ids, decode ONLY tokens after the prompt_len
+      using tokenizer.decode(skip_special_tokens=False), then apply delta.
     """
     # Prefer direct text if provided
     step_text = getattr(step, "text", None)
     if isinstance(step_text, str) and step_text:
-        # Heuristic: if it already starts with prior, treat as full text
         if step_text.startswith(cumulative_text):
             return step_text
         return cumulative_text + step_text
@@ -59,16 +61,16 @@ def _decode_full_text(
     else:
         token_ids = list(candidate_ids)
 
+    # Skip prompt ids and decode the generation tail as text
     try:
-        # Use convert_ids_to_tokens to preserve literal special tokens like <custom_token_...>
-        pieces = tokenizer.convert_ids_to_tokens(token_ids, skip_special_tokens=False)
-        decoded = "".join(pieces)
+        gen_ids = token_ids[prompt_len:]
+        decoded_tail = tokenizer.decode(gen_ids, skip_special_tokens=False)
     except Exception:
         return cumulative_text
 
-    if decoded.startswith(cumulative_text):
-        return decoded
-    return cumulative_text + decoded
+    if decoded_tail.startswith(cumulative_text):
+        return decoded_tail
+    return cumulative_text + decoded_tail
 
 
 @dataclass
@@ -79,10 +81,9 @@ class _Req:
     fut_q: asyncio.Queue  # carries _CompatResult or Exception or None sentinel
     req_id: int = -1      # assigned at batch build time
     tok_ids: Optional[np.ndarray] = None
+    prompt_len: int = 0
     # streaming decode state
     cumulative_text: str = ""
-    # number of leading prompt tokens to ignore in first emission (when step outputs include prompt)
-    skip_token_prefix: int = 0
 
 
 class _BatchScheduler:
@@ -192,16 +193,16 @@ class _BatchScheduler:
                         pass
                 else:
                     req.tok_ids = self._encode(str(req.prompt))
+                # Record prompt length so we can skip it during streamed decode
+                try:
+                    req.prompt_len = int(len(req.tok_ids))
+                except Exception:
+                    req.prompt_len = 0
                 if len(req.tok_ids) == 0:
                     # ensure at least one token; use pad_id
                     req.tok_ids = np.asarray([int(self.tokenizer.pad_token_id)], dtype=np.int32)
                     logger.warning(f"Request {i} had empty token sequence, using pad token for prompt: '{req.prompt}'")
                 batched_ids.append(req.tok_ids)
-                # Initialize skip of prompt tokens for first emission when needed
-                try:
-                    req.skip_token_prefix = int(len(req.tok_ids))
-                except Exception:
-                    req.skip_token_prefix = 0
 
             # Use NumPy int32 arrays for TRT-LLM (ModelRunnerCpp will .tolist() each)
             batch_input_ids = [
@@ -238,9 +239,6 @@ class _BatchScheduler:
             except Exception:
                 pass
 
-            # For Orpheus audio generation, terminate on END_OF_SPEECH, not text EOS
-            EO_SPEECH_ID = 128258
-
             gen_kwargs = dict(
                 max_new_tokens=max_new_tokens,
                 temperature=temperature,
@@ -251,17 +249,8 @@ class _BatchScheduler:
                 enable_chunked_context=True,
                 # Tell TRT-LLM exactly what special IDs are to avoid ambiguity
                 pad_id=pad_id,
-                end_id=EO_SPEECH_ID,
                 bos_id=bos_id,
             )
-
-            # Optional debug: allow disabling EOS end_id to test EOS-stall scenarios
-            try:
-                if os.getenv("ORPHEUS_DISABLE_EOS", "0").strip() in ("1", "true", "True"):
-                    gen_kwargs["end_id"] = -1
-                    logger.warning("ORPHEUS_DISABLE_EOS is set: end_id forced to -1 for debugging")
-            except Exception:
-                pass
 
             # Support both TRT-LLM kw names for stop words (stop_words_list vs stop_words)
             try:
@@ -280,7 +269,7 @@ class _BatchScheduler:
 
             logger.debug(f"Batch generation: temp={temperature}, top_p={top_p}, "
                         f"rep_penalty={repetition_penalty}, max_tokens={max_new_tokens}")
-            logger.debug(f"Special tokens: pad_id={pad_id}, end_id={gen_kwargs.get('end_id')}, bos_id={bos_id}")
+            logger.debug(f"Special tokens: pad_id={pad_id}, bos_id={bos_id}")
             logger.debug(f"Final stop_words passed to TRT: {gen_kwargs.get('stop_words') or gen_kwargs.get('stop_words_list')}")
 
             # 5) Run ONE streaming generator covering the whole batch
@@ -306,11 +295,11 @@ class _BatchScheduler:
                             return self.runner.generate(batch_input_ids=batch_input_ids, **_local_kwargs)
                     except Exception:
                         pass
-                    # Last resort: remove any stop_words* and rely on end_id
+                    # Last resort: remove any stop_words* and rely on max_new_tokens only
                     try:
                         _local_kwargs.pop("stop_words", None)
                         _local_kwargs.pop("stop_words_list", None)
-                        logger.debug("Retrying generate() without stop words; relying on end_id")
+                        logger.debug("Retrying generate() without stop words; relying on max_new_tokens")
                         return self.runner.generate(batch_input_ids=batch_input_ids, **_local_kwargs)
                     except Exception:
                         raise te
@@ -435,40 +424,8 @@ class _BatchScheduler:
                             return [v]
                         return None
 
-                    # Prefer 'new_token_ids' when available (already excludes prompt)
-                    tok_matrix = None
-                    _src_key = None
-                    def _to_matrix_from_value(v):
-                        if (_torch is not None) and isinstance(v, _torch.Tensor):
-                            try:
-                                v = v.to(dtype=_torch.int64)
-                            except Exception:
-                                pass
-                            if v.ndim == 2:
-                                return [v[i].detach().cpu().tolist() for i in range(v.shape[0])]
-                            return [v.detach().cpu().tolist()]
-                        if isinstance(v, _np.ndarray):
-                            if v.ndim == 2:
-                                return [v[i].tolist() for i in range(v.shape[0])]
-                            return [v.tolist()]
-                        if isinstance(v, (list, tuple)):
-                            if len(v) > 0 and isinstance(v[0], (list, tuple, _np.ndarray)):
-                                out = []
-                                for row in v:
-                                    out.append(_to_list_1d(row))
-                                return out
-                            return [_to_list_1d(v)]
-                        return [_to_list_1d(v)]
-
-                    try:
-                        v_new = _extract(step, "new_token_ids")
-                        if v_new is not None:
-                            tok_matrix = _to_matrix_from_value(v_new)
-                            _src_key = "new_token_ids"
-                    except Exception:
-                        pass
-
                     # NEW: handle bare tensor steps from TRT-LLM as token matrix directly
+                    tok_matrix = None
                     if (_torch is not None) and isinstance(step, _torch.Tensor):
                         # Force integer dtype to avoid decode exceptions
                         try:
@@ -479,11 +436,8 @@ class _BatchScheduler:
                             tok_matrix = [step[i].detach().cpu().tolist() for i in range(step.shape[0])]
                         else:
                             tok_matrix = [step.detach().cpu().tolist()]
-                        _src_key = _src_key or "tensor"
                     else:
-                        if tok_matrix is None:
-                            tok_matrix = _get_token_matrix(step)
-                        _src_key = _src_key or "fallback"
+                        tok_matrix = _get_token_matrix(step)
                     # Squeeze leading singleton dims (e.g., [1, B, T] -> [B, T])
                     if tok_matrix is not None:
                         try:
@@ -507,21 +461,11 @@ class _BatchScheduler:
                         # Have tokens → decode per sequence and emit cumulative text
                         for i, req in enumerate(batch):
                             toks = tok_matrix[i] if i < len(tok_matrix) else []
-                            # If not using 'new_token_ids', strip the prompt prefix tokens once
-                            if _src_key != "new_token_ids" and getattr(req, "skip_token_prefix", 0) > 0:
-                                try:
-                                    skip = min(int(req.skip_token_prefix), len(toks))
-                                except Exception:
-                                    skip = 0
-                                toks = toks[skip:]
-                                try:
-                                    req.skip_token_prefix = max(0, int(req.skip_token_prefix) - len(tok_matrix[i]))
-                                except Exception:
-                                    req.skip_token_prefix = 0
                             req.cumulative_text = _decode_full_text(
                                 self.tokenizer,
                                 req.cumulative_text,
                                 type("S", (), {"token_ids": toks}),
+                                prompt_len=req.prompt_len,
                             )
                             await req.fut_q.put(_CompatResult([_CompatOutput(req.cumulative_text)]))
                     else:
@@ -531,7 +475,7 @@ class _BatchScheduler:
                             for i, req in enumerate(batch):
                                 txt = tlist[i] if i < len(tlist) else tlist[0]
                                 st = type("S", (), {"text": txt})
-                                req.cumulative_text = _decode_full_text(self.tokenizer, req.cumulative_text, st)
+                                req.cumulative_text = _decode_full_text(self.tokenizer, req.cumulative_text, st, prompt_len=req.prompt_len)
                                 await req.fut_q.put(_CompatResult([_CompatOutput(req.cumulative_text)]))
                         else:
                             # Nothing usable in this step; skip
@@ -599,12 +543,19 @@ class _VLLMLikeEngine:
             from .core.custom_tokens import get_audio_token_regex
             rx = get_audio_token_regex(self.tokenizer)
             logger.info(f"Audio token regex: {rx.pattern}")
-            # show a small sample for sanity
+            # show a small sample for sanity and check that audio tokens exist
             try:
                 added = getattr(self.tokenizer, "get_added_vocab", lambda: {})()
-                sample = [k for k in added.keys() if rx.search(k)][:5]
-                logger.info(f"audio_token_samples={sample}")
-                logger.info(f"added_tokens={len(added)}")
+                added_items = list(added.keys()) if isinstance(added, dict) else []
+                audio_like = [k for k in added_items if rx.search(k)]
+                logger.info(f"added_tokens={len(added_items)} audio_like_count={len(audio_like)}")
+                logger.info(f"audio_token_samples={audio_like[:5]}")
+                if len(audio_like) == 0:
+                    logger.warning(
+                        "Tokenizer has no audio-like <custom_token_*> entries. "
+                        "Streaming text will not surface audio tokens; ensure tokenizer is "
+                        "loaded from the same repo/dir as the TRT engine and that added_tokens.json exists."
+                    )
             except Exception:
                 pass
         except Exception:
