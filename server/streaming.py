@@ -53,6 +53,12 @@ async def aiter_pcm_from_custom_tokens(engine: Any, prompt: str, voice: str, sp:
         except Exception:
             pass
 
+    # Defensive early-stop detection string for END_OF_SPEECH (id 128258)
+    try:
+        EOSPEECH_STR = (tok.decode([128258], skip_special_tokens=False) if tok is not None else "<|end_of_speech|>")
+    except Exception:
+        EOSPEECH_STR = "<|end_of_speech|>"
+
     async for out in engine.generate(encoded, sp, _random_uuid()):
         generation_step += 1
         outs = out.outputs or []
@@ -76,6 +82,17 @@ async def aiter_pcm_from_custom_tokens(engine: Any, prompt: str, voice: str, sp:
                 except Exception:
                     pass
 
+        # Trim at END_OF_SPEECH if surfaced in this delta; process prefix only, then stop
+        eos_hit_this_step = False
+        try:
+            if EOSPEECH_STR and (EOSPEECH_STR in delta):
+                prefix, _, _ = delta.partition(EOSPEECH_STR)
+                delta = prefix
+                eos_hit_this_step = True
+                logger.info(f"[{session_id}] END_OF_SPEECH detected in stream; terminating generation after processing prefix")
+        except Exception:
+            pass
+
         for n in split_custom_tokens(delta, tokenizer=tok):
             tid = turn_token_into_id(n, tok_index)
             tok_index += 1
@@ -97,6 +114,8 @@ async def aiter_pcm_from_custom_tokens(engine: Any, prompt: str, voice: str, sp:
                     pcm_count += 1
                     logger.debug(f"[{session_id}] Yielding PCM chunk {pcm_count} ({len(pcm)} bytes)")
                     yield pcm
+        if eos_hit_this_step:
+            break
     # Optional: flush partial residual codes at end to ensure at least one chunk on very short inputs
     try:
         pending = len(buf_ids) % 28

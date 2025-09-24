@@ -257,7 +257,11 @@ async def tts_ws(ws: WebSocket):
                         logger.debug("Single chunk processing - streaming directly")
                         pcm_count = 0
                         async for pcm in aiter_pcm_from_custom_tokens(engine.engine, chunks[0], v, sp):
-                            await ws.send_bytes(pcm)
+                            try:
+                                await ws.send_bytes(pcm)
+                            except WebSocketDisconnect:
+                                logger.info("Client disconnected; stopping stream")
+                                return
                             pcm_count += 1
                             await asyncio.sleep(0)
                         logger.debug(f"Sent {pcm_count} PCM chunks for single chunk")
@@ -272,7 +276,11 @@ async def tts_ws(ws: WebSocket):
                         logger.debug("Processing chunk 0 directly to socket")
                         pcm_count = 0
                         async for pcm in aiter_pcm_from_custom_tokens(engine.engine, chunks[0], v, sp):
-                            await ws.send_bytes(pcm)
+                            try:
+                                await ws.send_bytes(pcm)
+                            except WebSocketDisconnect:
+                                logger.info("Client disconnected; stopping stream")
+                                return
                             pcm_count += 1
                             await asyncio.sleep(0)
                         logger.debug(f"Sent {pcm_count} PCM chunks for chunk 0")
@@ -293,7 +301,11 @@ async def tts_ws(ws: WebSocket):
                                 b = await queued_q.get()
                                 if b is None:
                                     break
-                                await ws.send_bytes(b)
+                                try:
+                                    await ws.send_bytes(b)
+                                except WebSocketDisconnect:
+                                    logger.info("Client disconnected; stopping stream")
+                                    return
                                 pcm_count += 1
                                 await asyncio.sleep(0)
                             logger.debug(f"Sent {pcm_count} PCM chunks for chunk {idx}")

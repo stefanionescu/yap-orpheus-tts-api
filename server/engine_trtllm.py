@@ -219,6 +219,20 @@ class _BatchScheduler:
             # Prefer stop_words (sequence(s) of ids) for TRT-LLM; default to END_OF_SPEECH (128258)
             stop_ids = list(getattr(sp0, "stop_token_ids", []) or [])
             stop_words = [[sid] for sid in stop_ids] if stop_ids else [[128258]]
+            # Defensive duration-based ceiling on tokens to avoid runaway generations
+            try:
+                def _tokens_for_seconds(seconds: float, frames_per_second: float = 100.0, tokens_per_frame: int = 7) -> int:
+                    return int(seconds * frames_per_second * tokens_per_frame)
+                _target_seconds = float(os.getenv("ORPHEUS_MAX_SECONDS", "20").strip() or 0)
+                if _target_seconds > 0:
+                    _ceiling = _tokens_for_seconds(_target_seconds)
+                    if _ceiling > 0:
+                        max_new_tokens = min(max_new_tokens, _ceiling)
+            except Exception:
+                pass
+
+            # For Orpheus audio generation, terminate on END_OF_SPEECH, not text EOS
+            EO_SPEECH_ID = 128258
 
             gen_kwargs = dict(
                 max_new_tokens=max_new_tokens,
@@ -230,7 +244,7 @@ class _BatchScheduler:
                 enable_chunked_context=True,
                 # Tell TRT-LLM exactly what special IDs are to avoid ambiguity
                 pad_id=pad_id,
-                end_id=eos_id,
+                end_id=EO_SPEECH_ID,
                 bos_id=bos_id,
             )
 
@@ -242,17 +256,57 @@ class _BatchScheduler:
             except Exception:
                 pass
 
+            # Support both TRT-LLM kw names for stop words (stop_words_list vs stop_words)
+            try:
+                import inspect as _inspect
+                _sig = _inspect.signature(self.runner.generate)
+                if ("stop_words_list" in _sig.parameters) and ("stop_words" in gen_kwargs):
+                    gen_kwargs["stop_words_list"] = gen_kwargs.pop("stop_words")
+                    logger.debug("Using stop_words_list kwarg for TRT-LLM")
+                elif "stop_words" in _sig.parameters:
+                    logger.debug("Using stop_words kwarg for TRT-LLM")
+                else:
+                    gen_kwargs.pop("stop_words", None)
+                    logger.debug("TRT-LLM runner has no stop_words* parameter; skipping")
+            except Exception:
+                pass
+
             logger.debug(f"Batch generation: temp={temperature}, top_p={top_p}, "
                         f"rep_penalty={repetition_penalty}, max_tokens={max_new_tokens}")
-            logger.debug(f"Special tokens: pad_id={pad_id}, end_id={eos_id}, bos_id={bos_id}")
-            logger.debug(f"Final stop_words passed to TRT: {gen_kwargs.get('stop_words')}")
+            logger.debug(f"Special tokens: pad_id={pad_id}, end_id={gen_kwargs.get('end_id')}, bos_id={bos_id}")
+            logger.debug(f"Final stop_words passed to TRT: {gen_kwargs.get('stop_words') or gen_kwargs.get('stop_words_list')}")
 
             # 5) Run ONE streaming generator covering the whole batch
             def _run():
                 logger.debug(
                     f"Attempting batched generation with {len(batch_input_ids)} sequences, lengths: {[len(seq) for seq in batch_input_ids]}"
                 )
-                return self.runner.generate(batch_input_ids=batch_input_ids, **gen_kwargs)
+                try:
+                    return self.runner.generate(batch_input_ids=batch_input_ids, **gen_kwargs)
+                except TypeError as te:
+                    # Fallbacks for TRT-LLM kwarg naming differences
+                    _msg = str(te)
+                    _local_kwargs = dict(gen_kwargs)
+                    try:
+                        if "stop_words_list" in _msg and ("stop_words" in _local_kwargs):
+                            _local_kwargs.pop("stop_words", None)
+                            logger.debug("Retrying generate() without stop_words due to TypeError: stop_words_list mismatch")
+                            return self.runner.generate(batch_input_ids=batch_input_ids, **_local_kwargs)
+                        if "stop_words" in _msg and ("stop_words" in _local_kwargs):
+                            _sw = _local_kwargs.pop("stop_words", None)
+                            _local_kwargs["stop_words_list"] = _sw
+                            logger.debug("Retrying generate() with stop_words_list instead of stop_words")
+                            return self.runner.generate(batch_input_ids=batch_input_ids, **_local_kwargs)
+                    except Exception:
+                        pass
+                    # Last resort: remove any stop_words* and rely on end_id
+                    try:
+                        _local_kwargs.pop("stop_words", None)
+                        _local_kwargs.pop("stop_words_list", None)
+                        logger.debug("Retrying generate() without stop words; relying on end_id")
+                        return self.runner.generate(batch_input_ids=batch_input_ids, **_local_kwargs)
+                    except Exception:
+                        raise te
 
             # NOTE: keep the whole generator in one thread to avoid any races
             loop = asyncio.get_running_loop()
