@@ -18,6 +18,7 @@ def main() -> None:
         "config.json",
         "generation_config.json",
         "tokenizer.json",
+        "tokenizer.model",
         "tokenizer_config.json",
         "special_tokens_map.json",
         "added_tokens.json",
@@ -35,6 +36,21 @@ def main() -> None:
         allow_patterns=allow,
     )
 
+    # --- Ensure engine vocab matches tokenizer (critical for audio tokens) ---
+    import json, math
+    from transformers import AutoTokenizer
+    tok = AutoTokenizer.from_pretrained(local_model_dir)
+    tok_len = len(tok)
+    vocab_padded = int(math.ceil(tok_len / 64.0) * 64)  # TRT prefers multiples of 64
+    cfg_path = os.path.join(local_model_dir, "config.json")
+    with open(cfg_path, "r", encoding="utf-8") as f:
+        cfg = json.load(f)
+    if cfg.get("vocab_size", 0) != vocab_padded:
+        print(f"[build-trtllm] patching config.json vocab_size: {cfg.get('vocab_size')} -> {vocab_padded} (tokenizer len={tok_len})")
+        cfg["vocab_size"] = vocab_padded
+        with open(cfg_path, "w", encoding="utf-8") as f:
+            json.dump(cfg, f, ensure_ascii=False, indent=2)
+
     batch = int(os.getenv("TRTLLM_MAX_BATCH", "24"))
     inp = int(os.getenv("TRTLLM_MAX_INPUT", "160"))
     out = int(os.getenv("TRTLLM_MAX_OUTPUT", "2048"))
@@ -45,18 +61,17 @@ def main() -> None:
     os.environ.setdefault("NVIDIA_TF32_OVERRIDE", "1")
     os.environ.setdefault("TRTLLM_MPI_ENV_VARS", "NVIDIA_TF32_OVERRIDE")
     try:
+        # Some TRT-LLM versions accept vocab_size; if not, our patched config.json is used.
         llm = LLM(
             model=local_model_dir,
             dtype="float16",
             max_batch_size=batch,
             max_input_len=inp,
             max_seq_len=seq,
+            vocab_size=vocab_padded,   # ignored on older versions; harmless
         )
-    except Exception:
-        llm = LLM(
-            model=local_model_dir,
-            dtype="float16",
-        )
+    except TypeError:
+        llm = LLM(model=local_model_dir, dtype="float16")
     # Persist engine to out_dir across TRT-LLM versions
     os.makedirs(out_dir, exist_ok=True)
     saved = False
@@ -96,6 +111,21 @@ def main() -> None:
         saved = True
 
     print("[build-trtllm] Engine saved to:", out_dir)
+
+    # Optional verification after saving the engine
+    try:
+        import json
+        cfg_files = ["config.json", "engine_config.json"]
+        for name in cfg_files:
+            p = os.path.join(out_dir, name)
+            if os.path.exists(p):
+                with open(p, "r") as f:
+                    ecfg = json.load(f)
+                vs = ecfg.get("vocab_size") or ecfg.get("builder_config", {}).get("vocab_size")
+                if vs:
+                    print(f"[build-trtllm] engine vocab_size = {vs}")
+    except Exception as e:
+        print("[build-trtllm] (warn) could not read engine config:", e)
 
 
 if __name__ == "__main__":
