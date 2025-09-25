@@ -38,8 +38,8 @@ async def aiter_pcm_from_custom_tokens(engine: Any, prompt: str, voice: str, sp:
             return int(v) if (v is not None and str(v).strip() != "") else default
         except Exception:
             return default
-    # Early TTFB controls (TOKENS, not frames) - optimized for A100 performance
-    MIN_TOKENS_FIRST  = _env_int("MIN_TOKENS_FIRST", 28)  # 4 frames * 7, reduced for faster TTFB
+    # Early TTFB controls (TOKENS, not frames) - AGGRESSIVELY optimized for minimal latency
+    MIN_TOKENS_FIRST  = _env_int("MIN_TOKENS_FIRST", 7)   # 1 frame only! Minimal TTFB 
     MIN_TOKENS_SUBSEQ = _env_int("MIN_TOKENS_SUBSEQ", 28) # 4 frames * 7, balanced for quality  
     TOKENS_EVERY      = _env_int("TOKENS_EVERY", 7)       # Tokens per SNAC frame (was hardcoded!)
 

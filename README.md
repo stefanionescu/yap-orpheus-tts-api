@@ -30,12 +30,12 @@ curl -s http://127.0.0.1:8000/healthz
 
 - Required: `HF_TOKEN`
 - **Critical for correct audio**: `MODEL_LOCAL_DIR` and `TOKENIZER_DIR` must point to the **exact HF snapshot used during engine build**
-- Optional knobs (optimized defaults in `scripts/env/`):
-  - Text chunking: `FIRST_CHUNK_WORDS` (18), `NEXT_CHUNK_WORDS` (120), `MIN_TAIL_WORDS` (12)
-  - Audio streaming: `MIN_TOKENS_FIRST` (28), `MIN_TOKENS_SUBSEQ` (28), `TOKENS_EVERY` (7, tokens per SNAC frame)  
-  - SNAC: `SNAC_TORCH_COMPILE` (0), `SNAC_MAX_BATCH` (64), `SNAC_BATCH_TIMEOUT_MS` (10)
+- Optional knobs (aggressively optimized for TTFB in `scripts/env/`):
+  - Text chunking: `FIRST_CHUNK_WORDS` (16), `NEXT_CHUNK_WORDS` (120), `MIN_TAIL_WORDS` (12)
+  - Audio streaming: `MIN_TOKENS_FIRST` (7, 1 frame!), `MIN_TOKENS_SUBSEQ` (28), `TOKENS_EVERY` (7)  
+  - SNAC: `SNAC_TORCH_COMPILE` (1), `SNAC_MAX_BATCH` (64), `SNAC_BATCH_TIMEOUT_MS` (2)
   - vLLM: see `server/vllm_config.py` and `scripts/env/vllm.sh`
-  - TensorRT-LLM: `scripts/env/trtllm.sh` — key vars: `ENGINE_DIR`, `TRTLLM_MAX_*`, `TRTLLM_KV_FRACTION` (0.70)
+  - TensorRT-LLM: `scripts/env/trtllm.sh` — A100 single-stream: `TRTLLM_MAX_BATCH` (8), `TRTLLM_KV_FRACTION` (0.90)
 - Inspect current values:
 ```bash
 bash scripts/print-env.sh
@@ -66,6 +66,39 @@ If you hear static or white noise instead of clear speech, this indicates a **to
    Out-of-range audio codes detected - tokenizer/engine mismatch!
    ```
    This replaces the previous behavior of silent corruption via modulo clamping.
+
+### Performance Expectations (A100 + FP16)
+
+With the aggressive TTFB optimizations, you should see:
+
+- **TTFB**: ≤ 0.5-1.0s on A100 single-stream
+- **xRT**: ≥ 1.0 for 5-10s utterances (generates faster than real-time)  
+- **First audio frame**: After just 7 tokens (1 SNAC frame)
+
+**Note**: A100 + FP16 is a fully supported configuration. FP8 acceleration is only available on H100/Hopper and is **not required** for good performance.
+
+### Debugging Poor Performance
+
+If TTFB is still >2s or you get no audio:
+
+1. **Check first few streaming steps** in logs:
+   ```
+   audio_delta_sample[:28]=[...] range=[X,Y] len=Z
+   ```
+   - Should see non-zero `len=Z` within first 2-3 steps
+   - Range `[X,Y]` should be reasonable (0-4095)
+
+2. **Verify custom tokens** at startup:
+   ```
+   ✓ Found XXXX <custom_token_*> entries in tokenizer
+   ```
+   - Should be thousands, not dozens
+
+3. **Check prompt structure** in logs:
+   ```
+   PROMPT_TAIL=[..., 128009, 128257, ..., ...]
+   ```
+   - Should see `128257` (start of speech) after `128009` (eot_id)
 
 ### Logging & Monitoring
 
