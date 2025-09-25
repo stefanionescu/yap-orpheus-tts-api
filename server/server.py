@@ -53,10 +53,20 @@ async def _startup():
         try:
             logger.info("Starting background warmup...")
             # Preload SNAC model to avoid first-request latency
-            from .core.snac_batcher import get_snac_batched
+            from .core.snac_batcher import get_snac_batched, SNAC_DEVICE
             logger.debug("Loading SNAC batched model...")
-            _ = get_snac_batched()
+            snac = get_snac_batched()
             logger.debug("SNAC batched model loaded")
+            
+            # Warm SNAC compilation with dummy decode to avoid 12s+ TTFB on first request
+            import torch
+            logger.debug("Warming SNAC torch.compile...")
+            F = 8  # 8 frames to ensure we have enough for dynamic slicing
+            c0 = torch.zeros((1, F), device=SNAC_DEVICE, dtype=torch.long)
+            c1 = torch.zeros((1, 2*F), device=SNAC_DEVICE, dtype=torch.long)  
+            c2 = torch.zeros((1, 4*F), device=SNAC_DEVICE, dtype=torch.long)
+            await snac.decode_codes([c0, c1, c2])  # triggers compile
+            logger.debug("SNAC compile warmup completed")
             # Small prompts per voice to prime model + SNAC path using tokens→PCM
             sp = SamplingParams(
                 temperature=0.6,
@@ -114,6 +124,10 @@ async def tts_ws(ws: WebSocket):
             try:
                 msg = await ws.receive_text()
                 logger.debug(f"Received WebSocket message: {msg[:100]}{'...' if len(msg) > 100 else ''}")
+            except WebSocketDisconnect as e:
+                if getattr(e, 'code', None) not in (1000, 1001):  # Normal closure codes
+                    logger.error(f"WebSocket disconnect: {e}")
+                return
             except Exception as e:
                 logger.error(f"Error receiving WebSocket message: {e}", exc_info=True)
                 break

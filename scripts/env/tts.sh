@@ -14,6 +14,10 @@ export LOG_LEVEL=${LOG_LEVEL:-DEBUG}
 export MIN_TOKENS_FIRST=${MIN_TOKENS_FIRST:-7}       # 1 frame only! Minimal latency
 export MIN_TOKENS_SUBSEQ=${MIN_TOKENS_SUBSEQ:-28}    # Keep at 28 for quality (4 frames)
 export TOKENS_EVERY=${TOKENS_EVERY:-7}               # Tokens per SNAC frame (7 is canonical for Orpheus)
+# SNAC lane order - try different orders if you hear gunshot/static artifacts
+export ORPHEUS_LANE_ORDER=${ORPHEUS_LANE_ORDER:-"0|1,2|3,4,5,6"}  # contiguous (default)
+# Alternative orders to try: "0|1,4|2,3,5,6" or "0|1,5|2,3,4,6" or "0|2,3|1,4,5,6"
+
 # Backward-compat names (if users still set frames-based vars)
 export MIN_FRAMES_FIRST=${MIN_FRAMES_FIRST:-14}
 export MIN_FRAMES_SUBSEQ=${MIN_FRAMES_SUBSEQ:-28}

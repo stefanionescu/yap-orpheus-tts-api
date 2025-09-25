@@ -64,16 +64,6 @@ def get_audio_token_regex(tokenizer: Any = None) -> Pattern[str]:
     return _AUDIO_RX
 
 
-def split_custom_tokens(s: str, tokenizer: Any = None) -> list[int]:
-    """
-    Extract the numeric part from whatever the tokenizer uses for audio codes.
-    Provide `tokenizer` when available to auto-detect the correct pattern.
-    """
-    rx = get_audio_token_regex(tokenizer)
-    # Allow zero code as valid; do not filter out 0
-    return [int(x) for x in rx.findall(s)]
-
-
 def build_audio_id_lookup(tokenizer) -> dict[int, int]:
     """
     Map *token_id* -> *audio_code* using the tokenizer's added vocab.

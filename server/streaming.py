@@ -7,7 +7,6 @@ import numpy as np
 import torch
 
 from .prompts import build_prompt, build_prompt_ids, resolve_voice
-from .core.custom_tokens import split_custom_tokens, turn_token_into_id
 from .core.snac_batcher import get_snac_batched, SNAC_DEVICE
 from .core.logging_config import get_logger
 
@@ -38,6 +37,80 @@ async def aiter_pcm_from_custom_tokens(engine: Any, prompt: str, voice: str, sp:
             return int(v) if (v is not None and str(v).strip() != "") else default
         except Exception:
             return default
+            
+    def _split_snac_lanes(arr, tokens_per_frame=7):
+        """
+        Split audio tokens into SNAC's 3 residual streams (q0|q1|q2).
+        ORPHEUS_LANE_ORDER := "0|1,2|3,4,5,6" (contiguous default)
+        Some checkpoints use interleaved: "0|1,4|2,3,5,6" 
+        """
+        order = os.getenv("ORPHEUS_LANE_ORDER", "0|1,2|3,4,5,6")
+        try:
+            groups = [list(map(int, g.split(","))) for g in order.split("|")]
+            assert len(groups) == 3, f"Expected 3 groups, got {len(groups)}"
+            assert len(groups[0]) == 1, f"Group 0 should have 1 element, got {len(groups[0])}"
+            assert len(groups[1]) == 2, f"Group 1 should have 2 elements, got {len(groups[1])}"  
+            assert len(groups[2]) == 4, f"Group 2 should have 4 elements, got {len(groups[2])}"
+        except Exception as e:
+            logger.warning(f"Invalid ORPHEUS_LANE_ORDER '{order}': {e}, using default")
+            groups = [[0], [1, 2], [3, 4, 5, 6]]  # contiguous default
+            
+        codes0_np = arr[:, groups[0]].reshape(-1)       # [F] 
+        codes1_np = arr[:, groups[1]].reshape(-1)       # [2F]
+        codes2_np = arr[:, groups[2]].reshape(-1)       # [4F]
+        return codes0_np, codes1_np, codes2_np
+        
+    def _apply_crossfade(pcm_new, prev_tail_state, crossfade_samples=256):
+        """
+        Apply crossfade between consecutive PCM chunks to remove boundary clicks.
+        crossfade_samples: number of samples to crossfade (~10.7 ms @ 24 kHz)
+        Returns: (output_pcm, new_prev_tail_state)
+        """
+        if not prev_tail_state.get('tail'):
+            # First chunk - just save tail for next time
+            pcm_array = np.frombuffer(pcm_new, dtype=np.int16)
+            if len(pcm_array) > crossfade_samples:
+                prev_tail_state['nontail'] = pcm_new[:-crossfade_samples*2]  # int16 = 2 bytes
+                prev_tail_state['tail'] = pcm_new[-crossfade_samples*2:]
+            else:
+                prev_tail_state['nontail'] = b""
+                prev_tail_state['tail'] = pcm_new
+            return pcm_new, prev_tail_state
+            
+        # Crossfade with previous tail
+        prev_tail = prev_tail_state['tail']
+        prev_nontail = prev_tail_state['nontail']
+        
+        a = np.frombuffer(prev_tail, dtype=np.int16).astype(np.float32)
+        b_start = np.frombuffer(pcm_new[:len(prev_tail)], dtype=np.int16).astype(np.float32)
+        
+        # Ensure same length for crossfade 
+        min_len = min(len(a), len(b_start))
+        if min_len == 0:
+            return pcm_new, prev_tail_state
+            
+        a = a[:min_len]
+        b_start = b_start[:min_len]
+        
+        # Linear crossfade
+        w = np.linspace(0.0, 1.0, min_len, endpoint=False)
+        mix = (a*(1.0-w) + b_start*w).astype(np.int16).tobytes()
+        
+        # Construct output: prev_nontail + crossfade + rest_of_current
+        rest_of_current = pcm_new[len(prev_tail):]
+        output_pcm = prev_nontail + mix + rest_of_current
+        
+        # Update state for next time
+        pcm_array = np.frombuffer(pcm_new, dtype=np.int16)
+        if len(pcm_array) > crossfade_samples:
+            prev_tail_state['nontail'] = pcm_new[:-crossfade_samples*2]
+            prev_tail_state['tail'] = pcm_new[-crossfade_samples*2:]
+        else:
+            prev_tail_state['nontail'] = b""
+            prev_tail_state['tail'] = pcm_new
+            
+        return output_pcm, prev_tail_state
+        
     # Early TTFB controls (TOKENS, not frames) - AGGRESSIVELY optimized for minimal latency
     MIN_TOKENS_FIRST  = _env_int("MIN_TOKENS_FIRST", 7)   # 1 frame only! Minimal TTFB 
     MIN_TOKENS_SUBSEQ = _env_int("MIN_TOKENS_SUBSEQ", 28) # 4 frames * 7, balanced for quality  
@@ -55,6 +128,9 @@ async def aiter_pcm_from_custom_tokens(engine: Any, prompt: str, voice: str, sp:
     generation_step = 0
     pcm_count = 0
     tokens_processed = 0
+    
+    # Crossfade state for smooth PCM transitions
+    crossfade_state = {'tail': None, 'nontail': None}
     
     # Prefer pre-tokenized prompt ids when backend supports it (TRT-LLM wrapper accepts list[int])
     try:
@@ -108,6 +184,27 @@ async def aiter_pcm_from_custom_tokens(engine: Any, prompt: str, voice: str, sp:
 
         # Use audio codes from IDs instead of regex extraction
         tokens_in_delta = codes
+        
+        # Auto-coerce if they look like token ids (>=4096) or raw <custom_token_N> numbers
+        if tokens_in_delta and (max(tokens_in_delta) >= 4096 or min(tokens_in_delta) < 0):
+            try:
+                from .core.custom_tokens import build_audio_id_lookup, turn_token_into_id
+                id2code = build_audio_id_lookup(tok) if tok is not None else {}
+                fixed = []
+                # total audio tokens seen so far determines lane = (global_index % 7)
+                global_idx = tokens_processed  # we already increment this when appending
+                for i, tid in enumerate(tokens_in_delta):
+                    # Map token-id -> custom_token_N (if present)
+                    n = id2code.get(int(tid))
+                    if n is None:
+                        continue
+                    fixed.append(turn_token_into_id(n, index=global_idx + i))
+                tokens_in_delta = fixed
+                logger.debug(f"[{session_id}] Auto-coerced {len(codes)} token IDs to {len(fixed)} audio codes")
+            except Exception as e:
+                logger.warning(f"[{session_id}] Token ID coercion failed: {e}")
+                pass  # fall back; validator below will catch range issues
+                
         try:
             logger.debug(f"[{session_id}] audio_tokens_in_delta={len(tokens_in_delta)}")
         except Exception:
@@ -143,10 +240,8 @@ async def aiter_pcm_from_custom_tokens(engine: Any, prompt: str, voice: str, sp:
             arr = np.asarray(chunk_codes, dtype=np.int64).reshape(-1, TOKENS_PER_FRAME)  # [F, 7]
             F = arr.shape[0]
 
-            # Split into three residual streams (flat layout expected by your SNAC)
-            codes0_np = arr[:, 0]                    # [F]
-            codes1_np = arr[:, [1, 4]].reshape(-1)   # [2F]
-            codes2_np = arr[:, [2, 3, 5, 6]].reshape(-1)  # [4F]
+            # Split into three residual streams using configurable lane order
+            codes0_np, codes1_np, codes2_np = _split_snac_lanes(arr, TOKENS_PER_FRAME)
 
             codes_0 = torch.from_numpy(codes0_np).unsqueeze(0).to(SNAC_DEVICE, dtype=torch.long)  # [1, F]
             codes_1 = torch.from_numpy(codes1_np).unsqueeze(0).to(SNAC_DEVICE, dtype=torch.long)  # [1, 2F]
@@ -183,8 +278,10 @@ async def aiter_pcm_from_custom_tokens(engine: Any, prompt: str, voice: str, sp:
             pcm = (np.clip(audio, -1.0, 1.0) * 32767.0).astype(np.int16).tobytes()
             if pcm:
                 pcm_count += 1
-                logger.debug(f"[{session_id}] Yielding PCM chunk {pcm_count} ({len(pcm)} bytes)")
-                yield pcm
+                # Apply crossfade to smooth transitions between chunks
+                output_pcm, crossfade_state = _apply_crossfade(pcm, crossfade_state)
+                logger.debug(f"[{session_id}] Yielding PCM chunk {pcm_count} ({len(output_pcm)} bytes)")
+                yield output_pcm
         
         if saw_eos and pcm_count > 0:
             break  # ok to stop; we streamed at least one hop
@@ -201,10 +298,8 @@ async def aiter_pcm_from_custom_tokens(engine: Any, prompt: str, voice: str, sp:
             arr = np.asarray(chunk_codes, dtype=np.int64).reshape(-1, TOKENS_PER_FRAME)  # [F, 7]
             F = arr.shape[0]
 
-            # Split into three residual streams (flat layout only)
-            codes0_np = arr[:, 0]                    # [F]
-            codes1_np = arr[:, [1, 4]].reshape(-1)   # [2F]
-            codes2_np = arr[:, [2, 3, 5, 6]].reshape(-1)  # [4F]
+            # Split into three residual streams using configurable lane order
+            codes0_np, codes1_np, codes2_np = _split_snac_lanes(arr, TOKENS_PER_FRAME)
 
             codes_0 = torch.from_numpy(codes0_np).unsqueeze(0).to(SNAC_DEVICE, dtype=torch.long)  # [1, F]
             codes_1 = torch.from_numpy(codes1_np).unsqueeze(0).to(SNAC_DEVICE, dtype=torch.long)  # [1, 2F]
@@ -234,8 +329,10 @@ async def aiter_pcm_from_custom_tokens(engine: Any, prompt: str, voice: str, sp:
                 pcm = (np.clip(audio, -1.0, 1.0) * 32767.0).astype(np.int16).tobytes()
                 if pcm:
                     pcm_count += 1
-                    logger.debug(f"[{session_id}] Yielding final flushed PCM chunk ({len(pcm)} bytes)")
-                    yield pcm
+                    # Apply crossfade to final flush chunk too
+                    output_pcm, crossfade_state = _apply_crossfade(pcm, crossfade_state)
+                    logger.debug(f"[{session_id}] Yielding final flushed PCM chunk ({len(output_pcm)} bytes)")
+                    yield output_pcm
     except Exception:
         pass
 

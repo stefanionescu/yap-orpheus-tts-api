@@ -34,6 +34,7 @@ curl -s http://127.0.0.1:8000/healthz
   - Text chunking: `FIRST_CHUNK_WORDS` (16), `NEXT_CHUNK_WORDS` (120), `MIN_TAIL_WORDS` (12)
   - Audio streaming: `MIN_TOKENS_FIRST` (7, 1 frame!), `MIN_TOKENS_SUBSEQ` (28), `TOKENS_EVERY` (7)  
   - SNAC: `SNAC_TORCH_COMPILE` (1), `SNAC_MAX_BATCH` (64), `SNAC_BATCH_TIMEOUT_MS` (2)
+  - SNAC lane order: `ORPHEUS_LANE_ORDER` ("0|1,2|3,4,5,6") - **change this if you hear gunshot/static**
   - vLLM: see `server/vllm_config.py` and `scripts/env/vllm.sh`
   - TensorRT-LLM: `scripts/env/trtllm.sh` — A100 single-stream: `TRTLLM_MAX_BATCH` (8), `TRTLLM_KV_FRACTION` (0.90)
 - Inspect current values:
@@ -99,6 +100,23 @@ If TTFB is still >2s or you get no audio:
    PROMPT_TAIL=[..., 128009, 128257, ..., ...]
    ```
    - Should see `128257` (start of speech) after `128009` (eot_id)
+
+### Troubleshooting "Gunshot/Static" Audio  
+
+If you hear **repeating gunshot-like pops** or static instead of speech, this is a **SNAC lane order mismatch**:
+
+1. **Try different lane orders** by setting:
+   ```bash
+   export ORPHEUS_LANE_ORDER="0|1,4|2,3,5,6"    # interleaved variant 1
+   # or
+   export ORPHEUS_LANE_ORDER="0|1,5|2,3,4,6"    # interleaved variant 2  
+   # or
+   export ORPHEUS_LANE_ORDER="0|2,3|1,4,5,6"    # interleaved variant 3
+   ```
+
+2. **The right order** will instantly turn gunshot sounds into clear speech
+
+3. **Default is contiguous**: "0|1,2|3,4,5,6" (q0=1 code, q1=2 codes, q2=4 codes per frame)
 
 ### Logging & Monitoring
 
