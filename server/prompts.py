@@ -59,29 +59,8 @@ def resolve_voice(v: str) -> str:
 
 def build_prompt(text: str, voice: str = "tara") -> str:
     v = resolve_voice(voice)
-    # String form using proper speech boundary format
-    from .core.custom_tokens import turn_token_into_id
-    # Build token IDs and then decode for string compatibility
-    ids: list[int] = []
-    ids.append(SOT_ID)
-    ids += _tok.encode(f"{v}: {text}", add_special_tokens=False)
-    ids.append(EOTXT_ID)
-    ids.append(SOSPEECH_ID)                       # <-- OPEN speech section
-    for i, n in enumerate(PRIME):
-        ids.append(turn_token_into_id(n, i))      # small audio seed AFTER SOS
-    return _tok.decode(ids, skip_special_tokens=False)
-
-
-def build_prompt_ids(text: str, voice: str, tok) -> list[int]:
-    from .core.custom_tokens import turn_token_into_id
-    v = resolve_voice(voice)
-    ids: list[int] = []
-    ids.append(SOT_ID)
-    ids += tok.encode(f"{v}: {text}", add_special_tokens=False)
-    ids.append(EOTXT_ID)
-    ids.append(SOSPEECH_ID)                       # <-- OPEN speech section
-    for i, n in enumerate(PRIME):
-        ids.append(turn_token_into_id(n, i))      # small audio seed AFTER SOS
-    return ids
-
-
+    eot = _tok.decode([EOTXT_ID], skip_special_tokens=False)
+    sos = _tok.decode([SOSPEECH_ID], skip_special_tokens=False)
+    primes = "".join(f"<custom_token_{n}>" for n in PRIME)
+    # Minimal, LLama3-style text prompt:
+    return f"{v}: {text}{eot}{sos}{primes}"

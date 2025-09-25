@@ -36,20 +36,8 @@ def main() -> None:
         allow_patterns=allow,
     )
 
-    # --- Ensure engine vocab matches tokenizer (critical for audio tokens) ---
-    import json, math
-    from transformers import AutoTokenizer
-    tok = AutoTokenizer.from_pretrained(local_model_dir)
-    tok_len = len(tok)
-    vocab_padded = int(math.ceil(tok_len / 64.0) * 64)  # TRT prefers multiples of 64
-    cfg_path = os.path.join(local_model_dir, "config.json")
-    with open(cfg_path, "r", encoding="utf-8") as f:
-        cfg = json.load(f)
-    if cfg.get("vocab_size", 0) != vocab_padded:
-        print(f"[build-trtllm] patching config.json vocab_size: {cfg.get('vocab_size')} -> {vocab_padded} (tokenizer len={tok_len})")
-        cfg["vocab_size"] = vocab_padded
-        with open(cfg_path, "w", encoding="utf-8") as f:
-            json.dump(cfg, f, ensure_ascii=False, indent=2)
+    # Use existing config.json vocab_size that matches tokenizer length (156940)
+    # TRT-LLM 0.21.0+ will read vocab_size from config.json automatically
 
     batch = int(os.getenv("TRTLLM_MAX_BATCH", "24"))
     inp = int(os.getenv("TRTLLM_MAX_INPUT", "160"))
@@ -60,18 +48,14 @@ def main() -> None:
     # Build with TF32 enabled and pass to executor environment so workers inherit it
     os.environ.setdefault("NVIDIA_TF32_OVERRIDE", "1")
     os.environ.setdefault("TRTLLM_MPI_ENV_VARS", "NVIDIA_TF32_OVERRIDE")
-    try:
-        # Some TRT-LLM versions accept vocab_size; if not, our patched config.json is used.
-        llm = LLM(
-            model=local_model_dir,
-            dtype="float16",
-            max_batch_size=batch,
-            max_input_len=inp,
-            max_seq_len=seq,
-            vocab_size=vocab_padded,   # ignored on older versions; harmless
-        )
-    except TypeError:
-        llm = LLM(model=local_model_dir, dtype="float16")
+    
+    llm = LLM(
+        model=local_model_dir,
+        dtype="float16",
+        max_batch_size=batch,
+        max_input_len=inp,
+        max_seq_len=seq,
+    )
     # Persist engine to out_dir across TRT-LLM versions
     os.makedirs(out_dir, exist_ok=True)
     saved = False

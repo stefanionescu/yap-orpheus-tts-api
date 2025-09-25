@@ -6,7 +6,7 @@ from typing import Iterator, Any
 import numpy as np
 import torch
 
-from .prompts import build_prompt, build_prompt_ids, resolve_voice
+from .prompts import build_prompt, resolve_voice
 from .core.snac_batcher import get_snac_batched, SNAC_DEVICE
 from .core.logging_config import get_logger
 
@@ -139,13 +139,7 @@ async def aiter_pcm_from_custom_tokens(engine: Any, prompt: str, voice: str, sp:
     except Exception:
         tok = None
         use_ids = False
-    encoded = build_prompt(prompt, resolve_voice(voice))
-    if use_ids and tok is not None:
-        try:
-            encoded = build_prompt_ids(prompt, resolve_voice(voice), tok)
-            logger.info(f"PROMPT_TAIL={encoded[-16:] if isinstance(encoded, list) and len(encoded) > 16 else encoded}")
-        except Exception:
-            pass
+    encoded = build_prompt(prompt, resolve_voice(voice))  # <- string, let TRT tokenizer encode
 
     # Defensive early-stop detection string for END_OF_SPEECH (id 128258)
     try:

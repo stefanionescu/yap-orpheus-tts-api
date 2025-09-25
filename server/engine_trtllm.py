@@ -271,33 +271,14 @@ class _BatchScheduler:
                 # Tell TRT-LLM exactly what special IDs are to avoid ambiguity
                 pad_id=pad_id,
                 bos_id=bos_id,
-                end_id=EO_SPEECH_ID,
+                end_id=EO_SPEECH_ID,                 # <- keep
+                stop_words_list=[[EO_SPEECH_ID]],    # <- force as well
             )
-
-            # Prefer end_id over stop_words for TRT-LLM; add stop_words as fallback only if needed
-            try:
-                import inspect as _inspect
-                _sig = _inspect.signature(self.runner.generate)
-                # Only add stop words if end_id isn't supported
-                if "end_id" not in _sig.parameters:
-                    # Fallback to stop words if end_id not supported
-                    if ("stop_words_list" in _sig.parameters):
-                        gen_kwargs["stop_words_list"] = stop_words
-                        logger.debug("Using stop_words_list kwarg for TRT-LLM (end_id not supported)")
-                    elif "stop_words" in _sig.parameters:
-                        gen_kwargs["stop_words"] = stop_words
-                        logger.debug("Using stop_words kwarg for TRT-LLM (end_id not supported)")
-                    else:
-                        logger.debug("TRT-LLM runner has no stop_words* or end_id parameter")
-                else:
-                    logger.debug("Using end_id for TRT-LLM")
-            except Exception:
-                pass
 
             logger.debug(f"Batch generation: temp={temperature}, top_p={top_p}, "
                         f"rep_penalty={repetition_penalty}, max_tokens={max_new_tokens}")
             logger.debug(f"Special tokens: pad_id={pad_id}, bos_id={bos_id}, end_id={EO_SPEECH_ID}")
-            logger.debug(f"Final stop_words passed to TRT: {gen_kwargs.get('stop_words') or gen_kwargs.get('stop_words_list')}")
+            logger.debug(f"Final stop_words_list passed to TRT: {gen_kwargs.get('stop_words_list')}")
 
             # 5) Run ONE streaming generator covering the whole batch
             def _run():
