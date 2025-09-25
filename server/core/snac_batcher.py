@@ -118,7 +118,16 @@ class SnacBatched:
                                     # Other exceptions (API changes) - proceed with caution
                                     logger.warning(f"Could not validate codebook ranges: {e}")
                                 z_q = self.m.quantizer.from_codes([c0, c1, c2])
-                                audio_hat = self.m.decoder(z_q.to(self.dtype_decoder))[:, :, 2048:4096]
+                                # Dynamic slicing - wait for enough samples or slice last hop
+                                audio_hat_full = self.m.decoder(z_q.to(self.dtype_decoder))
+                                HOP = 2048  # 24 kHz, 2048-sample streaming hop
+                                L = int(audio_hat_full.shape[-1])
+                                if L < HOP:
+                                    # Not enough samples yet → return empty tensor so caller waits
+                                    audio_hat = audio_hat_full[..., :0] 
+                                else:
+                                    # Stream the last hop so chunking works for small frame counts too
+                                    audio_hat = audio_hat_full[..., L-HOP:L]
                                 outs = list(audio_hat.split(1, dim=0))
                             else:
                                 outs = []
@@ -148,7 +157,17 @@ class SnacBatched:
                                         # Other exceptions (API changes) - proceed with caution
                                         logger.warning(f"Could not validate codebook ranges: {e}")
                                     z_q = self.m.quantizer.from_codes([c0, c1, c2])
-                                    outs.append(self.m.decoder(z_q.to(self.dtype_decoder))[:, :, 2048:4096])
+                                    # Dynamic slicing - wait for enough samples or slice last hop
+                                    audio_hat_full = self.m.decoder(z_q.to(self.dtype_decoder))
+                                    HOP = 2048  # 24 kHz, 2048-sample streaming hop
+                                    L = int(audio_hat_full.shape[-1])
+                                    if L < HOP:
+                                        # Not enough samples yet → return empty tensor so caller waits
+                                        audio_hat = audio_hat_full[..., :0]
+                                    else:
+                                        # Stream the last hop so chunking works for small frame counts too
+                                        audio_hat = audio_hat_full[..., L-HOP:L]
+                                    outs.append(audio_hat)
                             torch.cuda.synchronize()
                     else:
                         shapes = [(c[0].shape, c[1].shape, c[2].shape) for c in codes_list]
@@ -183,7 +202,16 @@ class SnacBatched:
                                 # Other exceptions (API changes) - proceed with caution
                                 logger.warning(f"Could not validate codebook ranges: {e}")
                             z_q = self.m.quantizer.from_codes([c0, c1, c2])
-                            audio_hat = self.m.decoder(z_q.to(self.dtype_decoder))[:, :, 2048:4096]
+                            # Dynamic slicing - wait for enough samples or slice last hop
+                            audio_hat_full = self.m.decoder(z_q.to(self.dtype_decoder))
+                            HOP = 2048  # 24 kHz, 2048-sample streaming hop
+                            L = int(audio_hat_full.shape[-1])
+                            if L < HOP:
+                                # Not enough samples yet → return empty tensor so caller waits
+                                audio_hat = audio_hat_full[..., :0]
+                            else:
+                                # Stream the last hop so chunking works for small frame counts too
+                                audio_hat = audio_hat_full[..., L-HOP:L]
                             outs = list(audio_hat.split(1, dim=0))
                         else:
                             outs = []
@@ -213,7 +241,17 @@ class SnacBatched:
                                     # Other exceptions (API changes) - proceed with caution
                                     logger.warning(f"Could not validate codebook ranges: {e}")
                                 z_q = self.m.quantizer.from_codes([c0, c1, c2])
-                                outs.append(self.m.decoder(z_q.to(self.dtype_decoder))[:, :, 2048:4096])
+                                # Dynamic slicing - wait for enough samples or slice last hop
+                                audio_hat_full = self.m.decoder(z_q.to(self.dtype_decoder))
+                                HOP = 2048  # 24 kHz, 2048-sample streaming hop
+                                L = int(audio_hat_full.shape[-1])
+                                if L < HOP:
+                                    # Not enough samples yet → return empty tensor so caller waits
+                                    audio_hat = audio_hat_full[..., :0]
+                                else:
+                                    # Stream the last hop so chunking works for small frame counts too
+                                    audio_hat = audio_hat_full[..., L-HOP:L]
+                                outs.append(audio_hat)
                 for fut, out in zip(futs, outs):
                     if not fut.done():
                         fut.set_result(out[0].detach().cpu().numpy())
