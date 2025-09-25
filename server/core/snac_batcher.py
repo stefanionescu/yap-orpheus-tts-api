@@ -19,7 +19,8 @@ class SnacBatched:
         logger.info("Initializing SNAC batched model...")
         logger.info(f"SNAC device: {SNAC_DEVICE}")
         
-        self.dtype_decoder = torch.float32
+        # Use FP16 for decoder on A100 for better performance (A100 doesn't support FP8)
+        self.dtype_decoder = torch.float16
         logger.debug("Loading SNAC model from hubertsiuzdak/snac_24khz...")
         m = SNAC.from_pretrained("hubertsiuzdak/snac_24khz").eval().to(SNAC_DEVICE)
         m.decoder = m.decoder.to(self.dtype_decoder)
@@ -91,7 +92,10 @@ class SnacBatched:
                                 c0 = torch.cat([c[0] for c in codes_list], dim=0)
                                 c1 = torch.cat([c[1] for c in codes_list], dim=0)
                                 c2 = torch.cat([c[2] for c in codes_list], dim=0)
-                                # Clamp to codebook sizes to avoid device-side asserts
+                                # Validate codes are in range - fail fast on tokenizer mismatch
+                                c0 = c0.long()
+                                c1 = c1.long() 
+                                c2 = c2.long()
                                 try:
                                     q0, q1, q2 = self.m.quantizer.quantizers
                                     def _cb_size(q):
@@ -100,20 +104,28 @@ class SnacBatched:
                                                 return int(getattr(q.codebook, name))
                                         return 4096
                                     n0, n1, n2 = _cb_size(q0), _cb_size(q1), _cb_size(q2)
-                                    c0 = c0.long().remainder(n0)
-                                    c1 = c1.long().remainder(n1)
-                                    c2 = c2.long().remainder(n2)
-                                except Exception:
-                                    # Best effort; if quantizer API changes, proceed without clamp
-                                    c0 = c0.long()
-                                    c1 = c1.long()
-                                    c2 = c2.long()
+                                    # Check for out-of-range codes (indicates tokenizer/engine mismatch)
+                                    if (c0.min()<0 or c0.max()>=n0 or c1.min()<0 or c1.max()>=n1 or c2.min()<0 or c2.max()>=n2):
+                                        raise ValueError(
+                                            f"Out-of-range audio codes detected - tokenizer/engine mismatch! "
+                                            f"c0: [{c0.min()},{c0.max()}] vs [0,{n0}) "
+                                            f"c1: [{c1.min()},{c1.max()}] vs [0,{n1}) "
+                                            f"c2: [{c2.min()},{c2.max()}] vs [0,{n2})"
+                                        )
+                                except Exception as e:
+                                    if "Out-of-range" in str(e):
+                                        raise  # Re-raise validation errors
+                                    # Other exceptions (API changes) - proceed with caution
+                                    logger.warning(f"Could not validate codebook ranges: {e}")
                                 z_q = self.m.quantizer.from_codes([c0, c1, c2])
                                 audio_hat = self.m.decoder(z_q.to(self.dtype_decoder))[:, :, 2048:4096]
                                 outs = list(audio_hat.split(1, dim=0))
                             else:
                                 outs = []
                                 for c0, c1, c2 in codes_list:
+                                    c0 = c0.long()
+                                    c1 = c1.long()
+                                    c2 = c2.long()
                                     try:
                                         q0, q1, q2 = self.m.quantizer.quantizers
                                         def _cb_size(q):
@@ -122,13 +134,19 @@ class SnacBatched:
                                                     return int(getattr(q.codebook, name))
                                             return 4096
                                         n0, n1, n2 = _cb_size(q0), _cb_size(q1), _cb_size(q2)
-                                        c0 = c0.long().remainder(n0)
-                                        c1 = c1.long().remainder(n1)
-                                        c2 = c2.long().remainder(n2)
-                                    except Exception:
-                                        c0 = c0.long()
-                                        c1 = c1.long()
-                                        c2 = c2.long()
+                                        # Check for out-of-range codes (indicates tokenizer/engine mismatch)
+                                        if (c0.min()<0 or c0.max()>=n0 or c1.min()<0 or c1.max()>=n1 or c2.min()<0 or c2.max()>=n2):
+                                            raise ValueError(
+                                                f"Out-of-range audio codes detected - tokenizer/engine mismatch! "
+                                                f"c0: [{c0.min()},{c0.max()}] vs [0,{n0}) "
+                                                f"c1: [{c1.min()},{c1.max()}] vs [0,{n1}) "
+                                                f"c2: [{c2.min()},{c2.max()}] vs [0,{n2})"
+                                            )
+                                    except Exception as e:
+                                        if "Out-of-range" in str(e):
+                                            raise  # Re-raise validation errors
+                                        # Other exceptions (API changes) - proceed with caution
+                                        logger.warning(f"Could not validate codebook ranges: {e}")
                                     z_q = self.m.quantizer.from_codes([c0, c1, c2])
                                     outs.append(self.m.decoder(z_q.to(self.dtype_decoder))[:, :, 2048:4096])
                             torch.cuda.synchronize()
@@ -139,6 +157,10 @@ class SnacBatched:
                             c0 = torch.cat([c[0] for c in codes_list], dim=0)
                             c1 = torch.cat([c[1] for c in codes_list], dim=0)
                             c2 = torch.cat([c[2] for c in codes_list], dim=0)
+                            # Validate codes are in range - fail fast on tokenizer mismatch  
+                            c0 = c0.long()
+                            c1 = c1.long()
+                            c2 = c2.long()
                             try:
                                 q0, q1, q2 = self.m.quantizer.quantizers
                                 def _cb_size(q):
@@ -147,19 +169,28 @@ class SnacBatched:
                                             return int(getattr(q.codebook, name))
                                     return 4096
                                 n0, n1, n2 = _cb_size(q0), _cb_size(q1), _cb_size(q2)
-                                c0 = c0.long().remainder(n0)
-                                c1 = c1.long().remainder(n1)
-                                c2 = c2.long().remainder(n2)
-                            except Exception:
-                                c0 = c0.long()
-                                c1 = c1.long()
-                                c2 = c2.long()
+                                # Check for out-of-range codes (indicates tokenizer/engine mismatch)
+                                if (c0.min()<0 or c0.max()>=n0 or c1.min()<0 or c1.max()>=n1 or c2.min()<0 or c2.max()>=n2):
+                                    raise ValueError(
+                                        f"Out-of-range audio codes detected - tokenizer/engine mismatch! "
+                                        f"c0: [{c0.min()},{c0.max()}] vs [0,{n0}) "
+                                        f"c1: [{c1.min()},{c1.max()}] vs [0,{n1}) "
+                                        f"c2: [{c2.min()},{c2.max()}] vs [0,{n2})"
+                                    )
+                            except Exception as e:
+                                if "Out-of-range" in str(e):
+                                    raise  # Re-raise validation errors
+                                # Other exceptions (API changes) - proceed with caution
+                                logger.warning(f"Could not validate codebook ranges: {e}")
                             z_q = self.m.quantizer.from_codes([c0, c1, c2])
                             audio_hat = self.m.decoder(z_q.to(self.dtype_decoder))[:, :, 2048:4096]
                             outs = list(audio_hat.split(1, dim=0))
                         else:
                             outs = []
                             for c0, c1, c2 in codes_list:
+                                c0 = c0.long()
+                                c1 = c1.long()
+                                c2 = c2.long()
                                 try:
                                     q0, q1, q2 = self.m.quantizer.quantizers
                                     def _cb_size(q):
@@ -168,13 +199,19 @@ class SnacBatched:
                                                 return int(getattr(q.codebook, name))
                                         return 4096
                                     n0, n1, n2 = _cb_size(q0), _cb_size(q1), _cb_size(q2)
-                                    c0 = c0.long().remainder(n0)
-                                    c1 = c1.long().remainder(n1)
-                                    c2 = c2.long().remainder(n2)
-                                except Exception:
-                                    c0 = c0.long()
-                                    c1 = c1.long()
-                                    c2 = c2.long()
+                                    # Check for out-of-range codes (indicates tokenizer/engine mismatch)
+                                    if (c0.min()<0 or c0.max()>=n0 or c1.min()<0 or c1.max()>=n1 or c2.min()<0 or c2.max()>=n2):
+                                        raise ValueError(
+                                            f"Out-of-range audio codes detected - tokenizer/engine mismatch! "
+                                            f"c0: [{c0.min()},{c0.max()}] vs [0,{n0}) "
+                                            f"c1: [{c1.min()},{c1.max()}] vs [0,{n1}) "
+                                            f"c2: [{c2.min()},{c2.max()}] vs [0,{n2})"
+                                        )
+                                except Exception as e:
+                                    if "Out-of-range" in str(e):
+                                        raise  # Re-raise validation errors
+                                    # Other exceptions (API changes) - proceed with caution
+                                    logger.warning(f"Could not validate codebook ranges: {e}")
                                 z_q = self.m.quantizer.from_codes([c0, c1, c2])
                                 outs.append(self.m.decoder(z_q.to(self.dtype_decoder))[:, :, 2048:4096])
                 for fut, out in zip(futs, outs):

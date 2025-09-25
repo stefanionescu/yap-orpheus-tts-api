@@ -76,29 +76,38 @@ def split_custom_tokens(s: str, tokenizer: Any = None) -> list[int]:
 
 def build_audio_id_lookup(tokenizer) -> dict[int, int]:
     """
-    Map token_id -> audio_code (e.g., 3929) for all <custom_token_####> entries.
+    Map *token_id* -> *audio_code* using the tokenizer's added vocab.
+    This is stable across save/restore and avoids ID-range guesses.
+    
+    Returns dict mapping token_id to audio_code (e.g., 3929).
     """
     global _AUDIO_ID_TO_CODE
     if _AUDIO_ID_TO_CODE is not None:
         return _AUDIO_ID_TO_CODE
+    
+    # Use added_vocab to build precise mapping instead of scanning ID ranges
+    try:
+        added_vocab = getattr(tokenizer, "get_added_vocab", lambda: {})()
+    except Exception:
+        added_vocab = {}
+    
     id2code = {}
-    # Hugging Face gives us all tokens via convert_ids_to_tokens
-    vocab_size = tokenizer.vocab_size
-    # Scan a reasonable superset
-    for tid in range(vocab_size, vocab_size + 6000):  # audio tokens are usually added after base vocab
-        try:
-            s = tokenizer.convert_ids_to_tokens(tid)
-        except Exception:
-            continue
-        if not isinstance(s, str):
-            continue
-        if s.startswith("<custom_token_") and s.endswith(">"):
+    for tok_str, tok_id in added_vocab.items():
+        if tok_str.startswith("<custom_token_") and tok_str.endswith(">"):
             try:
-                code = int(s[len("<custom_token_"):-1])
+                code = int(tok_str[len("<custom_token_"):-1])
+                id2code[int(tok_id)] = code
             except Exception:
                 continue
-            id2code[tid] = code
+    
+    if not id2code:
+        raise RuntimeError(
+            f"No <custom_token_*> entries found in tokenizer added_vocab; "
+            f"tokenizer/engine mismatch. Found {len(added_vocab)} total added tokens."
+        )
+    
     _AUDIO_ID_TO_CODE = id2code
+    print(f"✓ Built audio ID lookup: {len(id2code)} custom tokens mapped")
     return id2code
 
 

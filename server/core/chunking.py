@@ -2,9 +2,9 @@ import os
 import re
 from typing import List
 
-# Sentence-safe, word-based chunking (latency-first)
-FIRST_CHUNK_WORDS = int(os.getenv("FIRST_CHUNK_WORDS", "40"))
-NEXT_CHUNK_WORDS = int(os.getenv("NEXT_CHUNK_WORDS", "140"))
+# Sentence-safe, word-based chunking (latency-first, optimized for A100)
+FIRST_CHUNK_WORDS = int(os.getenv("FIRST_CHUNK_WORDS", "18"))  # Reduced for faster TTFB
+NEXT_CHUNK_WORDS = int(os.getenv("NEXT_CHUNK_WORDS", "120"))   # Slightly reduced  
 MIN_TAIL_WORDS = int(os.getenv("MIN_TAIL_WORDS", "12"))
 
 _ABBR = {

@@ -29,15 +29,43 @@ curl -s http://127.0.0.1:8000/healthz
 ### Environment
 
 - Required: `HF_TOKEN`
-- Optional knobs (already surfaced via `scripts/env/`):
-  - `FIRST_CHUNK_WORDS` (default 40), `NEXT_CHUNK_WORDS` (140), `MIN_TAIL_WORDS` (12)
-  - `SNAC_TORCH_COMPILE` (0), `SNAC_MAX_BATCH` (64), `SNAC_BATCH_TIMEOUT_MS` (10)
+- **Critical for correct audio**: `MODEL_LOCAL_DIR` and `TOKENIZER_DIR` must point to the **exact HF snapshot used during engine build**
+- Optional knobs (optimized defaults in `scripts/env/`):
+  - Text chunking: `FIRST_CHUNK_WORDS` (18), `NEXT_CHUNK_WORDS` (120), `MIN_TAIL_WORDS` (12)
+  - Audio streaming: `MIN_TOKENS_FIRST` (28), `MIN_TOKENS_SUBSEQ` (28), `TOKENS_EVERY` (7, tokens per SNAC frame)  
+  - SNAC: `SNAC_TORCH_COMPILE` (0), `SNAC_MAX_BATCH` (64), `SNAC_BATCH_TIMEOUT_MS` (10)
   - vLLM: see `server/vllm_config.py` and `scripts/env/vllm.sh`
-  - TensorRT-LLM: `scripts/env/trtllm.sh` — key vars: `ENGINE_DIR`, `TRTLLM_MAX_*`, `TRTLLM_KV_FRACTION`, `ORPHEUS_BACKEND`
+  - TensorRT-LLM: `scripts/env/trtllm.sh` — key vars: `ENGINE_DIR`, `TRTLLM_MAX_*`, `TRTLLM_KV_FRACTION` (0.70)
 - Inspect current values:
 ```bash
 bash scripts/print-env.sh
 ```
+
+### Troubleshooting Static/White Noise Audio
+
+If you hear static or white noise instead of clear speech, this indicates a **tokenizer/engine mismatch**:
+
+1. **Build and serve with the same tokenizer directory**:
+   ```bash
+   # During engine build
+   MODEL_LOCAL_DIR=$PWD/models/orpheus_hf python build_trtllm_engine.py
+   
+   # During serving  
+   export MODEL_LOCAL_DIR=$PWD/models/orpheus_hf
+   export TOKENIZER_DIR=$MODEL_LOCAL_DIR  # Critical!
+   uvicorn server.server:app --host 0.0.0.0 --port 8000
+   ```
+
+2. **Check startup logs for validation**:
+   - Look for `✓ Tokenizer validation: XXXX <custom_token_*> entries found`
+   - Look for `✓ Special tokens validated` 
+   - Any `❌` or `⚠️` messages indicate a mismatch
+
+3. **If you still get static**, the system will fail fast with a clear error like:
+   ```
+   Out-of-range audio codes detected - tokenizer/engine mismatch!
+   ```
+   This replaces the previous behavior of silent corruption via modulo clamping.
 
 ### Logging & Monitoring
 

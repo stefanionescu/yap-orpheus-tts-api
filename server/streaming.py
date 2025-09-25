@@ -38,12 +38,12 @@ async def aiter_pcm_from_custom_tokens(engine: Any, prompt: str, voice: str, sp:
             return int(v) if (v is not None and str(v).strip() != "") else default
         except Exception:
             return default
-    # Early TTFB controls (TOKENS, not frames) - safer defaults for SNAC receptive field
-    MIN_TOKENS_FIRST  = _env_int("MIN_TOKENS_FIRST", 56)  # 8 frames * 7
-    MIN_TOKENS_SUBSEQ = _env_int("MIN_TOKENS_SUBSEQ", 28) # 4 frames * 7
-    TOKENS_EVERY      = _env_int("TOKENS_EVERY", 7)
+    # Early TTFB controls (TOKENS, not frames) - optimized for A100 performance
+    MIN_TOKENS_FIRST  = _env_int("MIN_TOKENS_FIRST", 28)  # 4 frames * 7, reduced for faster TTFB
+    MIN_TOKENS_SUBSEQ = _env_int("MIN_TOKENS_SUBSEQ", 28) # 4 frames * 7, balanced for quality  
+    TOKENS_EVERY      = _env_int("TOKENS_EVERY", 7)       # Tokens per SNAC frame (was hardcoded!)
 
-    TOKENS_PER_FRAME = 7
+    TOKENS_PER_FRAME = TOKENS_EVERY  # Now actually configurable!
     FIRST_FRAMES  = max(1, MIN_TOKENS_FIRST  // TOKENS_PER_FRAME)
     SUBSEQ_FRAMES = max(1, MIN_TOKENS_SUBSEQ // TOKENS_PER_FRAME)
     

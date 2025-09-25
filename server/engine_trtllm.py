@@ -518,10 +518,24 @@ class _BatchScheduler:
                                 else:
                                     audio_codes_delta.append(int(c))
                             
+                            # Validate audio tokens are flowing - fail early if mismatch detected
+                            if demux_step_idx == 1 and not audio_codes_delta:
+                                first_50 = (tok_matrix[0][:50] if tok_matrix and tok_matrix[0] else [])
+                                logger.error(
+                                    f"❌ No audio tokens detected in first step - tokenizer/engine mismatch! "
+                                    f"sample_ids={first_50} eos_speech_id={EO_SPEECH_ID} "
+                                    f"tokenizer_dir={self.tokenizer_dir}"
+                                )
+                                raise RuntimeError(
+                                    "No audio tokens detected in first generation step. "
+                                    "This indicates a tokenizer/engine mismatch. Ensure TOKENIZER_DIR "
+                                    "matches the directory used during engine build."
+                                )
+                            
                             # Early debug: show a sample of audio codes for the first few steps
                             if demux_step_idx <= 3 and audio_codes_delta:
                                 mn, mx = min(audio_codes_delta), max(audio_codes_delta)
-                                logger.debug(f"audio_delta_sample[:28]={audio_codes_delta[:28]} range=[{mn},{mx}] len={len(audio_codes_delta)}")
+                                logger.debug(f"✓ audio_delta_sample[:28]={audio_codes_delta[:28]} range=[{mn},{mx}] len={len(audio_codes_delta)}")
 
                             # Update cumulative text using ONLY the delta after prompt
                             req.cumulative_text = _decode_full_text(
@@ -577,17 +591,21 @@ class _VLLMLikeEngine:
 
         self.model_id = os.getenv("MODEL_ID", "canopylabs/orpheus-3b-0.1-ft")
         self.engine_dir = os.getenv("ENGINE_DIR", "engine/orpheus_a100_fp16_kvint8")
+        # Use TOKENIZER_DIR to ensure tokenizer matches engine build
+        self.tokenizer_dir = os.getenv("TOKENIZER_DIR", 
+                                       os.getenv("MODEL_LOCAL_DIR", self.model_id))
         self.max_batch_size = int(os.getenv("TRTLLM_MAX_BATCH", "24"))
         self.max_input_len = int(os.getenv("TRTLLM_MAX_INPUT", "160"))
         self.max_output_len = int(os.getenv("TRTLLM_MAX_OUTPUT", "2048"))
         self.kv_fraction = float(os.getenv("TRTLLM_KV_FRACTION", "0.90"))
 
         logger.info(f"TRT-LLM config: model_id={self.model_id}, engine_dir={self.engine_dir}, "
-                   f"max_batch={self.max_batch_size}, max_input={self.max_input_len}, "
-                   f"max_output={self.max_output_len}, kv_fraction={self.kv_fraction}")
+                   f"tokenizer_dir={self.tokenizer_dir}, max_batch={self.max_batch_size}, "
+                   f"max_input={self.max_input_len}, max_output={self.max_output_len}, "
+                   f"kv_fraction={self.kv_fraction}")
 
-        logger.debug("Loading tokenizer...")
-        self.tokenizer = AutoTokenizer.from_pretrained(self.model_id)
+        logger.debug(f"Loading tokenizer from: {self.tokenizer_dir}")
+        self.tokenizer = AutoTokenizer.from_pretrained(self.tokenizer_dir)
         
         try:
             logger.info(
@@ -595,8 +613,26 @@ class _VLLMLikeEngine:
                 f"eos={self.tokenizer.eos_token_id}, pad={self.tokenizer.pad_token_id}, "
                 f"unk={getattr(self.tokenizer, 'unk_token_id', None)}"
             )
-        except Exception:
-            pass
+            # Validate tokenizer has audio tokens
+            added_vocab = getattr(self.tokenizer, "get_added_vocab", lambda: {})()
+            custom_tokens = [k for k in added_vocab.keys() if k.startswith("<custom_token_")]
+            logger.info(f"✓ Tokenizer validation: {len(custom_tokens)} <custom_token_*> entries found")
+            if len(custom_tokens) == 0:
+                logger.warning("⚠️  No <custom_token_*> entries in tokenizer - possible mismatch!")
+                
+            # Test key special tokens decode correctly
+            try:
+                from .prompts import EO_SPEECH_ID, SOSPEECH_ID, EOTXT_ID
+                logger.info(
+                    f"Special tokens: EO_SPEECH_ID={EO_SPEECH_ID}->'{self.tokenizer.decode([EO_SPEECH_ID])}', "
+                    f"SOSPEECH_ID={SOSPEECH_ID}->'{self.tokenizer.decode([SOSPEECH_ID])}', "
+                    f"EOTXT_ID={EOTXT_ID}->'{self.tokenizer.decode([EOTXT_ID])}'"
+                )
+            except Exception as e:
+                logger.warning(f"Could not validate special tokens: {e}")
+                
+        except Exception as e:
+            logger.warning(f"Tokenizer validation failed: {e}")
 
         # Ensure pad_token_id exists and is NOT equal to EOS
         if (self.tokenizer.pad_token_id is None) or (self.tokenizer.pad_token_id == self.tokenizer.eos_token_id):

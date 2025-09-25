@@ -8,18 +8,48 @@ ALIASES = {
 
 MODEL_ID = os.getenv("MODEL_ID", "canopylabs/orpheus-3b-0.1-ft")
 
-# Cache tokenizer at import time
-_tok = AutoTokenizer.from_pretrained(MODEL_ID)
+# Use TOKENIZER_DIR to match engine build
+TOKENIZER_DIR = os.getenv("TOKENIZER_DIR", os.getenv("MODEL_LOCAL_DIR", MODEL_ID))
 
-# Canonical special IDs
-SOH_ID = 128259           # START_OF_HUMAN (not used in new prompt)
-SOT_ID = 128000           # <|begin_of_text|>
-EOTXT_ID = 128009         # <|eot_id|>; same numeric as EOS for Llama-3 style
-EOH_ID = 128260           # END_OF_HUMAN (not used in new prompt)
-SOAI_ID = 128261          # START_OF_AI (not used in new prompt)
-SOSPEECH_ID = 128257      # START_OF_SPEECH (not used in new prompt)
-EO_SPEECH_ID = 128258     # <|end_of_speech|>
-EOS_ID = 128009
+# Cache tokenizer at import time from correct location
+_tok = AutoTokenizer.from_pretrained(TOKENIZER_DIR)
+
+# Derive special token IDs from tokenizer (robust approach)
+def _special_token_id(token_string: str) -> int:
+    """Get token ID for special token, with fallback if not found"""
+    try:
+        return int(_tok.convert_tokens_to_ids(token_string))
+    except Exception:
+        # Fallback: try to find in added vocab
+        added_vocab = getattr(_tok, "get_added_vocab", lambda: {})()
+        if token_string in added_vocab:
+            return int(added_vocab[token_string])
+        raise RuntimeError(f"Special token '{token_string}' not found in tokenizer")
+
+# Robust special token IDs derived from tokenizer
+SOT_ID = _tok.bos_token_id if _tok.bos_token_id is not None else _special_token_id("<|begin_of_text|>")
+EOTXT_ID = _special_token_id("<|eot_id|>")          # llama3-specific eot id  
+SOSPEECH_ID = _special_token_id("<|start_of_speech|>")
+EO_SPEECH_ID = _special_token_id("<|end_of_speech|>")
+EOS_ID = EOTXT_ID  # Same as eot_id for Llama-3 style
+
+# Legacy IDs (not used in new prompt but kept for compatibility)
+SOH_ID = 128259           # START_OF_HUMAN 
+EOH_ID = 128260           # END_OF_HUMAN 
+SOAI_ID = 128261          # START_OF_AI 
+
+# Validate special tokens decode correctly
+try:
+    assert _tok.decode([EO_SPEECH_ID]) == "<|end_of_speech|>", f"EO_SPEECH_ID decode failed: {_tok.decode([EO_SPEECH_ID])}"
+    assert _tok.decode([SOSPEECH_ID]) == "<|start_of_speech|>", f"SOSPEECH_ID decode failed: {_tok.decode([SOSPEECH_ID])}"
+    assert _tok.decode([EOTXT_ID]) == "<|eot_id|>", f"EOTXT_ID decode failed: {_tok.decode([EOTXT_ID])}"
+    print(f"✓ Special tokens validated: tokenizer_dir={TOKENIZER_DIR}")
+    print(f"  EO_SPEECH_ID={EO_SPEECH_ID} -> '{_tok.decode([EO_SPEECH_ID])}'")
+    print(f"  SOSPEECH_ID={SOSPEECH_ID} -> '{_tok.decode([SOSPEECH_ID])}'") 
+    print(f"  EOTXT_ID={EOTXT_ID} -> '{_tok.decode([EOTXT_ID])}'")
+except Exception as e:
+    print(f"⚠️  Special token validation failed: {e}")
+    raise
 
 PRIME = [3, 4, 5, 1]       # tiny kick to enter audio manifold
 
