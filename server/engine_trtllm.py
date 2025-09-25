@@ -4,8 +4,8 @@ os.environ.setdefault("NVIDIA_TF32_OVERRIDE", "1")
 import threading
 import asyncio
 import time
-from dataclasses import dataclass, field
-from typing import Any, Iterable, List, Optional, Dict
+from dataclasses import dataclass
+from typing import Any, Iterable, List, Optional
 
 from transformers import AutoTokenizer
 import numpy as np
@@ -497,11 +497,26 @@ class _BatchScheduler:
                             raw = tok_matrix[i] if i < len(tok_matrix) else []
                             toks = _flatten_ints(raw)           # Make it a flat List[int]
 
-                            # Only take the newly generated tail since last step
-                            prev = getattr(req, "_seen_len", 0)
-                            cur = len(toks)
-                            delta_ids = toks[prev:cur]
-                            req._seen_len = cur
+                            # Decide once per request: TRT step tokens are ABSOLUTE (prompt+gen)
+                            # or DELTA-ONLY (just new tokens). Then slice deltas correctly.
+                            if not hasattr(req, "_stream_mode"):
+                                # Compare head of step with tail of prompt to detect ABSOLUTE mode.
+                                prompt_tail = req.tok_ids[-min(len(req.tok_ids), 32):].tolist()
+                                head = toks[:len(prompt_tail)]
+                                req._stream_mode = (
+                                    "absolute" if (len(toks) >= req.prompt_len and head == prompt_tail)
+                                    else "delta"
+                                )
+                                # Initialize seen counter for ABSOLUTE mode; not used for DELTA mode.
+                                req._seen_len = req.prompt_len if req._stream_mode == "absolute" else 0
+
+                            if req._stream_mode == "absolute":
+                                prev = getattr(req, "_seen_len", req.prompt_len)
+                                delta_ids = toks[prev:]
+                                req._seen_len = len(toks)
+                            else:
+                                # delta-only stream: the whole step is new
+                                delta_ids = toks
 
                             # Map token id -> audio code (no regex)
                             if not hasattr(req, "_audio_id2code"):
@@ -616,6 +631,7 @@ class _VLLMLikeEngine:
             # Validate tokenizer has audio tokens
             added_vocab = getattr(self.tokenizer, "get_added_vocab", lambda: {})()
             custom_tokens = [k for k in added_vocab.keys() if k.startswith("<custom_token_")]
+            logger.info(f"custom_token_count={len(custom_tokens)} tokenizer_dir={self.tokenizer_dir}")
             logger.info(f"✓ Tokenizer validation: {len(custom_tokens)} <custom_token_*> entries found")
             if len(custom_tokens) == 0:
                 logger.warning("⚠️  No <custom_token_*> entries in tokenizer - possible mismatch!")
