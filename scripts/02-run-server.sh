@@ -37,5 +37,5 @@ fi
 
 echo "[run] Starting FastAPI on ${HOST:-0.0.0.0}:${PORT:-8000}"
 CMD=$(build_uvicorn_cmd)
-start_background "$CMD" ".run/server.pid" "logs/server.log"
+start_server "$CMD" ".run/server.pid" "logs/server.log"
 

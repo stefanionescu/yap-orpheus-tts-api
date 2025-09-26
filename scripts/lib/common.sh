@@ -86,6 +86,35 @@ start_background() {
   exec tail -n +1 -F "$log_file"
 }
 
+# Start a command in synchronous/foreground mode
+# Usage: start_foreground "<cmd>" [log_file]
+start_foreground() {
+  local cmd="$1"
+  local log_file="${2:-logs/server.log}"
+
+  mkdir -p "$(dirname "$log_file")"
+  echo "[run] Starting server in foreground mode."
+  echo "[run] Logs will also be written to $log_file"
+  echo "[run] Press Ctrl-C to stop the server."
+  
+  # Run in foreground while also tee-ing to log file
+  bash -lc "$cmd" 2>&1 | tee "$log_file"
+}
+
+# Start server either in background or foreground based on ORPHEUS_SYNC_MODE
+# Usage: start_server "<cmd>" [pid_file] [log_file]
+start_server() {
+  local cmd="$1"
+  local pid_file="${2:-.run/server.pid}"
+  local log_file="${3:-logs/server.log}"
+  
+  if [ "${ORPHEUS_SYNC_MODE:-false}" = "true" ]; then
+    start_foreground "$cmd" "$log_file"
+  else
+    start_background "$cmd" "$pid_file" "$log_file"
+  fi
+}
+
 # Source all .sh files from a directory if it exists
 source_env_dir() {
   local dir="$1"

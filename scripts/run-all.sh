@@ -1,6 +1,64 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Usage: ./scripts/run-all.sh [--sync|--foreground] [--backend <backend>] [<backend>]
+# By default, runs server in background with auto-tailing logs
+# Use --sync or --foreground to run server in foreground (blocking)
+# Backend options: trtllm (default), vllm
+
+show_usage() {
+  echo "Usage: $0 [OPTIONS] [BACKEND]"
+  echo ""
+  echo "Options:"
+  echo "  --sync, --foreground    Run server in foreground (blocking) mode"
+  echo "  --backend BACKEND       Specify backend (trtllm, vllm)"
+  echo "  -h, --help             Show this help message"
+  echo ""
+  echo "Arguments:"
+  echo "  BACKEND                Backend to use (trtllm, vllm). Default: trtllm"
+  echo ""
+  echo "Examples:"
+  echo "  $0                     # Run with defaults (trtllm backend, background mode)"
+  echo "  $0 --sync              # Run in foreground mode"
+  echo "  $0 --sync vllm         # Run vllm backend in foreground"
+  echo "  $0 --backend trtllm    # Explicitly specify trtllm backend"
+  echo ""
+  echo "Environment Variables:"
+  echo "  HF_TOKEN               Required Hugging Face token"
+  echo "  ORPHEUS_BACKEND        Default backend if not specified"
+}
+
+# Parse command line arguments
+SYNC_MODE=false
+BACKEND=""
+
+while [[ $# -gt 0 ]]; do
+  case $1 in
+    --sync|--foreground)
+      SYNC_MODE=true
+      shift
+      ;;
+    --backend)
+      BACKEND="$2"
+      shift 2
+      ;;
+    -h|--help)
+      show_usage
+      exit 0
+      ;;
+    *)
+      # Assume it's the backend if no flag prefix
+      if [[ "$1" != --* ]] && [ -z "$BACKEND" ]; then
+        BACKEND="$1"
+      fi
+      shift
+      ;;
+  esac
+done
+
+# Export sync mode for child scripts
+export ORPHEUS_SYNC_MODE="$SYNC_MODE"
+
 # HF_TOKEN must be set by the deployment environment (no .env required)
 if [ -z "${HF_TOKEN:-}" ]; then
   echo "[run-all] ERROR: HF_TOKEN not set. Export HF_TOKEN in the shell." >&2
@@ -18,8 +76,14 @@ if [ -d .venv ]; then
 fi
 bash scripts/01-install.sh
 
-BACKEND=${1:-${ORPHEUS_BACKEND:-trtllm}}
+BACKEND=${BACKEND:-${ORPHEUS_BACKEND:-trtllm}}
 export ORPHEUS_BACKEND="$BACKEND"
+
+if [ "$SYNC_MODE" = true ]; then
+  echo "[run-all] Mode: synchronous (foreground)"
+else
+  echo "[run-all] Mode: background with auto-tail (default)"
+fi
 if [ "$BACKEND" != "vllm" ]; then
   # Build engine if missing
   ENGINE_DIR=${ENGINE_DIR:-engine/orpheus_a100_fp16_kvint8}
