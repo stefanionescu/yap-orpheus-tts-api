@@ -261,6 +261,16 @@ class _BatchScheduler:
             except Exception:
                 pass
 
+            # Compose stop words: prefer provided stop ids, else default to [EO_SPEECH_ID] and [eot_id]
+            default_stops = [[EO_SPEECH_ID]]
+            try:
+                # include <|eot_id|> as a secondary stop to prevent runaway text
+                from .prompts import EOTXT_ID
+                default_stops = [[EO_SPEECH_ID], [int(EOTXT_ID)]]
+            except Exception:
+                pass
+            stop_words_list = ([[sid] for sid in stop_ids] if stop_ids else default_stops)
+
             gen_kwargs = dict(
                 max_new_tokens=max_new_tokens,
                 temperature=temperature,
@@ -271,8 +281,10 @@ class _BatchScheduler:
                 # Tell TRT-LLM exactly what special IDs are to avoid ambiguity
                 pad_id=pad_id,
                 bos_id=bos_id,
-                end_id=EO_SPEECH_ID,                 # <- keep
-                stop_words_list=[[EO_SPEECH_ID]],    # <- force as well
+                end_id=EO_SPEECH_ID,
+                stop_words_list=stop_words_list,
+                # Prefer token-ids in steps if supported by the runtime
+                # detokenize=False may be required on some builds; pass only if accepted below
             )
 
             logger.debug(f"Batch generation: temp={temperature}, top_p={top_p}, "
@@ -499,39 +511,10 @@ class _BatchScheduler:
                                 # delta-only stream: the whole step is new
                                 delta_ids = toks
 
-                            # Map token id -> audio code (no regex)
-                            if not hasattr(req, "_audio_id2code"):
-                                req._audio_id2code = build_audio_id_lookup(self.tokenizer)
-
-                            audio_codes_delta = []
-                            aid2c = req._audio_id2code
-                            for t in delta_ids:                      # t is a token id
-                                c = aid2c.get(t)
-                                if c is None:
-                                    continue
-                                if isinstance(c, (list, tuple)):
-                                    audio_codes_delta.extend(int(x) for x in c)   # flatten if needed
-                                else:
-                                    audio_codes_delta.append(int(c))
-                            
-                            # Validate audio tokens are flowing - fail early if mismatch detected
-                            if demux_step_idx == 1 and not audio_codes_delta:
-                                first_50 = (tok_matrix[0][:50] if tok_matrix and tok_matrix[0] else [])
-                                logger.error(
-                                    f"❌ No audio tokens detected in first step - tokenizer/engine mismatch! "
-                                    f"sample_ids={first_50} eos_speech_id={EO_SPEECH_ID} "
-                                    f"tokenizer_dir={self.tokenizer_dir}"
-                                )
-                                raise RuntimeError(
-                                    "No audio tokens detected in first generation step. "
-                                    "This indicates a tokenizer/engine mismatch. Ensure TOKENIZER_DIR "
-                                    "matches the directory used during engine build."
-                                )
-                            
-                            # Early debug: show a sample of audio codes for the first few steps
-                            if demux_step_idx <= 3 and audio_codes_delta:
-                                mn, mx = min(audio_codes_delta), max(audio_codes_delta)
-                                logger.debug(f"✓ audio_delta_sample[:28]={audio_codes_delta[:28]} range=[{mn},{mx}] len={len(audio_codes_delta)}")
+                            # Early debug: show a sample of delta token ids
+                            if demux_step_idx <= 3 and delta_ids:
+                                mn, mx = min(delta_ids), max(delta_ids)
+                                logger.debug(f"token_ids_delta[:28]={delta_ids[:28]} range=[{mn},{mx}] len={len(delta_ids)}")
 
                             # Update cumulative text using ONLY the delta after prompt
                             req.cumulative_text = _decode_full_text(
@@ -542,11 +525,14 @@ class _BatchScheduler:
                             )
 
                             # Debug log to verify delta processing
-                            logger.debug(f"delta_ids_tail={delta_ids[-12:]}, audio_delta_len={len(audio_codes_delta)}")
+                            logger.debug(f"delta_ids_tail={delta_ids[-12:]}, token_delta_len={len(delta_ids)}")
 
                             await req.fut_q.put({
                                 "text": req.cumulative_text,
-                                "audio_codes_delta": audio_codes_delta
+                                # Provide raw token ids delta; downstream will normalize using known offsets
+                                "token_ids_delta": delta_ids,
+                                # Keep audio_codes_delta for compatibility, but leave empty
+                                "audio_codes_delta": []
                             })
                     else:
                         # Fall back to texts/text (string) and broadcast if needed

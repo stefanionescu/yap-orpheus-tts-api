@@ -1,12 +1,13 @@
 import asyncio
 import os
+import re
 import uuid
 from typing import Iterator, Any
 
 import numpy as np
 import torch
 
-from .prompts import build_prompt, resolve_voice
+from .prompts import build_prompt, resolve_voice, CODE_END, CODE_OFFSET, CODES_PER_LEVEL, TOKENS_PER_FRAME
 from .core.snac_batcher import get_snac_batched, SNAC_DEVICE
 from .core.logging_config import get_logger
 
@@ -37,28 +38,43 @@ async def aiter_pcm_from_custom_tokens(engine: Any, prompt: str, voice: str, sp:
             return int(v) if (v is not None and str(v).strip() != "") else default
         except Exception:
             return default
-            
-    def _split_snac_lanes(arr, tokens_per_frame=7):
+
+    # --- Correct Orpheus audio token handling ---
+    AUDIO_RE = re.compile(r"<custom_token_(\d+)>")
+
+    def audio_codes_from_token_ids(token_ids: list[int]) -> list[int]:
+        """Filter and normalize token IDs to 'global' audio codes [0 .. 7*4096).
+        Stops at CODE_END if present.
         """
-        Split audio tokens into SNAC's 3 residual streams (q0|q1|q2).
-        ORPHEUS_LANE_ORDER := "0|1,2|3,4,5,6" (contiguous default)
-        Some checkpoints use interleaved: "0|1,4|2,3,5,6" 
+        out: list[int] = []
+        upper = CODE_OFFSET + 7 * CODES_PER_LEVEL
+        for tid in token_ids:
+            if tid == CODE_END:
+                break
+            if CODE_OFFSET <= tid < upper:
+                out.append(int(tid - CODE_OFFSET))
+        return out
+
+    def split_to_snac_lanes(global_codes: list[int]) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """Split interleaved global codes into SNAC lanes q0, q1, q2.
+        Returns lane-local code indices in [0, 4096).
         """
-        order = os.getenv("ORPHEUS_LANE_ORDER", "0|1,2|3,4,5,6")
-        try:
-            groups = [list(map(int, g.split(","))) for g in order.split("|")]
-            assert len(groups) == 3, f"Expected 3 groups, got {len(groups)}"
-            assert len(groups[0]) == 1, f"Group 0 should have 1 element, got {len(groups[0])}"
-            assert len(groups[1]) == 2, f"Group 1 should have 2 elements, got {len(groups[1])}"  
-            assert len(groups[2]) == 4, f"Group 2 should have 4 elements, got {len(groups[2])}"
-        except Exception as e:
-            logger.warning(f"Invalid ORPHEUS_LANE_ORDER '{order}': {e}, using default")
-            groups = [[0], [1, 2], [3, 4, 5, 6]]  # contiguous default
-            
-        codes0_np = arr[:, groups[0]].reshape(-1)       # [F] 
-        codes1_np = arr[:, groups[1]].reshape(-1)       # [2F]
-        codes2_np = arr[:, groups[2]].reshape(-1)       # [4F]
-        return codes0_np, codes1_np, codes2_np
+        if not global_codes:
+            return np.asarray([], dtype=np.int64), np.asarray([], dtype=np.int64), np.asarray([], dtype=np.int64)
+        arr = np.asarray(global_codes, dtype=np.int64).reshape(-1, TOKENS_PER_FRAME)  # [F,7]
+        # Subtract lane offsets then pack with the correct interleave: 0 | 1,4 | 2,3,5,6
+        q0 = (arr[:, 0] - 0 * CODES_PER_LEVEL).reshape(-1)
+        q1 = np.stack([
+            (arr[:, 1] - 1 * CODES_PER_LEVEL),
+            (arr[:, 4] - 4 * CODES_PER_LEVEL),
+        ], axis=1).reshape(-1)
+        q2 = np.stack([
+            (arr[:, 2] - 2 * CODES_PER_LEVEL),
+            (arr[:, 3] - 3 * CODES_PER_LEVEL),
+            (arr[:, 5] - 5 * CODES_PER_LEVEL),
+            (arr[:, 6] - 6 * CODES_PER_LEVEL),
+        ], axis=1).reshape(-1)
+        return q0, q1, q2
         
     def _apply_crossfade(pcm_new, prev_tail_state, crossfade_samples=256):
         """
@@ -112,13 +128,12 @@ async def aiter_pcm_from_custom_tokens(engine: Any, prompt: str, voice: str, sp:
         return output_pcm, prev_tail_state
         
     # Early TTFB controls (TOKENS, not frames) - AGGRESSIVELY optimized for minimal latency
-    MIN_TOKENS_FIRST  = _env_int("MIN_TOKENS_FIRST", 7)   # 1 frame only! Minimal TTFB 
-    MIN_TOKENS_SUBSEQ = _env_int("MIN_TOKENS_SUBSEQ", 28) # 4 frames * 7, balanced for quality  
-    TOKENS_EVERY      = _env_int("TOKENS_EVERY", 7)       # Tokens per SNAC frame (was hardcoded!)
+    tokens_per_frame = _env_int("TOKENS_EVERY", TOKENS_PER_FRAME)  # default to model constant
+    MIN_TOKENS_FIRST  = _env_int("MIN_TOKENS_FIRST", tokens_per_frame)   # 1 frame only! Minimal TTFB 
+    MIN_TOKENS_SUBSEQ = _env_int("MIN_TOKENS_SUBSEQ", 4 * tokens_per_frame) # 4 frames, balanced for quality  
 
-    TOKENS_PER_FRAME = TOKENS_EVERY  # Now actually configurable!
-    FIRST_FRAMES  = max(1, MIN_TOKENS_FIRST  // TOKENS_PER_FRAME)
-    SUBSEQ_FRAMES = max(1, MIN_TOKENS_SUBSEQ // TOKENS_PER_FRAME)
+    FIRST_FRAMES  = max(1, MIN_TOKENS_FIRST  // tokens_per_frame)
+    SUBSEQ_FRAMES = max(1, MIN_TOKENS_SUBSEQ // tokens_per_frame)
     
     logger.debug(f"[{session_id}] Loading SNAC model...")
     snacx = get_snac_batched()
@@ -151,12 +166,14 @@ async def aiter_pcm_from_custom_tokens(engine: Any, prompt: str, voice: str, sp:
         generation_step += 1
         if isinstance(out, dict):
             piece = out.get("text", "")
+            delta_token_ids = out.get("token_ids_delta")
             codes = out.get("audio_codes_delta", [])
         else:
             # Back-compat: your old _CompatResult path
             outs = getattr(out, "outputs", []) or []
             piece = outs[0].text if outs else ""
-            codes = []  # no id path, but we don't rely on regex anymore
+            delta_token_ids = None
+            codes = []  # no id path; we'll rely on regex
             
         # Only process newly appended text to keep sequence monotonic
         if len(piece) <= prev_len:
@@ -176,46 +193,41 @@ async def aiter_pcm_from_custom_tokens(engine: Any, prompt: str, voice: str, sp:
 
         saw_eos = EOSPEECH_STR and (EOSPEECH_STR in piece)  # use full piece for safety
 
-        # Use audio codes from IDs instead of regex extraction
-        tokens_in_delta = codes
-        
-        # Auto-coerce if they look like token ids (>=4096) or raw <custom_token_N> numbers
-        if tokens_in_delta and (max(tokens_in_delta) >= 4096 or min(tokens_in_delta) < 0):
+        # Primary path: use token IDs if provided
+        global_codes_delta: list[int] = []
+        if isinstance(delta_token_ids, (list, tuple)) and delta_token_ids:
             try:
-                from .core.custom_tokens import build_audio_id_lookup, turn_token_into_id
-                id2code = build_audio_id_lookup(tok) if tok is not None else {}
-                fixed = []
-                # total audio tokens seen so far determines lane = (global_index % 7)
-                global_idx = tokens_processed  # we already increment this when appending
-                for i, tid in enumerate(tokens_in_delta):
-                    # Map token-id -> custom_token_N (if present)
-                    n = id2code.get(int(tid))
-                    if n is None:
-                        continue
-                    fixed.append(turn_token_into_id(n, index=global_idx + i))
-                tokens_in_delta = fixed
-                logger.debug(f"[{session_id}] Auto-coerced {len(codes)} token IDs to {len(fixed)} audio codes")
-            except Exception as e:
-                logger.warning(f"[{session_id}] Token ID coercion failed: {e}")
-                pass  # fall back; validator below will catch range issues
-                
-        try:
-            logger.debug(f"[{session_id}] audio_tokens_in_delta={len(tokens_in_delta)}")
-        except Exception:
-            pass
-        for n in tokens_in_delta:                 # n are audio code indices (not token ids)
-            buf_codes.append(int(n))
-            tokens_processed += 1
+                global_codes_delta = audio_codes_from_token_ids([int(x) for x in delta_token_ids])
+            except Exception:
+                global_codes_delta = []
+
+        # Fallback path: regex extraction from delta text
+        if (not global_codes_delta) and delta:
+            try:
+                for m in AUDIO_RE.finditer(delta):
+                    tid = int(m.group(1))
+                    if CODE_OFFSET <= tid < CODE_OFFSET + 7 * CODES_PER_LEVEL:
+                        global_codes_delta.append(tid - CODE_OFFSET)
+            except Exception:
+                pass
+
+        if global_codes_delta:
+            try:
+                logger.debug(f"[{session_id}] audio_tokens_in_delta={len(global_codes_delta)}")
+            except Exception:
+                pass
+            buf_codes.extend(global_codes_delta)
+            tokens_processed += len(global_codes_delta)
 
         # Extra sanity logging for first few steps
         if generation_step <= 3:
             total = len(buf_codes)
-            rem = (total - emit_from) % TOKENS_PER_FRAME
-            logger.debug(f"[{session_id}] buffered_codes={total}, ready_frames={(total-emit_from)//7}, leftover_tokens={rem}")
+            rem = (total - emit_from) % tokens_per_frame
+            logger.debug(f"[{session_id}] buffered_codes={total}, ready_frames={(total-emit_from)//tokens_per_frame}, leftover_tokens={rem}")
 
         # try to emit whole NEW frames only
-        while (len(buf_codes) - emit_from) >= TOKENS_PER_FRAME:
-            frames_ready = (len(buf_codes) - emit_from) // TOKENS_PER_FRAME
+        while (len(buf_codes) - emit_from) >= tokens_per_frame:
+            frames_ready = (len(buf_codes) - emit_from) // tokens_per_frame
             if not first_emitted:
                 need = FIRST_FRAMES
             else:
@@ -225,21 +237,17 @@ async def aiter_pcm_from_custom_tokens(engine: Any, prompt: str, voice: str, sp:
 
             # Tentative slice — do NOT advance emit_from yet
             start = emit_from
-            end   = emit_from + need * TOKENS_PER_FRAME
-            chunk_codes = buf_codes[start:end]
-
-            assert all(isinstance(x, (int, np.integer)) and 0 <= x < 4096 for x in chunk_codes), \
-                   f"Bad codes in chunk: {chunk_codes[:14]}"
+            end   = emit_from + need * tokens_per_frame
+            chunk_global_codes = buf_codes[start:end]
 
             # Guard: codes must form full frames (multiples of 7)
-            if ((len(chunk_codes) % TOKENS_PER_FRAME) != 0):
-                logger.error(f"[{session_id}] Non-multiple-of-{TOKENS_PER_FRAME} codes; buffering more (len={len(chunk_codes)})")
+            if ((len(chunk_global_codes) % tokens_per_frame) != 0):
+                logger.error(f"[{session_id}] Non-multiple-of-{TOKENS_PER_FRAME} codes; buffering more (len={len(chunk_global_codes)})")
                 break
-            arr = np.asarray(chunk_codes, dtype=np.int64).reshape(-1, TOKENS_PER_FRAME)  # [F, 7]
-            F = arr.shape[0]
+            F = len(chunk_global_codes) // tokens_per_frame
 
-            # Split into three residual streams using configurable lane order
-            codes0_np, codes1_np, codes2_np = _split_snac_lanes(arr, TOKENS_PER_FRAME)
+            # Split into three residual streams using the correct interleaved mapping
+            codes0_np, codes1_np, codes2_np = split_to_snac_lanes(chunk_global_codes)
 
             codes_0 = torch.from_numpy(codes0_np).unsqueeze(0).to(SNAC_DEVICE, dtype=torch.long)  # [1, F]
             codes_1 = torch.from_numpy(codes1_np).unsqueeze(0).to(SNAC_DEVICE, dtype=torch.long)  # [1, 2F]
@@ -260,42 +268,12 @@ async def aiter_pcm_from_custom_tokens(engine: Any, prompt: str, voice: str, sp:
                     return None
                 return a.astype(np.float32).reshape(-1)
 
-            # Decode once; if first emission is weak, try alternate lane layout once
+            # Decode once with the correct mapping
             async def _decode_once(c0, c1, c2):
                 a = await snacx.decode_codes([c0, c1, c2])
                 return _normalize_audio(a)
 
-            def _rms(x: np.ndarray) -> float:
-                if x is None or x.size == 0:
-                    return 0.0
-                x = np.clip(x.astype(np.float32).reshape(-1), -1.0, 1.0)
-                return float(np.sqrt(np.mean(x * x)))
-
             audio = await _decode_once(codes_0, codes_1, codes_2)
-            if not first_emitted:
-                rms1 = _rms(audio)
-                if rms1 < 0.01:
-                    current = os.getenv("ORPHEUS_LANE_ORDER", "0|1,2|3,4,5,6")
-                    alt = "0|1,2|3,4,5,6"
-                    if current == "0|1,2|3,4,5,6":
-                        alt = "0|1,4|2,3,5,6"
-                    else:
-                        alt = "0|1,2|3,4,5,6"
-                    os.environ["ORPHEUS_LANE_ORDER"] = alt
-                    try:
-                        codes0_np, codes1_np, codes2_np = _split_snac_lanes(arr, TOKENS_PER_FRAME)
-                        c0 = torch.from_numpy(codes0_np).unsqueeze(0).to(SNAC_DEVICE, dtype=torch.long)
-                        c1 = torch.from_numpy(codes1_np).unsqueeze(0).to(SNAC_DEVICE, dtype=torch.long)
-                        c2 = torch.from_numpy(codes2_np).unsqueeze(0).to(SNAC_DEVICE, dtype=torch.long)
-                        audio2 = await _decode_once(c0, c1, c2)
-                        rms2 = _rms(audio2)
-                        if rms2 > rms1:
-                            logger.info(f"[{session_id}] Switched ORPHEUS_LANE_ORDER to '{alt}' based on RMS heuristic")
-                            audio = audio2
-                        else:
-                            os.environ["ORPHEUS_LANE_ORDER"] = current  # revert
-                    except Exception:
-                        os.environ["ORPHEUS_LANE_ORDER"] = current  # revert on any failure
 
             if audio is None:
                 # Do NOT advance emit_from; accumulate more frames and try again later
@@ -320,17 +298,14 @@ async def aiter_pcm_from_custom_tokens(engine: Any, prompt: str, voice: str, sp:
     # flush any remaining full frames (ignore leftovers < 7 tokens)  
     try:
         pending = len(buf_codes) - emit_from
-        if pending >= TOKENS_PER_FRAME and pcm_count == 0:
-            frames_to_emit = pending // TOKENS_PER_FRAME
+        if pending >= tokens_per_frame and pcm_count == 0:
+            frames_to_emit = pending // tokens_per_frame
             start = emit_from
-            end = emit_from + frames_to_emit * TOKENS_PER_FRAME
+            end = emit_from + frames_to_emit * tokens_per_frame
             chunk_codes = buf_codes[start:end]
             
-            arr = np.asarray(chunk_codes, dtype=np.int64).reshape(-1, TOKENS_PER_FRAME)  # [F, 7]
-            F = arr.shape[0]
-
-            # Split into three residual streams using configurable lane order
-            codes0_np, codes1_np, codes2_np = _split_snac_lanes(arr, TOKENS_PER_FRAME)
+            # Split into three residual streams using the correct interleaved mapping
+            codes0_np, codes1_np, codes2_np = split_to_snac_lanes(chunk_codes)
 
             codes_0 = torch.from_numpy(codes0_np).unsqueeze(0).to(SNAC_DEVICE, dtype=torch.long)  # [1, F]
             codes_1 = torch.from_numpy(codes1_np).unsqueeze(0).to(SNAC_DEVICE, dtype=torch.long)  # [1, 2F]

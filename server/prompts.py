@@ -21,6 +21,14 @@ SOSPEECH_ID = 128257      # <custom_token_1> == Start of Speech in Orpheus
 EO_SPEECH_ID = 128258     # End of Speech
 EOS_ID = EOTXT_ID         # Same as eot_id for Llama-3 style
 
+# Audio code layout (7 codebooks × 4096 codes each), first real audio token offset
+# These constants are used for extracting audio from token ids and splitting into SNAC lanes
+CODE_START = SOSPEECH_ID           # alias for readability
+CODE_END = EO_SPEECH_ID            # end-of-speech sentinel
+CODE_OFFSET = 128266               # first actual audio code token id
+CODES_PER_LEVEL = 4096             # size of each residual codebook
+TOKENS_PER_FRAME = 7               # Orpheus emits 7 audio tokens per audio frame
+
 # Legacy IDs (not used in new prompt but kept for compatibility)
 SOH_ID = 128259           # START_OF_HUMAN 
 EOH_ID = 128260           # END_OF_HUMAN 
