@@ -49,7 +49,7 @@ except Exception as e:
     print(f"⚠️  Tokenizer validation failed: {e}")
     # Don't crash on validation - let the engine handle it
 
-PRIME = [3, 4, 5, 1]       # tiny kick to enter audio manifold
+PRIME = [3, 4, 5, 6]       # do not use 1 or 2 (reserved SOS/EOS)
 
 def resolve_voice(v: str) -> str:
     if not v:
@@ -59,8 +59,9 @@ def resolve_voice(v: str) -> str:
 
 def build_prompt(text: str, voice: str = "tara") -> str:
     v = resolve_voice(voice)
+    bos = _tok.decode([SOT_ID], skip_special_tokens=False)
     eot = _tok.decode([EOTXT_ID], skip_special_tokens=False)
     sos = _tok.decode([SOSPEECH_ID], skip_special_tokens=False)
     primes = "".join(f"<custom_token_{n}>" for n in PRIME)
-    # Minimal, LLama3-style text prompt:
-    return f"{v}: {text}{eot}{sos}{primes}"
+    # Include BOS, end-of-text for the instruction, then SOS + safe primes
+    return f"{bos}{v}: {text}{eot}{sos}{primes}"

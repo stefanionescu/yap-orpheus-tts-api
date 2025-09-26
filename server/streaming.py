@@ -231,6 +231,10 @@ async def aiter_pcm_from_custom_tokens(engine: Any, prompt: str, voice: str, sp:
             assert all(isinstance(x, (int, np.integer)) and 0 <= x < 4096 for x in chunk_codes), \
                    f"Bad codes in chunk: {chunk_codes[:14]}"
 
+            # Guard: codes must form full frames (multiples of 7)
+            if ((len(chunk_codes) % TOKENS_PER_FRAME) != 0):
+                logger.error(f"[{session_id}] Non-multiple-of-{TOKENS_PER_FRAME} codes; buffering more (len={len(chunk_codes)})")
+                break
             arr = np.asarray(chunk_codes, dtype=np.int64).reshape(-1, TOKENS_PER_FRAME)  # [F, 7]
             F = arr.shape[0]
 
@@ -256,9 +260,42 @@ async def aiter_pcm_from_custom_tokens(engine: Any, prompt: str, voice: str, sp:
                     return None
                 return a.astype(np.float32).reshape(-1)
 
-            # Single (flat) attempt — this is the API your SNAC supports
-            audio = await snacx.decode_codes([codes_0, codes_1, codes_2])
-            audio = _normalize_audio(audio)
+            # Decode once; if first emission is weak, try alternate lane layout once
+            async def _decode_once(c0, c1, c2):
+                a = await snacx.decode_codes([c0, c1, c2])
+                return _normalize_audio(a)
+
+            def _rms(x: np.ndarray) -> float:
+                if x is None or x.size == 0:
+                    return 0.0
+                x = np.clip(x.astype(np.float32).reshape(-1), -1.0, 1.0)
+                return float(np.sqrt(np.mean(x * x)))
+
+            audio = await _decode_once(codes_0, codes_1, codes_2)
+            if not first_emitted:
+                rms1 = _rms(audio)
+                if rms1 < 0.01:
+                    current = os.getenv("ORPHEUS_LANE_ORDER", "0|1,2|3,4,5,6")
+                    alt = "0|1,2|3,4,5,6"
+                    if current == "0|1,2|3,4,5,6":
+                        alt = "0|1,4|2,3,5,6"
+                    else:
+                        alt = "0|1,2|3,4,5,6"
+                    os.environ["ORPHEUS_LANE_ORDER"] = alt
+                    try:
+                        codes0_np, codes1_np, codes2_np = _split_snac_lanes(arr, TOKENS_PER_FRAME)
+                        c0 = torch.from_numpy(codes0_np).unsqueeze(0).to(SNAC_DEVICE, dtype=torch.long)
+                        c1 = torch.from_numpy(codes1_np).unsqueeze(0).to(SNAC_DEVICE, dtype=torch.long)
+                        c2 = torch.from_numpy(codes2_np).unsqueeze(0).to(SNAC_DEVICE, dtype=torch.long)
+                        audio2 = await _decode_once(c0, c1, c2)
+                        rms2 = _rms(audio2)
+                        if rms2 > rms1:
+                            logger.info(f"[{session_id}] Switched ORPHEUS_LANE_ORDER to '{alt}' based on RMS heuristic")
+                            audio = audio2
+                        else:
+                            os.environ["ORPHEUS_LANE_ORDER"] = current  # revert
+                    except Exception:
+                        os.environ["ORPHEUS_LANE_ORDER"] = current  # revert on any failure
 
             if audio is None:
                 # Do NOT advance emit_from; accumulate more frames and try again later
