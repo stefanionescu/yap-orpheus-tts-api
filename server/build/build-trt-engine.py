@@ -9,7 +9,7 @@ def main():
     parser.add_argument("--model", default=os.getenv("MODEL_ID", "canopylabs/orpheus-3b-0.1-ft"))
     parser.add_argument("--output", default=os.getenv("TRTLLM_ENGINE_DIR", "./models/orpheus-trt"))
     parser.add_argument("--dtype", default="float16", choices=["float16", "bfloat16"])
-    parser.add_argument("--max_input_len", type=int, default=512)
+    parser.add_argument("--max_input_len", type=int, default=1024)
     parser.add_argument("--max_output_len", type=int, default=1024)
     parser.add_argument("--max_batch_size", type=int, default=1)
     args = parser.parse_args()

@@ -22,6 +22,16 @@ pip install --quiet mpi4py || true
 echo "[install-trt] Installing TensorRT-LLM wheel"
 pip install --quiet "${TRTLLM_WHEEL_URL}"
 
+echo "[install-trt] Installing TRT extras (requirements-trt.txt)"
+if [ -f requirements-trt.txt ]; then
+  pip install -r requirements-trt.txt
+fi
+
+echo "[install-trt] Ensuring base requirements installed (without vLLM)"
+if [ -f requirements-base.txt ]; then
+  pip install -r requirements-base.txt
+fi
+
 echo "[install-trt] Done."
 
 

@@ -43,12 +43,23 @@ TORCH_IDX=$(map_torch_index_url "${CUDA_VER:-}")
 echo "[install] Installing Torch from ${TORCH_IDX}"
 pip install --index-url "${TORCH_IDX}" torch --only-binary=:all:
 
-echo "[install] Requirements"
-if [ -f requirements.txt ]; then
-  pip install -r requirements.txt
-else
-  pip install -r server/requirements.txt
-fi
+echo "[install] Requirements (base + backend)"
+pip install -r requirements-base.txt
+
+# Backend-specific Python deps
+case "${BACKEND:-vllm}" in
+  vllm)
+    echo "[install] Installing vLLM backend requirements"
+    pip install vllm==0.7.3
+    ;;
+  trtllm)
+    echo "[install] Skipping vLLM; TRT backend will be installed in 01-install-trt.sh"
+    ;;
+  *)
+    echo "[install] Unknown BACKEND='${BACKEND:-}', defaulting to vLLM"
+    pip install vllm==0.7.3
+    ;;
+esac
 
 # vLLM is pinned in requirements.txt; no separate install needed.
 
