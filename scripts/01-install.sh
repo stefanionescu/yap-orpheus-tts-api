@@ -8,6 +8,14 @@ load_env_if_present
 : "${PYTHON_VERSION:=3.10}"
 : "${VENV_DIR:=$PWD/.venv}"
 
+# Speed-friendly pip defaults and cache (persist across venv rebuilds)
+export PIP_NO_INPUT=1
+export PIP_DISABLE_PIP_VERSION_CHECK=1
+export PIP_PROGRESS_BAR=off
+export PIP_DEFAULT_TIMEOUT=${PIP_DEFAULT_TIMEOUT:-120}
+export PIP_CACHE_DIR=${PIP_CACHE_DIR:-"$PWD/.cache/pip"}
+mkdir -p "$PIP_CACHE_DIR"
+
 # Required
 require_env HF_TOKEN
 
@@ -36,45 +44,70 @@ $PY_EXE -m venv "${VENV_DIR}"
 source "${VENV_DIR}/bin/activate"
 python -m pip install --upgrade pip wheel setuptools
 
+# Prefer fast installer if available (uv). Install it quickly if requested.
+: "${USE_UV:=1}"
+if [ "$USE_UV" = "1" ] && ! command -v uv >/dev/null 2>&1; then
+  echo "[install] Installing uv (fast Python package manager)"
+  curl -fsSL https://astral.sh/uv/install.sh | sh -s -- -y >/dev/null 2>&1 || true
+  export PATH="$HOME/.local/bin:$PATH"
+fi
+if command -v uv >/dev/null 2>&1; then
+  PIP="uv pip"
+else
+  PIP="pip"
+fi
+
 # Pick the right PyTorch CUDA wheel channel
 if [ -z "${CUDA_VER:-}" ]; then
   CUDA_VER=$(detect_cuda_version)
 fi
 TORCH_IDX=$(map_torch_index_url "${CUDA_VER:-}")
 
-echo "[install] Installing Torch from ${TORCH_IDX}"
-pip install --index-url "${TORCH_IDX}" torch --only-binary=:all:
+echo "[install] Installing Torch + TRT-LLM in one step (faster resolver)"
+# Install heavy GPU stack in a single transaction to avoid uninstall/reinstall churn
+# Keep Torch pulled from the correct CUDA channel; include torchvision for common ops
+${PIP} install \
+  --index-url "${TORCH_IDX}" \
+  --extra-index-url https://pypi.nvidia.com \
+  --only-binary=:all: --prefer-binary \
+  torch torchvision "tensorrt-llm==0.21.0"
 
 echo "[install] Requirements (base)"
 if [ -f requirements.txt ]; then
   if [ "${BACKEND}" != "vllm" ]; then
     echo "[install] Installing requirements without vLLM (TRT backend)"
     grep -v -E '^\s*vllm(==|\s|$)' requirements.txt > .tmp.req
-    pip install -r .tmp.req
+    ${PIP} install --only-binary=:all: --prefer-binary -r .tmp.req
     rm -f .tmp.req
   else
-    pip install -r requirements.txt
+    ${PIP} install --only-binary=:all: --prefer-binary -r requirements.txt
   fi
 else
-  pip install -r server/requirements.txt
+  ${PIP} install --only-binary=:all: --prefer-binary -r server/requirements.txt
 fi
 
 # Install TensorRT-LLM (Dockerless) if requested backend is TRT-LLM
 if [ "${BACKEND}" != "vllm" ]; then
-  echo "[install] Installing TensorRT-LLM runtime via NVIDIA PyPI"
-  set +e
-  # Let tensorrt-llm pull a compatible TensorRT (targets CUDA 12.x; prefer 12.6–12.8)
-  pip install --extra-index-url https://pypi.nvidia.com \
-    tensorrt-llm==0.21.0
-  STATUS=$?
-  set -e
-  if [ $STATUS -ne 0 ]; then
-    echo "[install] WARNING: tensorrt-llm install failed. Ensure CUDA 12.8 and driver r535+ are present." >&2
+  echo "[install] Verifying TRT-LLM runtime and aligning CUDA bindings"
+  # Install mpi4py only if needed: multi-GPU or explicitly requested
+  GPU_COUNT=0
+  if command -v nvidia-smi >/dev/null 2>&1; then
+    GPU_COUNT=$(nvidia-smi --query-gpu=name --format=csv,noheader | wc -l | tr -d ' ')
   fi
-  echo "[install] Installing mpi4py (requires system MPI runtime)"
-  set +e
-  pip install --no-binary mpi4py "mpi4py>=4.0.0"
-  set -e
+  WANT_MPI=false
+  case "${TRTLLM_USE_MPI:-auto}" in
+    1|true|yes) WANT_MPI=true ;;
+    0|false|no) WANT_MPI=false ;;
+    auto) if [ "${GPU_COUNT}" -ge 2 ]; then WANT_MPI=true; fi ;;
+  esac
+  if [ "$WANT_MPI" = true ]; then
+    echo "[install] Installing mpi4py for multi-GPU (detected GPUs: ${GPU_COUNT})"
+    set +e
+    ${PIP} install --prefer-binary mpi4py>=4.0.0
+    set -e
+  else
+    echo "[install] Single-GPU or TRTLLM_USE_MPI=0 — skipping mpi4py"
+  fi
   echo "[install] Ensuring correct CUDA 12.8 Python bindings (avoid conflicting 'cuda' packages)"
   WANT_CUDA_PY=12.8
   HAVE_CUDA_PY=$(python - <<'PY'
@@ -86,18 +119,19 @@ PY
 )
   if [[ "$HAVE_CUDA_PY" != 12.8.* ]]; then
     set +e
-    pip uninstall -y cuda cuda-bindings cuda_pathfinder cuda-pathfinder 2>/dev/null
+    ${PIP} uninstall -y cuda cuda-bindings cuda_pathfinder cuda-pathfinder 2>/dev/null
     set -e
-    pip install --upgrade --force-reinstall "cuda-python==12.8.*" "cuda-bindings==12.8.*"
+    ${PIP} install --upgrade --force-reinstall --only-binary=:all: --prefer-binary \
+      "cuda-python==12.8.*" "cuda-bindings==12.8.*"
   else
     echo "[install] cuda-python already $HAVE_CUDA_PY — skipping reinstall"
   fi
 
   echo "[install] Removing deprecated pynvml to silence warnings; installing nvidia-ml-py"
   set +e
-  pip uninstall -y pynvml 2>/dev/null
+  ${PIP} uninstall -y pynvml 2>/dev/null
   set -e
-  pip install -U nvidia-ml-py
+  ${PIP} install -U --only-binary=:all: --prefer-binary nvidia-ml-py
   # Ensure libpython shared library is present and discoverable for TRT-LLM bindings
   if ! ldconfig -p 2>/dev/null | grep -q "libpython${PY_MAJMIN}\.so"; then
     if command -v apt-get >/dev/null 2>&1; then
@@ -129,7 +163,7 @@ PY
 )
   echo "[install] ${PY_INFO}"
   set +e
-  pip install --no-build-isolation --only-binary=:all: "flash-attn>=2.5.7"
+  ${PIP} install --no-build-isolation --only-binary=:all: --prefer-binary "flash-attn>=2.5.7"
   if [ $? -eq 0 ]; then
     echo "[install] flash-attn installed"
   else
