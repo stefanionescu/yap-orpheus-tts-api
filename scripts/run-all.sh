@@ -14,5 +14,16 @@ bash scripts/00-bootstrap.sh
 echo "[run-all] 2/3 install"
 bash scripts/01-install.sh
 
+# If BACKEND=trtllm, also install TRT-LLM dependencies
+if [ "${BACKEND:-vllm}" = "trtllm" ]; then
+  echo "[run-all] Installing TRT-LLM backend"
+  bash scripts/01-install-trt.sh
+  echo "[run-all] Building TRT-LLM engine (02-build-trt-engine.sh)"
+  bash scripts/02-build-trt-engine.sh
+  # If engine dir not provided, default to local models/orpheus-trt used by the builder
+  : "${TRTLLM_ENGINE_DIR:=$PWD/models/orpheus-trt}"
+  export TRTLLM_ENGINE_DIR
+fi
+
 echo "[run-all] 3/3 start server"
-exec bash scripts/02-run-server.sh
+exec bash scripts/03-run-server.sh

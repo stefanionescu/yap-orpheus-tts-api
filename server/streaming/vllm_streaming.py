@@ -1,34 +1,26 @@
 import asyncio
-import os
-from typing import Iterator
-
 import numpy as np
 import torch
 from vllm import SamplingParams
 from vllm.utils import random_uuid
 
-from .prompts import build_prompt, resolve_voice
-from .core.custom_tokens import split_custom_tokens, turn_token_into_id
-from .core.snac_batcher import get_snac_batched, SNAC_DEVICE
+from ..prompts import build_prompt, resolve_voice
+from ..core.custom_tokens import split_custom_tokens, turn_token_into_id
+from ..core.snac_batcher import get_snac_batched, SNAC_DEVICE
 
 
-async def aiter_pcm_from_custom_tokens(engine, prompt: str, voice: str, sp: SamplingParams) -> Iterator[bytes]:
-    """
-    vLLM → detokenized pieces → <custom_token_…> → 28→PCM, Baseten-identical.
-    Monotonic delta consumption (no rescans, no resets) for artifact-free audio.
-    """
-    tok_index = 0  # never reset within a single generation
+async def aiter_pcm_from_custom_tokens(engine, prompt: str, voice: str, sp: SamplingParams):
+    tok_index = 0
     buf_ids: list[int] = []
     snacx = get_snac_batched()
 
-    prev_len = 0  # length of detokenized text we have already processed
+    prev_len = 0
     async for out in engine.generate(build_prompt(prompt, resolve_voice(voice)), sp, random_uuid()):
         outs = out.outputs or []
         if not outs:
             continue
 
         piece = outs[0].text or ""
-        # Only process newly appended text to keep sequence monotonic
         if len(piece) <= prev_len:
             continue
         delta = piece[prev_len:]
@@ -39,7 +31,6 @@ async def aiter_pcm_from_custom_tokens(engine, prompt: str, voice: str, sp: Samp
             tok_index += 1
             buf_ids.append(tid)
 
-            # Every 7 tokens is one frame; after 4 frames (28 ids) → decode
             if (tok_index % 7 == 0) and len(buf_ids) >= 28:
                 window = buf_ids[-28:]
                 arr = np.asarray(window, dtype=np.int32).reshape(-1, 7)

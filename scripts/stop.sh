@@ -79,6 +79,11 @@ if [ "$CLEAN_INSTALL" = "1" ]; then
   rm -rf ~/.cache/clip || true
   rm -rf ~/.cache/vllm || true
   rm -rf ~/.cache/triton || true
+  # TensorRT-LLM and NVIDIA caches
+  rm -rf ~/.cache/tensorrt_llm || true
+  rm -rf ~/.cache/tensorrt-llm || true
+  rm -rf ~/.cache/nv_tensorrt || true
+  rm -rf ~/.cache/nvidia || true
   rm -rf ~/.nv || true
 
   # Temp files that may accumulate
@@ -86,6 +91,9 @@ if [ "$CLEAN_INSTALL" = "1" ]; then
   rm -rf /tmp/huggingface* 2>/dev/null || true
   rm -rf /tmp/torch* 2>/dev/null || true
   rm -rf /dev/shm/vllm* 2>/dev/null || true
+  rm -rf /tmp/trt* 2>/dev/null || true
+  rm -rf /tmp/tensorrt* 2>/dev/null || true
+  rm -rf /dev/shm/trt* 2>/dev/null || true
 fi
 
 if [ "$CLEAN_SYSTEM" = "1" ]; then

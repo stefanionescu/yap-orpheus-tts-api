@@ -6,12 +6,9 @@ import json
 from dotenv import load_dotenv
 
 from .core.utils import ensure_hf_login
-from .engine_vllm import OrpheusTTSEngine
-from vllm import SamplingParams
 
 from .core.chunking import chunk_by_words, FIRST_CHUNK_WORDS, NEXT_CHUNK_WORDS, MIN_TAIL_WORDS
 from .prompts import resolve_voice
-from .streaming import aiter_pcm_from_custom_tokens
 
 load_dotenv(".env")
 
@@ -19,16 +16,28 @@ HOST = os.getenv("HOST", "0.0.0.0")
 PORT = int(os.getenv("PORT", "8000"))
 SAMPLE_RATE = 24000
 
-app = FastAPI(title="Orpheus 3B TTS (Runpod / vLLM+SNAC)")
+# Backend selection: "vllm" (default) or "trtllm"
+BACKEND = os.getenv("BACKEND", "vllm").strip().lower()
+if BACKEND == "trtllm":
+    # Import TRT backend lazily to avoid requiring TRT deps when not in use
+    from .engines.trt_engine import OrpheusTRTEngine as _Engine
+    from .streaming.trt_streaming import aiter_pcm_from_custom_tokens
+    from tensorrt_llm.llmapi import SamplingParams  # type: ignore
+else:
+    from .engines.vllm_engine import OrpheusVLLMEngine as _Engine
+    from .streaming.vllm_streaming import aiter_pcm_from_custom_tokens
+    from vllm import SamplingParams
 
-engine: OrpheusTTSEngine | None = None
+app = FastAPI(title="Orpheus 3B TTS (Runpod / vLLM+SNAC / TRT-LLM)")
+
+engine: _Engine | None = None
 
 
 @app.on_event("startup")
 async def _startup():
     global engine
     ensure_hf_login()
-    engine = OrpheusTTSEngine()
+    engine = _Engine()
     # Background warmup to reduce first-request TTFB (compile kernels, allocate KV cache)
     async def _warmup():
         try:
@@ -171,15 +180,13 @@ async def tts_ws(ws: WebSocket):
                             pass
                         break
 
-                    # ---- Baseten-compatible streaming from vLLM ----
+                    # Build sampling params with fields compatible with the selected backend
+                    # vLLM accepts detokenize/skip_special_tokens/ignore_eos; TRT-LLM ignores them.
                     sp = SamplingParams(
                         temperature=float(temperature if (temperature is not None) else 0.6),
                         top_p=float(top_p if (top_p is not None) else 0.8),
                         repetition_penalty=float(repetition_penalty if (repetition_penalty is not None) else 1.1),
                         max_tokens=int(num_predict if (num_predict is not None) else int(os.getenv("ORPHEUS_MAX_TOKENS", "2048"))),
-                        detokenize=True,
-                        skip_special_tokens=False,
-                        ignore_eos=False,
                         stop_token_ids=[128258, 128009],
                     )
 
