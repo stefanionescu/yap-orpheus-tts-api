@@ -106,6 +106,9 @@ bash scripts/stop.sh --clean-system
 ### Tests (optional)
 
 ```bash
+# Enter the virtual environment
+source .venv/bin/activate
+
 # Warmup (single WS stream)
 python tests/warmup.py
 
