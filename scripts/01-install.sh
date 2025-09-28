@@ -61,24 +61,6 @@ case "${BACKEND:-vllm}" in
     ;;
 esac
 
-# vLLM is pinned in requirements.txt; no separate install needed.
-
-# Optional: Install FlashAttention 2 prebuilt wheel if available (Linux + NVIDIA)
-echo "[install] Checking for FlashAttention prebuilt wheel"
-if [ "$(uname -s)" = "Linux" ] && command -v nvidia-smi >/dev/null 2>&1; then
-  PY_INFO=$(python - <<'PY'
-import torch, platform
-print(f"torch={torch.__version__} cuda={torch.version.cuda} platform={platform.system()}")
-PY
-)
-  echo "[install] ${PY_INFO}"
-  set +e
-  pip install --no-build-isolation --only-binary=:all: "flash-attn>=2.5.7" && echo "[install] Installed flash-attn" || echo "[install] flash-attn wheel unavailable; skipping"
-  set -e
-else
-  echo "[install] Non-Linux or no NVIDIA driver detected; skipping flash-attn"
-fi
-
 # Login to HF (non-interactive)
 python - <<'PY'
 import os

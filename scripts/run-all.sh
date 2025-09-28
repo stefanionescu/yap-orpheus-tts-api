@@ -8,22 +8,29 @@ if [ -z "${HF_TOKEN:-}" ]; then
   exit 1
 fi
 
-echo "[run-all] 1/3 bootstrap"
-bash scripts/00-bootstrap.sh
+# Detach and run the entire pipeline in background
+mkdir -p logs .run
+CMD='\
+  echo "[run-all] 1/3 bootstrap" && \
+  bash scripts/00-bootstrap.sh && \
+  echo "[run-all] 2/3 install" && \
+  bash scripts/01-install.sh && \
+  if [ "${BACKEND:-vllm}" = "trtllm" ]; then \
+    echo "[run-all] Installing TRT-LLM backend" && \
+    bash scripts/01-install-trt.sh && \
+    echo "[run-all] Building TRT-LLM engine (02-build-trt-engine.sh)" && \
+    bash scripts/02-build-trt-engine.sh && \
+    : "${TRTLLM_ENGINE_DIR:=$PWD/models/orpheus-trt}" && \
+    export TRTLLM_ENGINE_DIR; \
+  fi && \
+  echo "[run-all] 3/3 start server" && \
+  bash scripts/03-run-server.sh'
 
-echo "[run-all] 2/3 install"
-bash scripts/01-install.sh
-
-# If BACKEND=trtllm, also install TRT-LLM dependencies
-if [ "${BACKEND:-vllm}" = "trtllm" ]; then
-  echo "[run-all] Installing TRT-LLM backend"
-  bash scripts/01-install-trt.sh
-  echo "[run-all] Building TRT-LLM engine (02-build-trt-engine.sh)"
-  bash scripts/02-build-trt-engine.sh
-  # If engine dir not provided, default to local models/orpheus-trt used by the builder
-  : "${TRTLLM_ENGINE_DIR:=$PWD/models/orpheus-trt}"
-  export TRTLLM_ENGINE_DIR
-fi
-
-echo "[run-all] 3/3 start server"
-exec bash scripts/03-run-server.sh
+setsid nohup bash -lc "$CMD" </dev/null > logs/run-all.log 2>&1 &
+bg_pid=$!
+echo $bg_pid > .run/run-all.pid
+echo "[run-all] Pipeline started in background (PID $bg_pid)"
+echo "[run-all] Logs: logs/run-all.log (server logs: logs/server.log)"
+echo "[run-all] To follow: tail -F logs/run-all.log"
+echo "[run-all] To stop:   bash scripts/stop.sh"
+exit 0
