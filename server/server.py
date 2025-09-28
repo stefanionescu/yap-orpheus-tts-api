@@ -180,15 +180,21 @@ async def tts_ws(ws: WebSocket):
                             pass
                         break
 
-                    # Build sampling params with fields compatible with the selected backend
-                    # vLLM accepts detokenize/skip_special_tokens/ignore_eos; TRT-LLM ignores them.
-                    sp = SamplingParams(
+                    # Build sampling params; add vLLM-only flags when using vLLM backend
+                    sp_kwargs = dict(
                         temperature=float(temperature if (temperature is not None) else 0.6),
                         top_p=float(top_p if (top_p is not None) else 0.8),
                         repetition_penalty=float(repetition_penalty if (repetition_penalty is not None) else 1.1),
                         max_tokens=int(num_predict if (num_predict is not None) else int(os.getenv("ORPHEUS_MAX_TOKENS", "2048"))),
                         stop_token_ids=[128258, 128009],
                     )
+                    if BACKEND == "vllm":
+                        sp_kwargs.update(dict(
+                            detokenize=True,
+                            skip_special_tokens=False,
+                            ignore_eos=False,
+                        ))
+                    sp = SamplingParams(**sp_kwargs)
 
                     v = resolve_voice(voice) or "tara"
                     chunks = chunk_by_words(

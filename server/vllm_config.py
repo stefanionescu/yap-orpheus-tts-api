@@ -12,10 +12,10 @@ def vllm_engine_kwargs() -> dict:
     return dict(
         dtype=os.getenv("VLLM_DTYPE", "bfloat16"), # 'float16'|'bfloat16'|'half'|'auto'
         max_model_len=max_model_len,
-        gpu_memory_utilization=float(os.getenv("VLLM_GPU_UTIL", "0.90")),
-        max_num_seqs=int(os.getenv("VLLM_MAX_SEQS", "1")),
+        gpu_memory_utilization=float(os.getenv("VLLM_GPU_UTIL", "0.92")),
+        max_num_seqs=int(os.getenv("VLLM_MAX_SEQS", "24")),
         max_num_batched_tokens=max_batched,
-        enforce_eager=bool(int(os.getenv("VLLM_ENFORCE_EAGER", "1"))),
+        enforce_eager=bool(int(os.getenv("VLLM_ENFORCE_EAGER", "0"))),
         swap_space=int(os.getenv("VLLM_SWAP_SPACE_GB", "4")),
         disable_custom_all_reduce=bool(int(os.getenv("VLLM_DISABLE_CUSTOM_ALL_REDUCE", "0"))),
         trust_remote_code=True,
