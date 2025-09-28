@@ -101,6 +101,9 @@ bash scripts/stop.sh --clean-install
 
 # Also clean system apt caches from bootstrap step
 bash scripts/stop.sh --clean-system
+
+# Delete everything
+bash scripts/stop.sh --clean-install --clean-system
 ```
 
 ### Tests (optional)

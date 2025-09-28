@@ -31,6 +31,7 @@ bg_pid=$!
 echo $bg_pid > .run/run-all.pid
 echo "[run-all] Pipeline started in background (PID $bg_pid)"
 echo "[run-all] Logs: logs/run-all.log (server logs: logs/server.log)"
-echo "[run-all] To follow: tail -F logs/run-all.log"
 echo "[run-all] To stop:   bash scripts/stop.sh"
-exit 0
+echo "[run-all] Following logs (Ctrl-C detaches, pipeline continues)"
+touch logs/run-all.log || true
+exec tail -n +1 -F logs/run-all.log
