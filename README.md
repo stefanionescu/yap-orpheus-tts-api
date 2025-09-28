@@ -74,7 +74,7 @@ bash scripts/01-install-trt.sh
 export TRTLLM_ENGINE_DIR=/models/orpheus-trt
 
 # 4) Start server (tails logs)
-bash scripts/02-run-server.sh
+bash scripts/03-run-server.sh
 ```
 
 ### Recommended container base for TRT-LLM
