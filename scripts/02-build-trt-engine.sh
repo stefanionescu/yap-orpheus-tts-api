@@ -9,10 +9,10 @@ load_env_if_present
 : "${VENV_DIR:=$PWD/.venv}"
 : "${MODEL_ID:=canopylabs/orpheus-3b-0.1-ft}"
 : "${TRTLLM_ENGINE_DIR:=$PWD/models/orpheus-trt}"
-: "${TRTLLM_DTYPE:=float16}"  # float16|bfloat16
-: "${TRTLLM_MAX_INPUT_LEN:=512}"
-: "${TRTLLM_MAX_OUTPUT_LEN:=1024}"
-: "${TRTLLM_MAX_BATCH_SIZE:=1}"
+: "${TRTLLM_DTYPE:=bfloat16}"  # float16|bfloat16
+: "${TRTLLM_MAX_INPUT_LEN:=2048}"
+: "${TRTLLM_MAX_OUTPUT_LEN:=2048}"
+: "${TRTLLM_MAX_BATCH_SIZE:=16}"
 
 usage() {
   cat <<USAGE
@@ -84,6 +84,6 @@ echo "[build-trt] Running: ${CMD[*]}"
 "${CMD[@]}"
 
 echo "[build-trt] Engine directory ready: ${TRTLLM_ENGINE_DIR}"
-echo "[build-trt] To use it: export BACKEND=trtllm; export TRTLLM_ENGINE_DIR=\"${TRTLLM_ENGINE_DIR}\"; bash scripts/02-run-server.sh"
+echo "[build-trt] To use it: export BACKEND=trtllm; export TRTLLM_ENGINE_DIR=\"${TRTLLM_ENGINE_DIR}\"; bash scripts/03-run-server.sh"
 
 

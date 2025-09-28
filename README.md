@@ -56,24 +56,35 @@ PY
 
 ### Use the TensorRT-LLM backend (Linux + NVIDIA)
 
+Trivial path (one command runs install → engine build → server):
+
 ```bash
 export HF_TOKEN="hf_xxx"
 export BACKEND=trtllm
+# Optional: customize engine output directory (default: $PWD/models/orpheus-trt)
+# export TRTLLM_ENGINE_DIR=/models/orpheus-trt
 
-# 1) Install base deps
+bash scripts/run-all.sh
+```
+
+Manual path (if you prefer explicit steps):
+
+```bash
+export HF_TOKEN="hf_xxx"
+
+# 1) Base deps (creates .venv)
 bash scripts/01-install.sh
 
-# 2) Install TRT-LLM wheel and extras
+# 2) Install TensorRT-LLM backend
 bash scripts/01-install-trt.sh
 
-# 3) Build or provide a prebuilt TRT engine directory
-#    Option A (in-repo builder):
-#      python server/build/build-trt-engine.py --model canopylabs/orpheus-3b-0.1-ft \
-#             --output /models/orpheus-trt --dtype float16 --max_input_len 512 --max_output_len 1024
-#    Option B (experiments): inference-experiments/simple_build.py
-export TRTLLM_ENGINE_DIR=/models/orpheus-trt
+# 3) Build engine directory (installs TRT-LLM if missing)
+bash scripts/02-build-trt-engine.sh --output /models/orpheus-trt \
+  --dtype bfloat16 --max-input-len 2048 --max-output-len 2048 --max-batch-size 16
 
-# 4) Start server (tails logs)
+# 4) Run server with TRT backend
+export BACKEND=trtllm
+export TRTLLM_ENGINE_DIR=/models/orpheus-trt
 bash scripts/03-run-server.sh
 ```
 
@@ -88,6 +99,39 @@ bash scripts/03-run-server.sh
 - Inspect current values:
 ```bash
 bash scripts/print-env.sh
+```
+
+### Concurrency up to 16 (both backends)
+
+vLLM (default backend):
+
+```bash
+export HF_TOKEN="hf_xxx"
+export VLLM_MAX_SEQS=16             # allow up to 16 concurrent sequences
+export VLLM_MAX_BATCHED_TOKENS=2048 # align with 2048 token budget
+# Optional: keep ORPHEUS_MAX_TOKENS=2048 (default)
+
+bash scripts/run-all.sh
+```
+
+TensorRT-LLM:
+
+```bash
+export HF_TOKEN="hf_xxx"
+export BACKEND=trtllm
+# Match vLLM input/output token budgets and enable batch 16
+export TRTLLM_MAX_INPUT_LEN=2048
+export TRTLLM_MAX_OUTPUT_LEN=2048
+export TRTLLM_MAX_BATCH_SIZE=16
+export TRTLLM_ENGINE_DIR=/models/orpheus-trt
+
+bash scripts/run-all.sh
+```
+
+Validate with 16 concurrent streams:
+
+```bash
+python tests/bench.py --server 127.0.0.1:8000 --n 16 --concurrency 16 --voice female
 ```
 
 ### Stop and cleanup
