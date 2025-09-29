@@ -83,20 +83,6 @@ echo "[build-trt] Model: ${MODEL_ID}"
 echo "[build-trt] Output: ${TRTLLM_ENGINE_DIR}"
 echo "[build-trt] Mode: ${MODE}${MINIMAL:+ (minimal)}"
 
-echo "[build-trt] Ensuring TensorRT-LLM is available"
-"${PYTHON_EXEC}" - <<'PY'
-try:
-    import tensorrt_llm  # noqa: F401
-    print("[build-trt] TensorRT-LLM present")
-except Exception:
-    import sys
-    sys.exit(42)
-PY
-if [ $? -ne 0 ]; then
-  echo "[build-trt] Installing TensorRT-LLM backend..."
-  bash scripts/01-install-trt.sh
-fi
-
 mkdir -p "${TRTLLM_ENGINE_DIR}"
 
 if [ "$USE_CLI" = true ]; then
