@@ -19,18 +19,17 @@ source "${VENV_DIR}/bin/activate"
 echo "[install-trt] Installing mpi4py (optional, safe on single GPU)"
 pip install --quiet mpi4py || true
 
+echo "[install-trt] Installing base deps (ensures FastAPI==0.115.4)"
+pip install -r requirements-base.txt
+
 echo "[install-trt] Installing TensorRT-LLM wheel"
-pip install --quiet "${TRTLLM_WHEEL_URL}"
+pip install --extra-index-url https://pypi.nvidia.com "${TRTLLM_WHEEL_URL}"
 
-echo "[install-trt] Installing TRT extras (requirements-trt.txt)"
-if [ -f requirements-trt.txt ]; then
-  pip install -r requirements-trt.txt
-fi
+echo "[install-trt] Installing TRT extras"
+pip install -r requirements-trt.txt
 
-echo "[install-trt] Ensuring base requirements installed (without vLLM)"
-if [ -f requirements-base.txt ]; then
-  pip install -r requirements-base.txt
-fi
+echo "[install-trt] Verifying env"
+pip check || { echo "[install-trt] Dependency conflict detected"; exit 1; }
 
 echo "[install-trt] Done."
 

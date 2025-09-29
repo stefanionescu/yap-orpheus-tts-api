@@ -24,25 +24,6 @@ bash scripts/run-all.sh
 
 # 3) Health check
 curl -s http://127.0.0.1:8000/healthz
-
-# 4) One-off WS synthesis to WAV (24 kHz)
-python - <<'PY'
-import asyncio, json, websockets, wave
-async def main():
-    uri = "ws://127.0.0.1:8000/ws/tts"
-    async with websockets.connect(uri, max_size=None) as ws:
-        await ws.send(json.dumps({"text": "hello from orpheus", "voice": "female"}))
-        with wave.open("out.wav", "wb") as wf:
-            wf.setnchannels(1); wf.setsampwidth(2); wf.setframerate(24000)
-            while True:
-                try:
-                    msg = await asyncio.wait_for(ws.recv(), timeout=1.0)
-                except asyncio.TimeoutError:
-                    break
-                if isinstance(msg, (bytes, bytearray)):
-                    wf.writeframes(msg)
-asyncio.run(main())
-PY
 ```
 
 ### Environment
