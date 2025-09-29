@@ -43,12 +43,17 @@ def ensure_linux_gpu() -> None:
 
 def ensure_mpi_runtime() -> None:
     try:
-        import mpi4py  # type: ignore  # noqa: WPS433
-        _ = mpi4py.MPI.Get_version()  # type: ignore[attr-defined]
+        from mpi4py import MPI  # type: ignore  # noqa: WPS433
+        _ = MPI.Get_version()
     except ImportError as exc:  # pragma: no cover - runtime dependency only
         raise BuildError(
             "mpi4py is not installed inside the active virtualenv. "
             "Re-run scripts/01-install-trt.sh."
+        ) from exc
+    except AttributeError as exc:  # pragma: no cover - runtime dependency only
+        raise BuildError(
+            "mpi4py is installed but its MPI extension failed to load. "
+            "Install or expose a working MPI runtime (libmpi.so) and reinstall mpi4py."
         ) from exc
     except RuntimeError as exc:  # pragma: no cover - runtime dependency only
         raise BuildError(

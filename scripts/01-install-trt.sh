@@ -16,8 +16,37 @@ fi
 [ -d "${VENV_DIR}" ] || { echo "[install-trt] venv missing. Run scripts/01-install.sh first."; exit 1; }
 source "${VENV_DIR}/bin/activate"
 
-echo "[install-trt] Installing mpi4py (optional, safe on single GPU)"
-pip install --quiet mpi4py || true
+echo "[install-trt] Installing mpi4py (MPI Python bindings)"
+pip install "mpi4py>=3.1"
+
+echo "[install-trt] Verifying mpi4py can access MPI runtime"
+if ! python - <<'PY'; then
+import sys
+try:
+    from mpi4py import MPI  # noqa: WPS433
+    MPI.Get_version()
+except ImportError as exc:  # pragma: no cover - runtime dependency only
+    sys.exit(f"mpi4py is not installed in the current virtualenv: {exc}")
+except AttributeError as exc:  # pragma: no cover - runtime dependency only
+    sys.exit(
+        "mpi4py is installed but its MPI extension failed to load. "
+        f"Ensure libmpi is available and reinstall mpi4py. Details: {exc}"
+    )
+except RuntimeError as exc:  # pragma: no cover - runtime dependency only
+    sys.exit(
+        "mpi4py could not bind to the MPI runtime. "
+        f"Install OpenMPI (libopenmpi-dev openmpi-bin) and rerun this script. Details: {exc}"
+    )
+except Exception as exc:  # pragma: no cover - runtime dependency only
+    sys.exit(f"Unexpected mpi4py/MPI error: {exc}")
+else:
+    sys.exit(0)
+PY
+then
+  echo "[install-trt] ERROR: mpi4py is unavailable or MPI runtime missing." >&2
+  echo "[install-trt] Hint: run scripts/00-bootstrap.sh or install OpenMPI (libopenmpi-dev openmpi-bin)." >&2
+  exit 1
+fi
 
 echo "[install-trt] Installing base deps (ensures FastAPI==0.115.4)"
 pip install -r requirements-base.txt
@@ -32,5 +61,3 @@ echo "[install-trt] Verifying env"
 pip check || { echo "[install-trt] Dependency conflict detected"; exit 1; }
 
 echo "[install-trt] Done."
-
-
