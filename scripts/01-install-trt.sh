@@ -84,6 +84,9 @@ pip install --extra-index-url https://pypi.nvidia.com "${TRTLLM_WHEEL_URL}"
 echo "[install-trt] Installing TRT extras"
 pip install -r requirements-trt.txt
 
+echo "[install-trt] Ensuring cuda-python is installed"
+pip install --upgrade "cuda-python>=12.4"
+
 echo "[install-trt] Checking CUDA Python bindings (cuda-python)"
 if ! python - <<'PY'
 try:
