@@ -23,7 +23,11 @@ if command -v apt-get >/dev/null 2>&1; then
     echo "[bootstrap] Installing minimal system deps via apt-get"
     apt-get update -y || true
     DEBIAN_FRONTEND=noninteractive apt-get install -y \
-      git wget curl jq || true
+      git wget curl jq \
+      libopenmpi-dev openmpi-bin || true
+    if ! ldconfig -p 2>/dev/null | grep -q "libmpi.so"; then
+      echo "[bootstrap] WARNING: libmpi.so still not visible. Ensure /usr/lib/x86_64-linux-gnu is in LD_LIBRARY_PATH."
+    fi
   fi
 else
   echo "[bootstrap] apt-get not available. Skipping system packages."
@@ -33,5 +37,4 @@ fi
 require_env HF_TOKEN
 
 echo "[bootstrap] OK"
-
 

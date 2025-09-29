@@ -41,6 +41,23 @@ def ensure_linux_gpu() -> None:
         raise BuildError("nvidia-smi not found. Ensure NVIDIA drivers are available.")
 
 
+def ensure_mpi_runtime() -> None:
+    try:
+        import mpi4py  # type: ignore  # noqa: WPS433
+        _ = mpi4py.MPI.Get_version()  # type: ignore[attr-defined]
+    except ImportError as exc:  # pragma: no cover - runtime dependency only
+        raise BuildError(
+            "mpi4py is not installed inside the active virtualenv. "
+            "Re-run scripts/01-install-trt.sh."
+        ) from exc
+    except RuntimeError as exc:  # pragma: no cover - runtime dependency only
+        raise BuildError(
+            "MPI runtime libraries (libmpi.so) are missing. "
+            "Install OpenMPI (e.g. apt-get install libopenmpi-dev openmpi-bin) "
+            "or expose the correct libmpi.so directory via LD_LIBRARY_PATH."
+        ) from exc
+
+
 def ensure_token_env() -> Optional[str]:
     token = (
         os.environ.get("HF_TOKEN")
@@ -90,6 +107,7 @@ def resolve_model_source(model: str, token: Optional[str]) -> Path:
 
 def build_engine(args: argparse.Namespace) -> Path:
     ensure_linux_gpu()
+    ensure_mpi_runtime()
     token = ensure_token_env()
 
     from tensorrt_llm.llmapi import BuildConfig, LLM  # type: ignore  # noqa: WPS433
