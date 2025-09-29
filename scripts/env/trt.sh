@@ -5,7 +5,8 @@ export BACKEND=${BACKEND:-vllm}                    # set to 'trtllm' to enable T
 export TRTLLM_ENGINE_DIR=${TRTLLM_ENGINE_DIR:-}
 
 # Logging and runtime knobs
-export TENSORRT_LLM_LOG_LEVEL=${TENSORRT_LLM_LOG_LEVEL:-ERROR}
+# Prefer official TLLM_LOG_LEVEL; keep backward compat with TENSORRT_LLM_LOG_LEVEL if set
+export TLLM_LOG_LEVEL=${TLLM_LOG_LEVEL:-${TENSORRT_LLM_LOG_LEVEL:-INFO}}
 
 # Sampling defaults used by server
 export ORPHEUS_MAX_TOKENS=${ORPHEUS_MAX_TOKENS:-2048}

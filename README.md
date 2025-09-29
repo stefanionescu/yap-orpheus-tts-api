@@ -100,11 +100,6 @@ TensorRT-LLM:
 ```bash
 export HF_TOKEN="hf_xxx"
 export BACKEND=trtllm
-# Match vLLM input/output token budgets and enable batch 16
-export TRTLLM_MAX_INPUT_LEN=2048
-export TRTLLM_MAX_OUTPUT_LEN=2048
-export TRTLLM_MAX_BATCH_SIZE=16
-export TRTLLM_ENGINE_DIR=/models/orpheus-trt
 
 bash scripts/run-all.sh
 ```
