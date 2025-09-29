@@ -20,7 +20,7 @@ echo "[install-trt] Installing mpi4py (MPI Python bindings)"
 pip install "mpi4py>=3.1"
 
 echo "[install-trt] Verifying mpi4py can access MPI runtime"
-if ! python - <<'PY'; then
+if ! python - <<'PY'
 import sys
 try:
     from mpi4py import MPI  # noqa: WPS433
