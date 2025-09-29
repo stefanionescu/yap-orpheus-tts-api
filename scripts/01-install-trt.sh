@@ -46,6 +46,30 @@ then
   exit 1
 fi
 
+echo "[install-trt] Checking CUDA Python bindings (cuda-python)"
+if ! python - <<'PY'
+try:
+    from cuda import cuda, cudart  # noqa: WPS433
+except ImportError as exc:
+    raise SystemExit(
+        "cuda-python not installed or failed to import. Install cuda-python>=12.4 "
+        "matching your driver."
+    ) from exc
+else:
+    # Basic call to ensure library load; returns (error, version)
+    err, _ = cudart.cudaDriverGetVersion()
+    if err not in (0,):
+        raise SystemExit(
+            "cuda-python imported but cudart driver query failed. Ensure the runtime "
+            "can access CUDA libraries (LD_LIBRARY_PATH to libcuda.so/libcudart.so)."
+        )
+PY
+then
+  echo "[install-trt] ERROR: cuda-python bindings missing or unusable." >&2
+  echo "[install-trt] Hint: pip install cuda-python>=12.4 and ensure CUDA libs are on LD_LIBRARY_PATH." >&2
+  exit 1
+fi
+
 echo "[install-trt] Verifying mpi4py can access MPI runtime"
 if ! python - <<'PY'
 import sys

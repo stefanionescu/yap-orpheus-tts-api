@@ -9,7 +9,7 @@ wheel
 numpy>=1.26
 transformers>=4.44.2
 snac>=0.1.6
+cuda-python>=12.4
 
 # NOTE: tensorrt-llm itself is installed from NVIDIA PyPI wheel (Linux only):
 #   pip install https://pypi.nvidia.com/tensorrt-llm/tensorrt_llm-0.20.0-cp310-cp310-linux_x86_64.whl
-

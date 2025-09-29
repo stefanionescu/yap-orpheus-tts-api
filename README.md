@@ -12,6 +12,7 @@ Run Orpheus 3B TTS behind a FastAPI server with either vLLM or TensorRT-LLM back
 - Ubuntu-based image with `nvidia-smi`
 - OpenMPI runtime (`libopenmpi-dev` + `openmpi-bin`). Run `bash scripts/00-bootstrap.sh` on apt-based images to install.
 - Python 3.10 with shared libraries (`apt-get install python3-dev python3.10-dev` on Ubuntu)
+- CUDA Python bindings (`pip install cuda-python>=12.4`, matched to system CUDA)
 - Hugging Face token (`HF_TOKEN`) with access to the model
 
 ### Quickstart (vLLM backend, default)
@@ -57,7 +58,7 @@ export HF_TOKEN="hf_xxx"
 # 1) Base deps (creates .venv)
 bash scripts/01-install.sh
 
-# 2) Install TensorRT-LLM backend (requires working OpenMPI + mpi4py + libpython3.10.so)
+# 2) Install TensorRT-LLM backend (requires working OpenMPI + mpi4py + cuda-python + libpython3.10.so)
 bash scripts/01-install-trt.sh
 
 # 3) Build engine directory (installs TRT-LLM if missing)

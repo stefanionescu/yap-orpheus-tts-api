@@ -118,10 +118,16 @@ def build_engine(args: argparse.Namespace) -> Path:
     try:
         from tensorrt_llm.llmapi import BuildConfig, LLM  # type: ignore  # noqa: WPS433
     except ImportError as exc:  # pragma: no cover - runtime dependency only
-        if "libpython" in str(exc).lower():
+        message = str(exc).lower()
+        if "libpython" in message:
             raise BuildError(
                 "TensorRT-LLM failed to import because libpython shared libraries are missing. "
                 "Install python3-dev/python3.10-dev and ensure libpython3.10.so is on LD_LIBRARY_PATH."
+            ) from exc
+        if "cuda" in message:
+            raise BuildError(
+                "TensorRT-LLM requires the cuda-python package and access to CUDA runtime libraries. "
+                "Install cuda-python>=12.4 and ensure libcuda/libcudart are visible (LD_LIBRARY_PATH)."
             ) from exc
         raise
 
