@@ -107,7 +107,7 @@ bash scripts/run-all.sh
 Validate with 16 concurrent streams:
 
 ```bash
-python tests/bench.py --server 127.0.0.1:8000 --n 16 --concurrency 16 --voice female
+python tests/bench.py --n 16 --concurrency 16
 ```
 
 ### Stop and cleanup

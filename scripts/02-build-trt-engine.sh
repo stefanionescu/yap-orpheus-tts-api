@@ -9,10 +9,11 @@ load_env_if_present
 : "${VENV_DIR:=$PWD/.venv}"
 : "${MODEL_ID:=canopylabs/orpheus-3b-0.1-ft}"
 : "${TRTLLM_ENGINE_DIR:=$PWD/models/orpheus-trt}"
-: "${TRTLLM_DTYPE:=bfloat16}"  # float16|bfloat16
+: "${TRTLLM_DTYPE:=bfloat16}"
 : "${TRTLLM_MAX_INPUT_LEN:=2048}"
 : "${TRTLLM_MAX_OUTPUT_LEN:=2048}"
 : "${TRTLLM_MAX_BATCH_SIZE:=16}"
+: "${PYTHON_EXEC:=python}"
 
 usage() {
   cat <<USAGE
@@ -56,15 +57,34 @@ set -- "${ARGS[@]:-}"
 [ -d "${VENV_DIR}" ] || { echo "[build-trt] venv missing. Run scripts/01-install.sh first." >&2; exit 1; }
 source "${VENV_DIR}/bin/activate"
 
+if [ "$(uname -s)" != "Linux" ]; then
+  echo "[build-trt] ERROR: TensorRT-LLM builds require Linux with NVIDIA GPUs." >&2
+  exit 1
+fi
+if ! command -v nvidia-smi >/dev/null 2>&1; then
+  echo "[build-trt] ERROR: nvidia-smi not detected. Ensure the GPU is visible to this runtime." >&2
+  exit 1
+fi
+
 # Source modular env snippets (may override defaults)
 source_env_dir "scripts/env"
 
+if [ -n "${HF_TOKEN:-}" ]; then
+  export HUGGING_FACE_HUB_TOKEN="${HUGGING_FACE_HUB_TOKEN:-$HF_TOKEN}"
+  export HF_HUB_TOKEN="${HF_HUB_TOKEN:-$HF_TOKEN}"
+fi
+
+MODE="python"
+if [ "$USE_CLI" = true ]; then
+  MODE="cli"
+fi
+
 echo "[build-trt] Model: ${MODEL_ID}"
 echo "[build-trt] Output: ${TRTLLM_ENGINE_DIR}"
-echo "[build-trt] Mode: ${USE_CLI:+cli}${USE_CLI:-python}${MINIMAL:+ (minimal)}"
+echo "[build-trt] Mode: ${MODE}${MINIMAL:+ (minimal)}"
 
-# Ensure TRT-LLM is installed; if not, install it
-python - <<'PY'
+echo "[build-trt] Ensuring TensorRT-LLM is available"
+"${PYTHON_EXEC}" - <<'PY'
 try:
     import tensorrt_llm  # noqa: F401
     print("[build-trt] TensorRT-LLM present")
@@ -79,23 +99,37 @@ fi
 
 mkdir -p "${TRTLLM_ENGINE_DIR}"
 
-if $USE_CLI; then
-  # Pre-download HF snapshot to avoid symlink surprises and mid-build network I/O
-  PYTHON_EXEC=${PYTHON_EXEC:-python}
+if [ "$USE_CLI" = true ]; then
   echo "[build-trt] Pre-downloading weights for ${MODEL_ID}..."
-  "$PYTHON_EXEC" - <<'PY'
-from huggingface_hub import snapshot_download
+  "${PYTHON_EXEC}" - <<'PY'
 import os
-repo_id = os.environ.get("MODEL_ID")
-local_dir = os.path.join(os.getcwd(), ".hf", repo_id.replace("/", "-"))
-path = snapshot_download(repo_id=repo_id, local_dir=local_dir, local_dir_use_symlinks=False)
+from huggingface_hub import snapshot_download
+repo_id = os.environ["MODEL_ID"]
+ckpt_dir = os.path.join(os.getcwd(), ".hf", repo_id.replace("/", "-"))
+os.environ.setdefault("HF_HUB_ENABLE_HF_TRANSFER", "1")
+path = snapshot_download(
+    repo_id=repo_id,
+    local_dir=ckpt_dir,
+    local_dir_use_symlinks=False,
+    allow_patterns=[
+        "config.json",
+        "generation_config.json",
+        "tokenizer.json",
+        "tokenizer_config.json",
+        "special_tokens_map.json",
+        "*.safetensors",
+        "model.safetensors*",
+    ],
+    resume_download=True,
+    token=os.environ.get("HUGGING_FACE_HUB_TOKEN") or os.environ.get("HF_TOKEN"),
+)
 print(f"[build-trt] Weights cached at: {path}")
 PY
 
   CKPT_DIR="${PWD}/.hf/${MODEL_ID//\//-}"
   OUT_DIR="${TRTLLM_ENGINE_DIR}"
 
-  if $MINIMAL; then
+  if [ "$MINIMAL" = true ]; then
     echo "[build-trt] Running minimal CLI build..."
     trtllm-build \
       --checkpoint_dir "$CKPT_DIR" \
@@ -118,7 +152,7 @@ PY
   fi
 else
   CMD=(
-    python server/build/build-trt-engine.py
+    "${PYTHON_EXEC}" server/build/build-trt-engine.py
     --model "${MODEL_ID}"
     --output "${TRTLLM_ENGINE_DIR}"
     --dtype "${TRTLLM_DTYPE}"
@@ -126,12 +160,10 @@ else
     --max_output_len "${TRTLLM_MAX_OUTPUT_LEN}"
     --max_batch_size "${TRTLLM_MAX_BATCH_SIZE}"
   )
-  if $MINIMAL; then CMD+=(--minimal); fi
+  if [ "$MINIMAL" = true ]; then CMD+=(--minimal); fi
   echo "[build-trt] Running: ${CMD[*]}"
   "${CMD[@]}"
 fi
 
 echo "[build-trt] Engine directory ready: ${TRTLLM_ENGINE_DIR}"
 echo "[build-trt] To use it: export BACKEND=trtllm; export TRTLLM_ENGINE_DIR=\"${TRTLLM_ENGINE_DIR}\"; bash scripts/03-run-server.sh"
-
-
