@@ -87,26 +87,37 @@ pip install -r requirements-trt.txt
 echo "[install-trt] Ensuring cuda-python is installed"
 pip install --upgrade "cuda-python>=12.4"
 
+if command -v ldconfig >/dev/null 2>&1; then
+  CUDA_LIB_DIR=$(ldconfig -p 2>/dev/null | awk '/libcuda\\.so/{print $NF; exit}' | xargs dirname 2>/dev/null || true)
+  if [ -n "${CUDA_LIB_DIR:-}" ]; then
+    case ":${LD_LIBRARY_PATH:-}:" in
+      *":${CUDA_LIB_DIR}:"*) : ;;
+      *) export LD_LIBRARY_PATH="${CUDA_LIB_DIR}:${LD_LIBRARY_PATH:-}" ;;
+    esac
+  fi
+fi
+
 echo "[install-trt] Checking CUDA Python bindings (cuda-python)"
-if ! python - <<'PY'
+CUDA_CHECK_OUTPUT=$(python - <<'PY' 2>&1)
+import sys
 try:
     from cuda import cuda, cudart  # noqa: WPS433
-except ImportError as exc:
-    raise SystemExit(
-        "cuda-python not installed or failed to import. Install cuda-python>=12.4 "
-        "matching your driver."
-    ) from exc
+except Exception as exc:  # pragma: no cover - runtime dependency only
+    print(f"IMPORT_ERROR: {type(exc).__name__}: {exc}")
+    sys.exit(1)
 else:
     err, _ = cudart.cudaDriverGetVersion()
     if err not in (0,):
-        raise SystemExit(
-            "cuda-python imported but cudart driver query failed. Ensure the runtime "
-            "can access CUDA libraries (LD_LIBRARY_PATH to libcuda.so/libcudart.so)."
-        )
+        print(f"CUDART_ERROR: cudaDriverGetVersion returned {err}")
+        sys.exit(1)
 PY
-then
+
+if [ $? -ne 0 ]; then
   echo "[install-trt] ERROR: cuda-python bindings missing or unusable." >&2
-  echo "[install-trt] Hint: pip install cuda-python>=12.4 and ensure CUDA libs are on LD_LIBRARY_PATH." >&2
+  if [ -n "${CUDA_CHECK_OUTPUT}" ]; then
+    echo "[install-trt] Details: ${CUDA_CHECK_OUTPUT}" >&2
+  fi
+  echo "[install-trt] Hint: ensure cuda-python>=12.4 is installed and CUDA libs (libcuda.so/libcudart.so) are on LD_LIBRARY_PATH." >&2
   exit 1
 fi
 
