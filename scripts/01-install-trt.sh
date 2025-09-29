@@ -19,6 +19,33 @@ source "${VENV_DIR}/bin/activate"
 echo "[install-trt] Installing mpi4py (MPI Python bindings)"
 pip install "mpi4py>=3.1"
 
+echo "[install-trt] Checking Python shared library (libpython)"
+if ! python - <<'PY'
+import ctypes
+import ctypes.util
+import sys
+
+version = f"{sys.version_info.major}.{sys.version_info.minor}"
+lib_name = ctypes.util.find_library(f"python{version}")
+if not lib_name:
+    raise SystemExit(
+        "Unable to locate libpython shared library. Install python3-dev (or python3.10-dev) "
+        "and ensure LD_LIBRARY_PATH includes its directory."
+    )
+
+try:
+    ctypes.CDLL(lib_name)
+except OSError as exc:
+    raise SystemExit(
+        f"Found {lib_name} but failed to load it (LD_LIBRARY_PATH?): {exc}"
+    )
+PY
+then
+  echo "[install-trt] ERROR: libpython shared library missing or unloadable." >&2
+  echo "[install-trt] Hint: apt-get install python3-dev python3.10-dev and re-run bootstrap." >&2
+  exit 1
+fi
+
 echo "[install-trt] Verifying mpi4py can access MPI runtime"
 if ! python - <<'PY'
 import sys

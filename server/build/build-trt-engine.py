@@ -115,7 +115,15 @@ def build_engine(args: argparse.Namespace) -> Path:
     ensure_mpi_runtime()
     token = ensure_token_env()
 
-    from tensorrt_llm.llmapi import BuildConfig, LLM  # type: ignore  # noqa: WPS433
+    try:
+        from tensorrt_llm.llmapi import BuildConfig, LLM  # type: ignore  # noqa: WPS433
+    except ImportError as exc:  # pragma: no cover - runtime dependency only
+        if "libpython" in str(exc).lower():
+            raise BuildError(
+                "TensorRT-LLM failed to import because libpython shared libraries are missing. "
+                "Install python3-dev/python3.10-dev and ensure libpython3.10.so is on LD_LIBRARY_PATH."
+            ) from exc
+        raise
 
     output_dir = Path(args.output).expanduser().resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
