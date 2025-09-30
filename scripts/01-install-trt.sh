@@ -46,8 +46,10 @@ then
   exit 1
 fi
 
-echo "[install-trt] Verifying mpi4py can access MPI runtime"
-if ! python - <<'PY'
+NEED_MPI="${NEED_MPI:-0}"   # set NEED_MPI=1 only for multi-GPU builds
+if [ "$NEED_MPI" = "1" ]; then
+  echo "[install-trt] Verifying mpi4py can access MPI runtime"
+  if ! python - <<'PY'
 import sys
 try:
     from mpi4py import MPI  # noqa: WPS433
@@ -69,17 +71,23 @@ except Exception as exc:  # pragma: no cover - runtime dependency only
 else:
     sys.exit(0)
 PY
-then
-  echo "[install-trt] ERROR: mpi4py is unavailable or MPI runtime missing." >&2
-  echo "[install-trt] Hint: run scripts/00-bootstrap.sh or install OpenMPI (libopenmpi-dev openmpi-bin)." >&2
-  exit 1
+  then
+    echo "[install-trt] ERROR: mpi4py is unavailable or MPI runtime missing." >&2
+    echo "[install-trt] Hint: run scripts/00-bootstrap.sh or install OpenMPI (libopenmpi-dev openmpi-bin)." >&2
+    exit 1
+  fi
+else
+  echo "[install-trt] Skipping MPI check (NEED_MPI=0)"
 fi
 
 echo "[install-trt] Installing base deps (ensures FastAPI==0.115.4)"
 pip install -r requirements-base.txt
 
-echo "[install-trt] Installing TensorRT-LLM wheel"
-pip install --extra-index-url https://pypi.nvidia.com "${TRTLLM_WHEEL_URL}"
+echo "[install-trt] Installing TensorRT-LLM + libs"
+pip install --upgrade --extra-index-url https://pypi.nvidia.com \
+  "${TRTLLM_WHEEL_URL:-tensorrt-llm==0.20.0}" \
+  "tensorrt-cu12-bindings" \
+  "tensorrt-cu12-libs"
 
 echo "[install-trt] Installing TRT extras"
 pip install -r requirements-trt.txt
@@ -98,26 +106,29 @@ if command -v ldconfig >/dev/null 2>&1; then
 fi
 
 echo "[install-trt] Checking CUDA Python bindings (cuda-python)"
-CUDA_CHECK_OUTPUT=$(python - <<'PY' 2>&1)
+CUDA_CHECK_OUTPUT="$(
+python - <<'PY'
 import sys
 try:
-    from cuda import cuda, cudart  # noqa: WPS433
-except Exception as exc:  # pragma: no cover - runtime dependency only
-    print(f"IMPORT_ERROR: {type(exc).__name__}: {exc}")
+    from cuda import cudart  # cuda-python
+except Exception as e:
+    print(f"IMPORT_ERROR: {type(e).__name__}: {e}")
     sys.exit(1)
-else:
-    err, _ = cudart.cudaDriverGetVersion()
-    if err not in (0,):
-        print(f"CUDART_ERROR: cudaDriverGetVersion returned {err}")
-        sys.exit(1)
-PY
 
-if [ $? -ne 0 ]; then
-  echo "[install-trt] ERROR: cuda-python bindings missing or unusable." >&2
-  if [ -n "${CUDA_CHECK_OUTPUT}" ]; then
-    echo "[install-trt] Details: ${CUDA_CHECK_OUTPUT}" >&2
-  fi
-  echo "[install-trt] Hint: ensure cuda-python>=12.4 is installed and CUDA libs (libcuda.so/libcudart.so) are on LD_LIBRARY_PATH." >&2
+err, _ = cudart.cudaDriverGetVersion()
+if err != 0:
+    print(f"CUDART_ERROR: cudaDriverGetVersion -> {err}")
+    sys.exit(1)
+print("OK")
+sys.exit(0)
+PY
+)" || true
+
+if ! printf '%s' "$CUDA_CHECK_OUTPUT" | grep -q '^OK$'; then
+  echo "[install-trt] ERROR: cuda-python not usable." >&2
+  echo "[install-trt] Details:" >&2
+  printf '%s\n' "$CUDA_CHECK_OUTPUT" >&2
+  echo "[install-trt] Hint: ensure cuda-python>=12.4 and that libcuda/libcudart are on LD_LIBRARY_PATH." >&2
   exit 1
 fi
 
