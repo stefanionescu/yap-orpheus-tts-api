@@ -5,6 +5,7 @@ import torch
 
 from ..prompts import build_prompt, resolve_voice
 from ..core.snac_batcher import get_snac_batched, SNAC_DEVICE
+from ..core.custom_tokens import split_custom_tokens, turn_token_into_id
 
 
 _CODE_START = 128257
@@ -23,77 +24,50 @@ _MAX_SAMPLES = int(_MAX_SEC * _SAMPLE_RATE) if _MAX_SEC > 0 else 0
 
 async def aiter_pcm_from_custom_tokens(engine, prompt: str, voice: str, sp) -> bytes:
     from tensorrt_llm.llmapi import SamplingParams  # type: ignore
+    from tensorrt_llm.llmapi import SamplingParams as _SP  # type: ignore
 
-    if not isinstance(sp, SamplingParams):
-        from tensorrt_llm.llmapi import SamplingParams as _SP  # type: ignore
-
-        raw_stops = getattr(sp, "stop_token_ids", None)
-        if raw_stops is None:
-            stop_token_ids = [128009, 128260]
-        else:
-            # Never allow start-of-audio (128257) or any id inside the audio code range.
-            filtered: list[int] = []
-            for token in raw_stops:
-                t = int(token)
-                if (t == _CODE_START) or (_AUDIO_MIN <= t <= _AUDIO_MAX):
-                    continue
-                filtered.append(t)
-            stop_token_ids = filtered if filtered else [128009, 128260]
-
-        sp = _SP(
-            temperature=float(getattr(sp, "temperature", 0.6)),
-            top_p=float(getattr(sp, "top_p", 0.9)),
-            repetition_penalty=float(getattr(sp, "repetition_penalty", 1.12)),
-            max_tokens=int(getattr(sp, "max_tokens", 2048)),
-            stop_token_ids=stop_token_ids,
-        )
+    # Always ensure TRT returns detokenized text with specials preserved, and stop on 128258
+    temperature = float(getattr(sp, "temperature", 0.6)) if hasattr(sp, "temperature") else 0.6
+    top_p = float(getattr(sp, "top_p", 0.8)) if hasattr(sp, "top_p") else 0.8
+    repetition_penalty = float(getattr(sp, "repetition_penalty", 1.1)) if hasattr(sp, "repetition_penalty") else 1.1
+    max_tokens = int(getattr(sp, "max_tokens", 2048)) if hasattr(sp, "max_tokens") else 2048
+    sp = _SP(
+        temperature=temperature,
+        top_p=top_p,
+        repetition_penalty=repetition_penalty,
+        max_tokens=max_tokens,
+        stop_token_ids=[128258],
+        detokenize=True,
+        skip_special_tokens=False,
+        ignore_eos=False,
+    )
 
     formatted = build_prompt(prompt, resolve_voice(voice))
     snacx = get_snac_batched()
 
-    collected: list[int] = []
     buf: list[int] = []
     emitted_samples = 0
-    started = False
+    tok_index = 0
+    prev_len = 0
 
     async for chunk in engine.generate_async(formatted, sp, streaming=True):
         if not chunk.outputs:
             continue
 
-        seq_out = chunk.outputs[0]
-        token_ids = seq_out.token_ids
-        if not token_ids:
+        outs = chunk.outputs or []
+        if not outs:
             continue
-
-        new_tokens = token_ids[len(collected) :]
-        if os.getenv("TTS_DEBUG"):
-            try:
-                print("TOKENS:", new_tokens[:64])
-            except Exception:
-                pass
-        if not new_tokens:
+        piece = getattr(outs[0], "text", "") or ""
+        if len(piece) <= prev_len:
             continue
+        delta = piece[prev_len:]
+        prev_len = len(piece)
 
-        collected.extend(new_tokens)
-
-        stop_stream = False
-        for token in new_tokens:
-            # Look for explicit start-of-audio marker, then consume only in-range codes
-            if token == _CODE_START:
-                # Start a new audio segment; do not treat the marker as a code
-                started = True
-                continue
-
-            if started and (_AUDIO_MIN <= token <= _AUDIO_MAX):
-                code = int(token - _CODE_OFFSET)  # 0..4095
-                buf.append(code)
-            elif started and (token == _FILTER_OUT_ID):
-                # Ignorable marker inside audio segment
-                continue
-            elif started:
-                # First non-audio token after codes -> end of segment
-                stop_stream = True
-                break
+        for token_number in split_custom_tokens(delta):
+            audio_id = turn_token_into_id(token_number, tok_index)
+            tok_index += 1
+            if 0 <= audio_id < 4096:
+                buf.append(int(audio_id))
 
             if len(buf) >= _WINDOW:
                 window = buf[-_WINDOW:]
@@ -116,5 +90,4 @@ async def aiter_pcm_from_custom_tokens(engine, prompt: str, voice: str, sp) -> b
                         return
                     await asyncio.sleep(0)
 
-        if stop_stream:
-            return
+    # Natural termination when stop_token_ids trigger or generator completes
