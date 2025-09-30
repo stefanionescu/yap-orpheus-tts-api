@@ -23,7 +23,7 @@ async def aiter_pcm_from_custom_tokens(engine, prompt: str, voice: str, sp) -> b
             top_p=float(getattr(sp, "top_p", 0.8)),
             repetition_penalty=float(getattr(sp, "repetition_penalty", 1.1)),
             max_tokens=int(getattr(sp, "max_tokens", 2048)),
-            stop_token_ids=list(getattr(sp, "stop_token_ids", [128258, 128009])),
+            stop_token_ids=list(getattr(sp, "stop_token_ids", [49158])),
         )
 
     formatted = build_prompt(prompt, resolve_voice(voice))
