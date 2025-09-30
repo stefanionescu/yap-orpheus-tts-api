@@ -93,7 +93,7 @@ echo "[install-trt] Installing TRT extras"
 pip install -r requirements-trt.txt
 
 echo "[install-trt] Ensuring cuda-python is installed"
-pip install --upgrade "cuda-python>=12.4"
+pip install --upgrade "cuda-python>=12.6,<13"
 
 if command -v ldconfig >/dev/null 2>&1; then
   CUDA_LIB_DIR=$(ldconfig -p 2>/dev/null | awk '/libcuda\\.so/{print $NF; exit}' | xargs dirname 2>/dev/null || true)
@@ -109,18 +109,37 @@ echo "[install-trt] Checking CUDA Python bindings (cuda-python)"
 CUDA_CHECK_OUTPUT="$(
 python - <<'PY'
 import sys
-try:
-    from cuda import cudart  # cuda-python
-except Exception as e:
-    print(f"IMPORT_ERROR: {type(e).__name__}: {e}")
+from importlib.metadata import PackageNotFoundError, version
+
+
+def ok(msg):
+    print(msg)
+    sys.exit(0)
+
+
+def fail(msg):
+    print(msg)
     sys.exit(1)
+
+
+try:
+    ver = version("cuda-python")
+except PackageNotFoundError:
+    fail("MISSING: cuda-python not installed")
+
+major = int(ver.split(".", 1)[0])
+try:
+    if major >= 13:
+        from cuda.bindings import runtime as cudart  # new path in 13.x
+    else:
+        from cuda import cudart  # legacy path in 12.x
+except Exception as exc:  # pragma: no cover - runtime dependency only
+    fail(f"IMPORT_ERROR: {type(exc).__name__}: {exc}")
 
 err, _ = cudart.cudaDriverGetVersion()
 if err != 0:
-    print(f"CUDART_ERROR: cudaDriverGetVersion -> {err}")
-    sys.exit(1)
-print("OK")
-sys.exit(0)
+    fail(f"CUDART_ERROR: cudaDriverGetVersion -> {err}")
+ok("OK")
 PY
 )" || true
 
@@ -128,7 +147,7 @@ if ! printf '%s' "$CUDA_CHECK_OUTPUT" | grep -q '^OK$'; then
   echo "[install-trt] ERROR: cuda-python not usable." >&2
   echo "[install-trt] Details:" >&2
   printf '%s\n' "$CUDA_CHECK_OUTPUT" >&2
-  echo "[install-trt] Hint: ensure cuda-python>=12.4 and that libcuda/libcudart are on LD_LIBRARY_PATH." >&2
+  echo "[install-trt] Hint: ensure cuda-python>=12.6,<13 and that libcuda/libcudart are on LD_LIBRARY_PATH." >&2
   exit 1
 fi
 
