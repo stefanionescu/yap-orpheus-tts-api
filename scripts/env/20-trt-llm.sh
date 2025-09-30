@@ -10,11 +10,8 @@ export TRTLLM_MAX_INPUT_LEN=${TRTLLM_MAX_INPUT_LEN:-2048}
 export TRTLLM_MAX_OUTPUT_LEN=${TRTLLM_MAX_OUTPUT_LEN:-2048}
 export TRTLLM_MAX_BATCH_SIZE=${TRTLLM_MAX_BATCH_SIZE:-16}
 
-# Quieter logs by default.
-export TLLM_LOG_LEVEL=${TLLM_LOG_LEVEL:-WARN}
+# Quieter logs by default (INFO is the lowest level TRT-LLM accepts).
+export TLLM_LOG_LEVEL=${TLLM_LOG_LEVEL:-INFO}
 
 # Keep cuda-python pinned below 13 until upstream issues are resolved.
 export CUDA_PYTHON_PIN="<13"
-
-# Ensure TF32 override is not set for TRT-LLM; it is ignored and triggers warnings.
-unset NVIDIA_TF32_OVERRIDE
