@@ -27,6 +27,38 @@ ENGINE_SENTINELS: tuple[str, ...] = (
 )
 
 
+def ensure_quantization_available() -> None:
+    try:
+        import tensorrt_llm.quantization  # type: ignore # noqa: F401
+    except ImportError as exc:  # pragma: no cover - optional dependency
+        raise BuildError(
+            "TensorRT-LLM quantization utilities are unavailable. "
+            "Install the full tensorrt-llm package with quantization extras."
+        ) from exc
+
+
+def export_quantized_checkpoint(
+    source: Path, export_dir: Path, kv_cache_dtype: str
+) -> Path:
+    from tensorrt_llm.quantization import quantize_and_export  # type: ignore
+
+    export_dir.mkdir(parents=True, exist_ok=True)
+    if any(export_dir.iterdir()):
+        print(f"[build-trt] Using existing quantized checkpoint at: {export_dir}")
+        return export_dir
+
+    print(
+        "[build-trt] Exporting quantized checkpoint (kv_cache_dtype="
+        f"{kv_cache_dtype}) → {export_dir}"
+    )
+    quantize_and_export(
+        model=str(source),
+        export_dir=str(export_dir),
+        kv_cache_dtype=kv_cache_dtype,
+    )
+    return export_dir
+
+
 class BuildError(RuntimeError):
     """Raised when the engine build fails."""
 
@@ -134,18 +166,21 @@ def build_engine(args: argparse.Namespace) -> Path:
     output_dir = Path(args.output).expanduser().resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    max_in = 128 if args.minimal else int(args.max_input_len)
-    max_out = 128 if args.minimal else int(args.max_output_len)
-    max_bsz = 1 if args.minimal else int(args.max_batch_size)
+    max_in = int(args.max_input_len)
+    max_out = int(args.max_output_len)
+    max_bsz = int(args.max_batch_size)
 
     build_cfg = BuildConfig()
     build_cfg.max_input_len = max_in
-    build_cfg.max_seq_len = max_in + max_out
+    total_seq = max_in + max_out
+    build_cfg.max_seq_len = total_seq
     build_cfg.max_batch_size = max_bsz
     build_cfg.precision = args.dtype
     try:
+        # Cap token scheduling to avoid over-allocating KV cache pages.
+        build_cfg.max_num_tokens = max(1, max_bsz * total_seq)  # type: ignore[attr-defined]
         # Hint the typical batched token count so tactic selection stays efficient.
-        build_cfg.opt_num_tokens = max(256, min(max_in, max_bsz * 256))  # type: ignore[attr-defined]
+        build_cfg.opt_num_tokens = max(256, min(total_seq, max_bsz * 256))  # type: ignore[attr-defined]
         build_cfg.profiling_verbosity = "layer_names_only"  # type: ignore[attr-defined]
         build_cfg.force_num_profiles = 1  # type: ignore[attr-defined]
         build_cfg.monitor_memory = True  # type: ignore[attr-defined]
@@ -160,8 +195,20 @@ def build_engine(args: argparse.Namespace) -> Path:
 
     model_path = resolve_model_source(args.model, token)
 
+    model_for_build: Path
+    if args.kv_cache_dtype:
+        ensure_quantization_available()
+        export_dir = (
+            Path(args.quantized_dir).expanduser().resolve()
+            if args.quantized_dir
+            else output_dir / "quantized-checkpoint"
+        )
+        model_for_build = export_quantized_checkpoint(model_path, export_dir, args.kv_cache_dtype)
+    else:
+        model_for_build = model_path
+
     print("[build-trt] Initializing LLM API (this can take a few minutes)...")
-    llm = LLM(model=str(model_path), build_config=build_cfg, dtype=args.dtype)
+    llm = LLM(model=str(model_for_build), build_config=build_cfg, dtype=args.dtype)
 
     print("[build-trt] Saving engine artefacts...")
     llm.save(str(output_dir))
@@ -186,18 +233,34 @@ def ensure_engine_files(output_dir: Path) -> None:
 
 def parse_args(argv: Optional[Iterable[str]] = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Build TensorRT-LLM engine for Orpheus")
+    kv_env = os.getenv("TRTLLM_KV_CACHE_DTYPE")
+    if kv_env:
+        kv_env = kv_env.lower()
+        if kv_env not in {"fp8", "int8"}:
+            kv_env = None
     parser.add_argument("--model", default=os.getenv("MODEL_ID", "canopylabs/orpheus-3b-0.1-ft"))
     parser.add_argument("--output", default=os.getenv("TRTLLM_ENGINE_DIR", "./models/orpheus-trt"))
     parser.add_argument("--dtype", default="float16", choices=["float16", "bfloat16"])
-    parser.add_argument("--max_input_len", type=int, default=2048)
+    parser.add_argument("--max_input_len", type=int, default=128)
     parser.add_argument("--max_output_len", type=int, default=2048)
     parser.add_argument("--max_batch_size", type=int, default=1)
     parser.add_argument(
-        "--minimal",
-        action="store_true",
-        help="Build a tiny engine (128/128/1) to validate toolchain",
+        "--kv_cache_dtype",
+        choices=["fp8", "int8"],
+        default=kv_env,
+        help="Enable KV-cache quantization via quantize_and_export",
     )
-    return parser.parse_args(argv)
+    parser.add_argument(
+        "--quantized_dir",
+        default=os.getenv("TRTLLM_QUANTIZED_DIR", ""),
+        help="Directory to write/read quantized checkpoint when kv_cache_dtype is set",
+    )
+    args = parser.parse_args(argv)
+    if not args.kv_cache_dtype:
+        args.kv_cache_dtype = None
+    if not args.quantized_dir:
+        args.quantized_dir = ""
+    return args
 
 
 def main(argv: Optional[Iterable[str]] = None) -> int:

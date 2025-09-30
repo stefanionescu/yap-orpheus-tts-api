@@ -13,8 +13,12 @@ export ORPHEUS_MAX_TOKENS=${ORPHEUS_MAX_TOKENS:-2048}
 
 # Engine build/runtime defaults (overridable)
 export TRTLLM_DTYPE=${TRTLLM_DTYPE:-bfloat16}            # float16|bfloat16
-export TRTLLM_MAX_INPUT_LEN=${TRTLLM_MAX_INPUT_LEN:-2048}
+export TRTLLM_MAX_INPUT_LEN=${TRTLLM_MAX_INPUT_LEN:-128}
 export TRTLLM_MAX_OUTPUT_LEN=${TRTLLM_MAX_OUTPUT_LEN:-2048}
 export TRTLLM_MAX_BATCH_SIZE=${TRTLLM_MAX_BATCH_SIZE:-16}
+
+# KV-cache quantization controls (empty disables kv quantization)
+export TRTLLM_KV_CACHE_DTYPE=${TRTLLM_KV_CACHE_DTYPE:-}
+export TRTLLM_QUANTIZED_DIR=${TRTLLM_QUANTIZED_DIR:-}
 
 

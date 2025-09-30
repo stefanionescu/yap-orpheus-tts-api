@@ -10,14 +10,16 @@ load_env_if_present
 : "${MODEL_ID:=canopylabs/orpheus-3b-0.1-ft}"
 : "${TRTLLM_ENGINE_DIR:=$PWD/models/orpheus-trt}"
 : "${TRTLLM_DTYPE:=bfloat16}"
-: "${TRTLLM_MAX_INPUT_LEN:=2048}"
+: "${TRTLLM_MAX_INPUT_LEN:=128}"
 : "${TRTLLM_MAX_OUTPUT_LEN:=2048}"
 : "${TRTLLM_MAX_BATCH_SIZE:=16}"
+: "${TRTLLM_KV_CACHE_DTYPE:=}"
+: "${TRTLLM_QUANTIZED_DIR:=}"
 : "${PYTHON_EXEC:=python}"
 
 usage() {
   cat <<USAGE
-Usage: $0 [--model ID] [--output DIR] [--dtype float16|bfloat16] [--max-input-len N] [--max-output-len N] [--max-batch-size N] [--minimal] [--cli]
+Usage: $0 [--model ID] [--output DIR] [--dtype float16|bfloat16] [--max-input-len N] [--max-output-len N] [--max-batch-size N] [--kv-cache-dtype fp8|int8] [--quantized-dir DIR] [--minimal] [--cli]
 
 Build a TensorRT-LLM engine directory for Orpheus.
 
@@ -32,6 +34,8 @@ Defaults:
   --max-input-len   ${TRTLLM_MAX_INPUT_LEN}
   --max-output-len  ${TRTLLM_MAX_OUTPUT_LEN}
   --max-batch-size  ${TRTLLM_MAX_BATCH_SIZE}
+  --kv-cache-dtype  ${TRTLLM_KV_CACHE_DTYPE:-<unset>}
+  --quantized-dir   ${TRTLLM_QUANTIZED_DIR:-<unset>}
 USAGE
 }
 
@@ -46,6 +50,8 @@ while [[ $# -gt 0 ]]; do
     --max-input-len) TRTLLM_MAX_INPUT_LEN="$2"; shift 2 ;;
     --max-output-len) TRTLLM_MAX_OUTPUT_LEN="$2"; shift 2 ;;
     --max-batch-size) TRTLLM_MAX_BATCH_SIZE="$2"; shift 2 ;;
+    --kv-cache-dtype) TRTLLM_KV_CACHE_DTYPE="$2"; shift 2 ;;
+    --quantized-dir) TRTLLM_QUANTIZED_DIR="$2"; shift 2 ;;
     --minimal) MINIMAL=true; shift ;;
     --cli) USE_CLI=true; shift ;;
     -h|--help) usage; exit 0 ;;
@@ -115,6 +121,35 @@ PY
   CKPT_DIR="${PWD}/.hf/${MODEL_ID//\//-}"
   OUT_DIR="${TRTLLM_ENGINE_DIR}"
 
+  # Optional quantize-and-export for KV cache
+  if [ -n "${TRTLLM_KV_CACHE_DTYPE}" ]; then
+    echo "[build-trt] Exporting quantized checkpoint (kv_cache_dtype=${TRTLLM_KV_CACHE_DTYPE})..."
+    QUANT_DIR="${TRTLLM_QUANTIZED_DIR:-${OUT_DIR}/quantized-checkpoint}"
+    export CKPT_DIR QUANT_DIR TRTLLM_KV_CACHE_DTYPE
+    mkdir -p "${QUANT_DIR}"
+    "${PYTHON_EXEC}" - <<'PY'
+import os
+from pathlib import Path
+from tensorrt_llm.quantization import quantize_and_export
+src = os.environ["CKPT_DIR"]
+dst = os.environ["QUANT_DIR"]
+kv = os.environ["TRTLLM_KV_CACHE_DTYPE"].lower()
+Path(dst).mkdir(parents=True, exist_ok=True)
+if any(Path(dst).iterdir()):
+    print(f"[build-trt] Using existing quantized checkpoint at: {dst}")
+else:
+    print(f"[build-trt] quantize_and_export(model={src}, export_dir={dst}, kv_cache_dtype={kv})")
+    quantize_and_export(model=src, export_dir=dst, kv_cache_dtype=kv)
+print(f"[build-trt] Quantized checkpoint ready: {dst}")
+PY
+    CKPT_DIR="${QUANT_DIR}"
+  fi
+
+  CONTEXT_FMHA_ARGS=""
+  if [ "${TRTLLM_KV_CACHE_DTYPE}" = "fp8" ]; then
+    CONTEXT_FMHA_ARGS=" --use_fp8_context_fmha enable"
+  fi
+
   if [ "$MINIMAL" = true ]; then
     echo "[build-trt] Running minimal CLI build..."
     trtllm-build \
@@ -124,7 +159,7 @@ PY
       --max_seq_len 256 \
       --max_batch_size 1 \
       --remove_input_padding enable \
-      --log_level info
+      --log_level info${CONTEXT_FMHA_ARGS}
   else
     echo "[build-trt] Running full CLI build..."
     trtllm-build \
@@ -134,7 +169,7 @@ PY
       --max_seq_len "$((TRTLLM_MAX_INPUT_LEN + TRTLLM_MAX_OUTPUT_LEN))" \
       --max_batch_size "${TRTLLM_MAX_BATCH_SIZE}" \
       --remove_input_padding enable \
-      --log_level info
+      --log_level info${CONTEXT_FMHA_ARGS}
   fi
 else
   CMD=(
@@ -146,6 +181,8 @@ else
     --max_output_len "${TRTLLM_MAX_OUTPUT_LEN}"
     --max_batch_size "${TRTLLM_MAX_BATCH_SIZE}"
   )
+  if [ -n "${TRTLLM_KV_CACHE_DTYPE}" ]; then CMD+=(--kv_cache_dtype "${TRTLLM_KV_CACHE_DTYPE}"); fi
+  if [ -n "${TRTLLM_QUANTIZED_DIR}" ]; then CMD+=(--quantized_dir "${TRTLLM_QUANTIZED_DIR}"); fi
   if [ "$MINIMAL" = true ]; then CMD+=(--minimal); fi
   echo "[build-trt] Running: ${CMD[*]}"
   "${CMD[@]}"
