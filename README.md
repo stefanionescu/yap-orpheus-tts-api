@@ -36,6 +36,7 @@ curl -s http://127.0.0.1:8000/healthz
   - `SNAC_TORCH_COMPILE` (0), `SNAC_MAX_BATCH` (64), `SNAC_BATCH_TIMEOUT_MS` (10)
   - vLLM: see `server/vllm_config.py` and `scripts/env/tts.sh`
   - TRT-LLM: set `BACKEND=trtllm` and `TRTLLM_ENGINE_DIR=/path/to/engine_dir`; see `scripts/env/trt.sh`
+  - TRT-LLM cache (optional): `TRTLLM_CACHE_DIR` to control where HF snapshots are stored (defaults to `./.hf`)
 
 ### Use the TensorRT-LLM backend (Linux + NVIDIA)
 
@@ -121,11 +122,14 @@ bash scripts/stop.sh
 # Also remove venv and caches from install step
 bash scripts/stop.sh --clean-install
 
+# Also remove TensorRT-LLM artefacts (engine outputs and local HF cache from TRT builds)
+bash scripts/stop.sh --clean-trt
+
 # Also clean system apt caches from bootstrap step
 bash scripts/stop.sh --clean-system
 
 # Delete everything
-bash scripts/stop.sh --clean-install --clean-system
+bash scripts/stop.sh --clean-install --clean-trt --clean-system
 ```
 
 ### Tests (optional)
