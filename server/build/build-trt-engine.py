@@ -144,6 +144,8 @@ def build_engine(args: argparse.Namespace) -> Path:
     build_cfg.max_batch_size = max_bsz
     build_cfg.precision = args.dtype
     try:
+        # Hint the typical batched token count so tactic selection stays efficient.
+        build_cfg.opt_num_tokens = max(256, min(max_in, max_bsz * 256))  # type: ignore[attr-defined]
         build_cfg.profiling_verbosity = "layer_names_only"  # type: ignore[attr-defined]
         build_cfg.force_num_profiles = 1  # type: ignore[attr-defined]
         build_cfg.monitor_memory = True  # type: ignore[attr-defined]
@@ -159,7 +161,7 @@ def build_engine(args: argparse.Namespace) -> Path:
     model_path = resolve_model_source(args.model, token)
 
     print("[build-trt] Initializing LLM API (this can take a few minutes)...")
-    llm = LLM(model=str(model_path), build_config=build_cfg)
+    llm = LLM(model=str(model_path), build_config=build_cfg, dtype=args.dtype)
 
     print("[build-trt] Saving engine artefacts...")
     llm.save(str(output_dir))

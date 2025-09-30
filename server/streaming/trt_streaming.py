@@ -20,10 +20,12 @@ async def aiter_pcm_from_custom_tokens(engine, prompt: str, voice: str, sp) -> b
         from tensorrt_llm.llmapi import SamplingParams as _SP  # type: ignore
         sp = _SP(
             temperature=float(getattr(sp, "temperature", 0.6)),
-            top_p=float(getattr(sp, "top_p", 0.8)),
-            repetition_penalty=float(getattr(sp, "repetition_penalty", 1.1)),
+            top_p=float(getattr(sp, "top_p", 0.9)),
+            repetition_penalty=float(getattr(sp, "repetition_penalty", 1.05)),
             max_tokens=int(getattr(sp, "max_tokens", 2048)),
-            stop_token_ids=list(getattr(sp, "stop_token_ids", [49158])),
+            stop_token_ids=list(
+                getattr(sp, "stop_token_ids", [128009, 128257, _FILTER_OUT_ID])
+            ),
         )
 
     formatted = build_prompt(prompt, resolve_voice(voice))
@@ -42,13 +44,20 @@ async def aiter_pcm_from_custom_tokens(engine, prompt: str, voice: str, sp) -> b
     if not raw_token_ids:
         return
 
-    ids = torch.tensor(raw_token_ids, dtype=torch.int64)
-    mask = (ids >= _AUDIO_START_ID) & (ids <= _AUDIO_STOP_ID)
-    audio_ids = ids[mask]
-    if audio_ids.numel() == 0:
+    audio_tokens: list[int] = []
+    started = False
+    for token in raw_token_ids:
+        if _AUDIO_START_ID <= token <= _AUDIO_STOP_ID:
+            started = True
+            if token != _FILTER_OUT_ID:
+                audio_tokens.append(token)
+        elif started:
+            break
+
+    if not audio_tokens:
         return
 
-    audio_ids = audio_ids[audio_ids != _FILTER_OUT_ID]
+    audio_ids = torch.tensor(audio_tokens, dtype=torch.int64)
     codes = ((audio_ids - _AUDIO_START_ID) % 4096).tolist()
 
     buf: list[int] = []
@@ -67,5 +76,4 @@ async def aiter_pcm_from_custom_tokens(engine, prompt: str, voice: str, sp) -> b
             if pcm:
                 yield pcm
                 await asyncio.sleep(0)
-
 
