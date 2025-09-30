@@ -186,9 +186,8 @@ async def tts_ws(ws: WebSocket):
                         top_p=float(top_p if (top_p is not None) else 0.8),
                         repetition_penalty=float(repetition_penalty if (repetition_penalty is not None) else 1.1),
                         max_tokens=int(num_predict if (num_predict is not None) else int(os.getenv("ORPHEUS_MAX_TOKENS", "2048"))),
-                        # Align stop behavior with inference-experiments: prefer Orpheus stop id 49158
-                        # Keep compatibility if callers override via meta
-                        stop_token_ids=[49158],
+                        # EOS + end-of-turn; never include audio start
+                        stop_token_ids=[128009, 128260],
                     )
                     if BACKEND == "vllm":
                         sp_kwargs.update(dict(

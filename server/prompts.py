@@ -11,7 +11,7 @@ MODEL_ID = os.getenv("MODEL_ID", "canopylabs/orpheus-3b-0.1-ft")
 # Cache tokenizer at import time
 _tok = AutoTokenizer.from_pretrained(MODEL_ID)
 _SOH = _tok.decode([128259]) + (_tok.bos_token or "")
-_END = _tok.decode([128009, 128260, 128261, 128257])  # EOT/EOH/... + START-OF-AUDIO
+_END = _tok.decode([128260, 128261])  # EOH closers only; no EOS, no START-OF-AUDIO
 
 def resolve_voice(v: str) -> str:
     if not v:

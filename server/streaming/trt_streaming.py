@@ -7,11 +7,14 @@ from ..prompts import build_prompt, resolve_voice
 from ..core.snac_batcher import get_snac_batched, SNAC_DEVICE
 
 
-_AUDIO_START_ID = 128266
-_AUDIO_STOP_ID = 156938
+_CODE_START = 128257
+_CODE_OFFSET = 128266
+_CODE_SIZE = 4096
+_AUDIO_MIN = _CODE_OFFSET
+_AUDIO_MAX = _CODE_OFFSET + _CODE_SIZE - 1
 _FILTER_OUT_ID = 128258
 _FRAME = 7
-_WINDOW = 28
+_WINDOW = int(os.getenv("TTS_DECODE_WINDOW", "14"))
 _SAMPLE_RATE = int(os.getenv("SNAC_SR", "24000"))
 _MAX_SEC = float(os.getenv("TTS_MAX_SEC", "0"))
 # Optional wall-clock guard; zero disables the cap.
@@ -26,15 +29,16 @@ async def aiter_pcm_from_custom_tokens(engine, prompt: str, voice: str, sp) -> b
 
         raw_stops = getattr(sp, "stop_token_ids", None)
         if raw_stops is None:
-            stop_token_ids = [128009]
+            stop_token_ids = [128009, 128260]
         else:
-            # Never allow any stop id inside the audio token range.
+            # Never allow start-of-audio (128257) or any id inside the audio code range.
             filtered: list[int] = []
             for token in raw_stops:
                 t = int(token)
-                if not (_AUDIO_START_ID <= t <= _AUDIO_STOP_ID):
-                    filtered.append(t)
-            stop_token_ids = filtered if filtered else [128009]
+                if (t == _CODE_START) or (_AUDIO_MIN <= t <= _AUDIO_MAX):
+                    continue
+                filtered.append(t)
+            stop_token_ids = filtered if filtered else [128009, 128260]
 
         sp = _SP(
             temperature=float(getattr(sp, "temperature", 0.6)),
@@ -74,11 +78,20 @@ async def aiter_pcm_from_custom_tokens(engine, prompt: str, voice: str, sp) -> b
 
         stop_stream = False
         for token in new_tokens:
-            if _AUDIO_START_ID <= token <= _AUDIO_STOP_ID:
+            # Look for explicit start-of-audio marker, then consume only in-range codes
+            if token == _CODE_START:
+                # Start a new audio segment; do not treat the marker as a code
                 started = True
-                if token != _FILTER_OUT_ID:
-                    buf.append(int((token - _AUDIO_START_ID) % 4096))
+                continue
+
+            if started and (_AUDIO_MIN <= token <= _AUDIO_MAX):
+                code = int(token - _CODE_OFFSET)  # 0..4095
+                buf.append(code)
+            elif started and (token == _FILTER_OUT_ID):
+                # Ignorable marker inside audio segment
+                continue
             elif started:
+                # First non-audio token after codes -> end of segment
                 stop_stream = True
                 break
 
