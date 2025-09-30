@@ -28,10 +28,13 @@ async def aiter_pcm_from_custom_tokens(engine, prompt: str, voice: str, sp) -> b
         if raw_stops is None:
             stop_token_ids = [128009]
         else:
-            # 128257 is the start-of-audio sentinel; never treat it as a stop token.
-            stop_token_ids = [int(token) for token in raw_stops if int(token) != 128257]
-            if not stop_token_ids:
-                stop_token_ids = [128009]
+            # Never allow any stop id inside the audio token range.
+            filtered: list[int] = []
+            for token in raw_stops:
+                t = int(token)
+                if not (_AUDIO_START_ID <= t <= _AUDIO_STOP_ID):
+                    filtered.append(t)
+            stop_token_ids = filtered if filtered else [128009]
 
         sp = _SP(
             temperature=float(getattr(sp, "temperature", 0.6)),
@@ -49,7 +52,7 @@ async def aiter_pcm_from_custom_tokens(engine, prompt: str, voice: str, sp) -> b
     emitted_samples = 0
     started = False
 
-    async for chunk in engine.generate_async([formatted], sp, streaming=True):
+    async for chunk in engine.generate_async(formatted, sp, streaming=True):
         if not chunk.outputs:
             continue
 
@@ -59,6 +62,11 @@ async def aiter_pcm_from_custom_tokens(engine, prompt: str, voice: str, sp) -> b
             continue
 
         new_tokens = token_ids[len(collected) :]
+        if os.getenv("TTS_DEBUG"):
+            try:
+                print("TOKENS:", new_tokens[:64])
+            except Exception:
+                pass
         if not new_tokens:
             continue
 
