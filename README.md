@@ -26,6 +26,7 @@ bash scripts/run-all.sh
 
 # 3) Health check
 curl -s http://127.0.0.1:8000/healthz
+
 ```
 
 ### Environment
