@@ -41,6 +41,7 @@ def export_quantized_checkpoint(
     source: Path, export_dir: Path, kv_cache_dtype: str
 ) -> Path:
     from tensorrt_llm.quantization import quantize_and_export  # type: ignore
+    import inspect
 
     export_dir.mkdir(parents=True, exist_ok=True)
     if any(export_dir.iterdir()):
@@ -51,16 +52,35 @@ def export_quantized_checkpoint(
         "[build-trt] Exporting quantized checkpoint (kv_cache_dtype="
         f"{kv_cache_dtype}) → {export_dir}"
     )
-    try:
-        # TensorRT-LLM 0.20 renamed the first parameter to `model_dir`; use positional args
-        quantize_and_export(str(source), str(export_dir), kv_cache_dtype=kv_cache_dtype)
-    except TypeError:
-        # Older releases expect keyword `model`
-        quantize_and_export(
-            model=str(source),
-            export_dir=str(export_dir),
-            kv_cache_dtype=kv_cache_dtype,
+    sig = inspect.signature(quantize_and_export)
+    params = sig.parameters
+
+    kwargs: dict[str, str] = {}
+    # Newer releases (0.20+) use keyword-only `model_dir`
+    if "model_dir" in params:
+        kwargs["model_dir"] = str(source)
+    elif "checkpoint_dir" in params:
+        kwargs["checkpoint_dir"] = str(source)
+    elif "model" in params:
+        kwargs["model"] = str(source)
+    else:
+        raise BuildError(
+            "Unsupported quantize_and_export signature: expected one of model_dir/checkpoint_dir/model"
         )
+
+    if "export_dir" in params:
+        kwargs["export_dir"] = str(export_dir)
+    elif "output_dir" in params:
+        kwargs["output_dir"] = str(export_dir)
+    else:
+        raise BuildError(
+            "Unsupported quantize_and_export signature: missing export/output dir parameter"
+        )
+
+    if "kv_cache_dtype" not in params:
+        raise BuildError("quantize_and_export does not accept kv_cache_dtype on this version")
+
+    quantize_and_export(kv_cache_dtype=kv_cache_dtype, **kwargs)
     return export_dir
 
 
