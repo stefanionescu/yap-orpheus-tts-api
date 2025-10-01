@@ -15,7 +15,7 @@ _AUDIO_MIN = _CODE_OFFSET
 _AUDIO_MAX = _CODE_OFFSET + _CODE_SIZE - 1
 _FILTER_OUT_ID = 128258
 _FRAME = 7
-_WINDOW = int(os.getenv("TTS_DECODE_WINDOW", "14"))
+_WINDOW = int(os.getenv("TTS_DECODE_WINDOW", "7"))
 _SAMPLE_RATE = int(os.getenv("SNAC_SR", "24000"))
 _MAX_SEC = float(os.getenv("TTS_MAX_SEC", "0"))
 # Optional wall-clock guard; zero disables the cap.
@@ -69,25 +69,27 @@ async def aiter_pcm_from_custom_tokens(engine, prompt: str, voice: str, sp) -> b
             if 0 <= audio_id < 4096:
                 buf.append(int(audio_id))
 
+            # Whenever we have >= 7 tokens, decode and emit only the delta
             if len(buf) >= _WINDOW:
-                window = buf[-_WINDOW:]
-                arr = np.asarray(window, dtype=np.int32).reshape(-1, _FRAME)
-
+                arr = np.asarray(buf[-_WINDOW:], dtype=np.int32).reshape(-1, _FRAME)
                 codes_0 = torch.from_numpy(arr[:, 0]).unsqueeze(0).to(SNAC_DEVICE)
-                codes_1 = (
-                    torch.from_numpy(arr[:, [1, 4]].reshape(-1)).unsqueeze(0).to(SNAC_DEVICE)
-                )
-                codes_2 = (
-                    torch.from_numpy(arr[:, [2, 3, 5, 6]].reshape(-1)).unsqueeze(0).to(SNAC_DEVICE)
-                )
-
-                audio = await snacx.decode_codes([codes_0, codes_1, codes_2])
-                pcm = (np.clip(audio, -1.0, 1.0) * 32767.0).astype(np.int16).tobytes()
-                if pcm:
-                    yield pcm
-                    emitted_samples += len(pcm) // 2  # int16 mono samples
-                    if _MAX_SAMPLES and emitted_samples >= _MAX_SAMPLES:
-                        return
-                    await asyncio.sleep(0)
+                codes_1 = torch.from_numpy(arr[:, [1, 4]].reshape(-1)).unsqueeze(0).to(SNAC_DEVICE)
+                codes_2 = torch.from_numpy(arr[:, [2, 3, 5, 6]].reshape(-1)).unsqueeze(0).to(SNAC_DEVICE)
+                
+                # Decode the full window to get complete audio
+                audio = await snacx.decode_codes([codes_0, codes_1, codes_2])  # [-1,1], full
+                
+                # Convert to int16 PCM
+                wav = (np.clip(audio, -1.0, 1.0) * 32767.0).astype(np.int16)
+                
+                # Emit only what we haven't sent yet
+                if emitted_samples < wav.shape[-1]:
+                    new_pcm = wav[emitted_samples:].tobytes()
+                    emitted_samples = wav.shape[-1]
+                    if new_pcm:
+                        yield new_pcm
+                        if _MAX_SAMPLES and emitted_samples >= _MAX_SAMPLES:
+                            return
+                await asyncio.sleep(0)
 
     # Natural termination when stop_token_ids trigger or generator completes
