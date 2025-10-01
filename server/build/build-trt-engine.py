@@ -129,13 +129,28 @@ def export_quantized_checkpoint(
             model_id_for_tokenizer = os.environ.get("MODEL_ID", "canopylabs/orpheus-3b-0.1-ft")
             tokenizer = AutoTokenizer.from_pretrained(model_id_for_tokenizer)
 
-        # Use shared calibration samples module (varied, short)
+        # Use shared calibration samples module (varied, short), load by path to
+        # work whether this script is executed as a module or as a file
+        sample_texts: list[str] = []
         try:
-            from .calibration_samples import SAMPLES as _CAL_SAMPLES  # type: ignore
+            import importlib.util
+            cal_path = Path(__file__).with_name("calibration_samples.py")
+            spec = importlib.util.spec_from_file_location("calib_samples", str(cal_path))
+            if spec and spec.loader:
+                mod = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(mod)  # type: ignore[attr-defined]
+                sample_texts = list(getattr(mod, "SAMPLES", []))
         except Exception:
-            from server.build.calibration_samples import SAMPLES as _CAL_SAMPLES  # type: ignore
-        sample_texts = list(_CAL_SAMPLES)
-        desired_batch = calib_batch_size or int(os.environ.get("TRTLLM_MAX_BATCH_SIZE", "8"))
+            sample_texts = []
+        if not sample_texts:
+            # Minimal safe fallback if samples module is unavailable
+            sample_texts = [
+                "Hello there!",
+                "Please read this sentence clearly and naturally.",
+                "Good morning, how can I help you today?",
+                "Welcome to our service. Your order has shipped.",
+            ]
+        desired_batch = calib_batch_size or int(os.environ.get("TRTLLM_MAX_BATCH_SIZE", "16"))
         desired_calib_size = int(os.environ.get("TRTLLM_CALIB_SIZE", str(max(32, desired_batch * 4))))
         if len(sample_texts) < desired_calib_size:
             reps = (desired_calib_size + len(sample_texts) - 1) // len(sample_texts)
