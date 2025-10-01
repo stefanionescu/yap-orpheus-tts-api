@@ -97,7 +97,6 @@ def export_quantized_checkpoint(
         "device",
         "calib_dataset",
         "dtype",
-        "qformat",
         "calib_size",
         "batch_size",
         "calib_max_seq_length",
@@ -108,6 +107,9 @@ def export_quantized_checkpoint(
         "seed",
         "tokenizer_max_seq_length",
     }
+    # Only treat qformat as required if we are performing weight quantization
+    if weight_quant != "none":
+        required_kwonly = set(required_kwonly) | {"qformat"}
     missing_required = [name for name in required_kwonly if name in params and name not in kwargs]
 
     if missing_required:
@@ -202,19 +204,15 @@ def export_quantized_checkpoint(
             "tokenizer_max_seq_length": int(token_max_seq),
         }
 
-        # Quantization format: prefer enum if available, else string
-        # Decide quantization format for weights if requested
-        qformat_value: Optional[object] = None
-        try:
-            from tensorrt_llm.quantization import QuantMode  # type: ignore
-            if weight_quant in {"auto8", "w8a8"}:
-                qformat_value = getattr(QuantMode, "SMOOTHQUANT", getattr(QuantMode, "PTQ", "ptq"))
-            else:
-                qformat_value = getattr(QuantMode, "PTQ", "ptq")
-        except Exception:
-            qformat_value = "smoothquant" if weight_quant in {"auto8", "w8a8"} else "ptq"
-
-        defaults["qformat"] = qformat_value
+        # Quantization format: prefer enum if available, else a known string.
+        if weight_quant != "none":
+            qformat_value: Optional[object] = None
+            try:
+                from tensorrt_llm.quantization import QuantMode  # type: ignore
+                qformat_value = getattr(QuantMode, "SMOOTHQUANT", None)
+            except Exception:
+                qformat_value = None
+            defaults["qformat"] = qformat_value or "smoothquant"
 
         for name in list(defaults.keys()):
             if name in params and name not in kwargs:
@@ -227,9 +225,36 @@ def export_quantized_checkpoint(
     if "quantize_lm_head" in params and weight_quant != "none":
         kwargs.setdefault("quantize_lm_head", True)
 
-    # Attempt the export; if it fails due to missing args, surface the error.
-    try:
+    # Attempt the export; if it fails due to unsupported qformat, try fallbacks.
+    def _try_export(qfmt: Optional[object]) -> None:
+        if qfmt is None and "qformat" in kwargs:
+            kwargs.pop("qformat", None)
+        elif qfmt is not None:
+            kwargs["qformat"] = qfmt
         quantize_and_export(kv_cache_dtype=kv_cache_dtype, **kwargs)
+
+    try:
+        _try_export(kwargs.get("qformat"))
+    except ValueError as exc:
+        msg = str(exc).lower()
+        if "unsupported quantization format" in msg:
+            # Build fallback candidates
+            candidates: list[object] = []
+            if weight_quant != "none":
+                candidates.extend(["smoothquant", "sq"])
+            else:
+                candidates.extend([None, "none"])  # kv-only
+            for cand in candidates:
+                try:
+                    _try_export(cand)
+                    break
+                except ValueError:
+                    continue
+            else:
+                print(f"[build-trt] ERROR: quantize_and_export failed: {exc}")
+                raise BuildError("quantize_and_export rejected provided qformat values.") from exc
+        else:
+            raise
     except TypeError as exc:
         print(f"[build-trt] ERROR: quantize_and_export failed: {exc}")
         raise BuildError(
