@@ -107,8 +107,8 @@ def export_quantized_checkpoint(
         "seed",
         "tokenizer_max_seq_length",
     }
-    # Only treat qformat as required if we are performing weight quantization
-    if weight_quant != "none":
+    # Treat qformat as required if present in signature; provide a default below
+    if "qformat" in params:
         required_kwonly = set(required_kwonly) | {"qformat"}
     missing_required = [name for name in required_kwonly if name in params and name not in kwargs]
 
@@ -205,14 +205,16 @@ def export_quantized_checkpoint(
         }
 
         # Quantization format: prefer enum if available, else a known string.
-        if weight_quant != "none":
-            qformat_value: Optional[object] = None
-            try:
-                from tensorrt_llm.quantization import QuantMode  # type: ignore
+        qformat_value: Optional[object] = None
+        try:
+            from tensorrt_llm.quantization import QuantMode  # type: ignore
+            if weight_quant != "none":
                 qformat_value = getattr(QuantMode, "SMOOTHQUANT", None)
-            except Exception:
-                qformat_value = None
-            defaults["qformat"] = qformat_value or "smoothquant"
+            else:
+                qformat_value = getattr(QuantMode, "NONE", None)
+        except Exception:
+            qformat_value = None
+        defaults["qformat"] = qformat_value or ("smoothquant" if weight_quant != "none" else "none")
 
         for name in list(defaults.keys()):
             if name in params and name not in kwargs:
@@ -241,9 +243,9 @@ def export_quantized_checkpoint(
             # Build fallback candidates
             candidates: list[object] = []
             if weight_quant != "none":
-                candidates.extend(["smoothquant", "sq"])
+                candidates.extend(["smoothquant", "sq", "awq", "woq_int8"])
             else:
-                candidates.extend([None, "none"])  # kv-only
+                candidates.extend(["none"])  # kv-only requires explicit qformat
             for cand in candidates:
                 try:
                     _try_export(cand)
