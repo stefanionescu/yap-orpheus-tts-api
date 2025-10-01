@@ -13,7 +13,7 @@ load_env_if_present
 : "${TRTLLM_MAX_INPUT_LEN:=128}"
 : "${TRTLLM_MAX_OUTPUT_LEN:=2048}"
 : "${TRTLLM_MAX_BATCH_SIZE:=16}"
-: "${TRTLLM_KV_CACHE_DTYPE:=}"
+: "${TRTLLM_KV_CACHE_DTYPE:=int8}"
 : "${TRTLLM_QUANTIZED_DIR:=}"
 : "${PYTHON_EXEC:=python}"
 

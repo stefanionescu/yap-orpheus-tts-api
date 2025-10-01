@@ -23,7 +23,7 @@ class SnacBatched:
 
         # Dynamic batching controls
         self.max_batch = int(os.getenv("SNAC_MAX_BATCH", "64"))
-        self.batch_timeout_ms = int(os.getenv("SNAC_BATCH_TIMEOUT_MS", "10"))
+        self.batch_timeout_ms = int(os.getenv("SNAC_BATCH_TIMEOUT_MS", "2"))
         self._req_q: Optional[asyncio.Queue] = None
         self._worker_started = False
 
@@ -111,5 +111,4 @@ def get_snac_batched() -> SnacBatched:
     if _BATCHER is None:
         _BATCHER = SnacBatched()
     return _BATCHER
-
 

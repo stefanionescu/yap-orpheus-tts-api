@@ -60,6 +60,15 @@ async def aiter_pcm_from_custom_tokens(engine, prompt: str, voice: str, sp) -> b
 
     WINDOW = max(WINDOW_TOKENS, _FRAME * 4)
     FRAME = _FRAME
+    frames_per_chunk = max(WINDOW // FRAME, 1)
+
+    # decode scheduling (lets SNAC work overlap with TRT token generation)
+    decode_queue: asyncio.Queue[tuple[int | None, np.ndarray | Exception | None]] = asyncio.Queue()
+    pcm_queue: asyncio.Queue[bytes | Exception | None] = asyncio.Queue()
+    decode_tasks: list[asyncio.Task] = []
+    frames_scheduled = 0
+    next_chunk_idx = 1
+
     prev_len = 0  # previous length of token_ids
 
     async def _decode_window(window_codes: list[int]) -> np.ndarray:
@@ -76,100 +85,133 @@ async def aiter_pcm_from_custom_tokens(engine, prompt: str, voice: str, sp) -> b
         wav = (np.clip(audio, -1.0, 1.0) * 32767.0).astype(np.int16)
         return wav.reshape(-1)
 
-    async for chunk in engine.generate_async(formatted, sp, streaming=True):
-        if not getattr(chunk, "outputs", None):
-            continue
+    async def _decode_and_queue(idx: int, window_codes: list[int]) -> None:
+        try:
+            pcm = await _decode_window(window_codes)
+        except Exception as exc:  # propagate errors to main loop
+            await decode_queue.put((-1, exc))
+            return
+        await decode_queue.put((idx, pcm))
 
-        out = chunk.outputs[0]
-        tids = getattr(out, "token_ids", None)
-        if not tids:
-            # Some TRT builds deliver `output_token_ids` instead
-            tids = getattr(out, "output_token_ids", None)
-        if not tids:
-            continue
+    def _schedule_decode(frames_ready: int) -> None:
+        nonlocal frames_scheduled
+        if len(codes_buf) < WINDOW:
+            return
+        while (frames_ready - frames_scheduled) >= frames_per_chunk:
+            chunk_idx = (frames_scheduled // frames_per_chunk) + 1
+            snapshot = list(codes_buf[-WINDOW:])
+            task = asyncio.create_task(_decode_and_queue(chunk_idx, snapshot))
+            decode_tasks.append(task)
+            frames_scheduled += frames_per_chunk
 
-        # Process only the delta since last step
-        new = tids[prev_len:]
-        if not new:
-            continue
-        prev_len = len(tids)
+    async def _consume_decode_queue() -> None:
+        nonlocal next_chunk_idx, frames_emitted, total_samples
+        pending: dict[int, np.ndarray] = {}
+        finished_producer = False
+        stop_emission = False
 
-        for tid in new:
-            # Map token id → RVQ code id if it's an audio token
-            # The 7 interleaved audio streams occupy 7*4096 ids starting at _CODE_OFFSET.
-            # Channel is determined by current audio_tok_idx % 7.
-            chan = audio_tok_idx % FRAME
-            code = tid - _CODE_OFFSET - (chan * _CODE_SIZE)
+        while True:
+            if next_chunk_idx in pending:
+                pcm = pending.pop(next_chunk_idx)
+                frames_emitted = next_chunk_idx * frames_per_chunk
+                next_chunk_idx += 1
 
-            if 0 <= code < _CODE_SIZE:
-                codes_buf.append(int(code))
-                audio_tok_idx += 1
+                if pcm.size == 0 or stop_emission:
+                    continue
 
-                if (audio_tok_idx % FRAME) == 0 and len(codes_buf) >= WINDOW:
-                    frames_ready = audio_tok_idx // FRAME
-                    if frames_ready <= frames_emitted:
+                emit_pcm = pcm
+                emit_samples = emit_pcm.size
+                if _MAX_SAMPLES:
+                    remaining = _MAX_SAMPLES - total_samples
+                    if remaining <= 0:
+                        stop_emission = True
                         continue
+                    if emit_samples > remaining:
+                        emit_pcm = emit_pcm[-remaining:]
+                        emit_samples = emit_pcm.size
 
-                    window_codes = codes_buf[-WINDOW:]
-                    pcm = await _decode_window(window_codes)
-                    if pcm.size == 0:
-                        frames_emitted = frames_ready
-                        continue
+                if emit_samples == 0:
+                    continue
 
-                    emit_pcm = pcm
-                    emit_samples = emit_pcm.size
-                    if _MAX_SAMPLES:
-                        remaining = _MAX_SAMPLES - total_samples
-                        if remaining <= 0:
-                            return
-                        if emit_samples > remaining:
-                            emit_pcm = emit_pcm[-remaining:]
-                            emit_samples = emit_pcm.size
+                total_samples += emit_samples
+                if _MAX_SAMPLES and total_samples >= _MAX_SAMPLES:
+                    stop_emission = True
 
-                    if emit_samples == 0:
-                        frames_emitted = frames_ready
-                        continue
-
-                    await asyncio.sleep(0)
-                    chunk_bytes = emit_pcm.tobytes()
-                    if chunk_bytes:
-                        total_samples += emit_samples
-                        frames_emitted = frames_ready
-                        yield chunk_bytes
-                        if _MAX_SAMPLES and total_samples >= _MAX_SAMPLES:
-                            return
-            else:
-                # Not an audio token; ignore without advancing chan
+                await asyncio.sleep(0)
+                await pcm_queue.put(emit_pcm.tobytes())
                 continue
 
-    # natural termination on EOS / EOA / EOT
-    frames_ready = audio_tok_idx // FRAME
-    leftover_frames = frames_ready - frames_emitted
-    if leftover_frames > 0:
-        window_frames = min(frames_ready, WINDOW // FRAME)
-        window_tokens = window_frames * FRAME
-        if window_tokens <= len(codes_buf):
-            window_codes = codes_buf[-window_tokens:]
-            pcm = await _decode_window(window_codes)
-            if pcm.size == 0:
-                return
+            if finished_producer and not pending:
+                break
 
-            emit_pcm = pcm
-            emit_samples = emit_pcm.size
-            if _MAX_SAMPLES:
-                remaining = _MAX_SAMPLES - total_samples
-                if remaining <= 0:
-                    return
-                if emit_samples > remaining:
-                    emit_pcm = emit_pcm[-remaining:]
-                    emit_samples = emit_pcm.size
+            idx, payload = await decode_queue.get()
+            if idx == -1:
+                assert isinstance(payload, Exception)
+                await pcm_queue.put(payload)
+                finished_producer = True
+                pending.clear()
+                break
+            if idx is None:
+                finished_producer = True
+                continue
+            assert isinstance(payload, np.ndarray)
+            pending[idx] = payload
 
-            if emit_samples == 0:
-                return
+        await pcm_queue.put(None)
 
-            chunk_bytes = emit_pcm.tobytes()
-            if chunk_bytes:
-                total_samples += emit_samples
-                frames_emitted = frames_ready
-                await asyncio.sleep(0)
-                yield chunk_bytes
+    async def _produce_tokens() -> None:
+        nonlocal prev_len, audio_tok_idx
+        try:
+            async for chunk in engine.generate_async(formatted, sp, streaming=True):
+                if not getattr(chunk, "outputs", None):
+                    continue
+
+                out = chunk.outputs[0]
+                tids = getattr(out, "token_ids", None)
+                if not tids:
+                    tids = getattr(out, "output_token_ids", None)
+                if not tids:
+                    continue
+
+                new = tids[prev_len:]
+                if not new:
+                    continue
+                prev_len = len(tids)
+
+                for tid in new:
+                    chan = audio_tok_idx % FRAME
+                    code = tid - _CODE_OFFSET - (chan * _CODE_SIZE)
+
+                    if 0 <= code < _CODE_SIZE:
+                        codes_buf.append(int(code))
+                        audio_tok_idx += 1
+                        if (audio_tok_idx % FRAME) == 0:
+                            frames_ready = audio_tok_idx // FRAME
+                            _schedule_decode(frames_ready)
+                    else:
+                        continue
+
+            if audio_tok_idx >= FRAME:
+                _schedule_decode(audio_tok_idx // FRAME)
+        except Exception as exc:
+            await decode_queue.put((-1, exc))
+            raise
+        finally:
+            if decode_tasks:
+                await asyncio.gather(*decode_tasks, return_exceptions=False)
+            await decode_queue.put((None, None))
+
+    producer_task = asyncio.create_task(_produce_tokens())
+    consumer_task = asyncio.create_task(_consume_decode_queue())
+
+    try:
+        while True:
+            item = await pcm_queue.get()
+            if item is None:
+                break
+            if isinstance(item, Exception):
+                raise item
+            yield item
+    finally:
+        await producer_task
+        await consumer_task
