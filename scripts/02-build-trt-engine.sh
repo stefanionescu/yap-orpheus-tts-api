@@ -9,7 +9,7 @@ load_env_if_present
 : "${VENV_DIR:=$PWD/.venv}"
 : "${MODEL_ID:=canopylabs/orpheus-3b-0.1-ft}"
 : "${TRTLLM_ENGINE_DIR:=$PWD/models/orpheus-trt}"
-: "${TRTLLM_DTYPE:=bfloat16}"
+: "${TRTLLM_DTYPE:=float16}"
 : "${TRTLLM_MAX_INPUT_LEN:=128}"
 : "${TRTLLM_MAX_OUTPUT_LEN:=2048}"
 : "${TRTLLM_MAX_BATCH_SIZE:=16}"
