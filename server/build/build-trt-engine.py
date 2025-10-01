@@ -129,17 +129,12 @@ def export_quantized_checkpoint(
             model_id_for_tokenizer = os.environ.get("MODEL_ID", "canopylabs/orpheus-3b-0.1-ft")
             tokenizer = AutoTokenizer.from_pretrained(model_id_for_tokenizer)
 
-        # Seed sample texts and scale up to a reasonable calibration size
-        sample_texts = [
-            "Hello, this is a short sentence for calibration.",
-            "The quick brown fox jumps over the lazy dog.",
-            "Orpheus TTS uses KV cache during decoding.",
-            "Please quantize the KV cache to reduce memory.",
-            "Short prompts often suffice for PTQ calibration.",
-            "TensorRT-LLM INT8 KV-cache calibration sample.",
-            "Another line with punctuation, numbers 123, and symbols!",
-            "Brevity helps speed up export during CI builds.",
-        ]
+        # Use shared calibration samples module (varied, short)
+        try:
+            from .calibration_samples import SAMPLES as _CAL_SAMPLES  # type: ignore
+        except Exception:
+            from server.build.calibration_samples import SAMPLES as _CAL_SAMPLES  # type: ignore
+        sample_texts = list(_CAL_SAMPLES)
         desired_batch = calib_batch_size or int(os.environ.get("TRTLLM_MAX_BATCH_SIZE", "8"))
         desired_calib_size = int(os.environ.get("TRTLLM_CALIB_SIZE", str(max(32, desired_batch * 4))))
         if len(sample_texts) < desired_calib_size:
@@ -149,9 +144,9 @@ def export_quantized_checkpoint(
         tokenizer_limit = getattr(tokenizer, "model_max_length", 2048) or 2048
         token_max_seq = min(
             tokenizer_limit,
-            tokenizer_max_seq_length_hint or calib_max_seq_len or tokenizer_limit,
+            tokenizer_max_seq_length_hint or calib_max_seq_len or 128,
         )
-        max_len_guess = min(token_max_seq, tokenizer_limit)
+        max_len_guess = min(token_max_seq, 128)
         encodings = tokenizer(
             sample_texts,
             padding=False,
