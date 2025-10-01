@@ -208,13 +208,11 @@ def export_quantized_checkpoint(
         qformat_value: Optional[object] = None
         try:
             from tensorrt_llm.quantization import QuantMode  # type: ignore
-            if weight_quant != "none":
-                qformat_value = getattr(QuantMode, "SMOOTHQUANT", None)
-            else:
-                qformat_value = getattr(QuantMode, "NONE", None)
+            # Use SmoothQuant by default even for KV-only, since TRT-LLM 0.20 expects a supported qformat
+            qformat_value = getattr(QuantMode, "SMOOTHQUANT", None)
         except Exception:
             qformat_value = None
-        defaults["qformat"] = qformat_value or ("smoothquant" if weight_quant != "none" else "none")
+        defaults["qformat"] = qformat_value or "smoothquant"
 
         for name in list(defaults.keys()):
             if name in params and name not in kwargs:
@@ -242,10 +240,7 @@ def export_quantized_checkpoint(
         if "unsupported quantization format" in msg:
             # Build fallback candidates
             candidates: list[object] = []
-            if weight_quant != "none":
-                candidates.extend(["smoothquant", "sq", "awq", "woq_int8"])
-            else:
-                candidates.extend(["none"])  # kv-only requires explicit qformat
+            candidates.extend(["smoothquant", "sq", "awq", "woq_int8"])
             for cand in candidates:
                 try:
                     _try_export(cand)
