@@ -10,13 +10,11 @@ from ..core.snac_batcher import get_snac_batched, SNAC_DEVICE
 _CODE_OFFSET = 128266   # first audio code id
 _CODE_SIZE = 4096       # codes per sub-stream
 _FRAME = 7              # sub-streams per frame
-_WINDOW_TOKENS = max(int(os.getenv("TTS_DECODE_WINDOW", "28")), 28)
-if _WINDOW_TOKENS % _FRAME != 0:
-    _WINDOW_TOKENS -= _WINDOW_TOKENS % _FRAME
-if _WINDOW_TOKENS < (_FRAME * 4):  # ensure at least 4 frames of context
-    _WINDOW_TOKENS = _FRAME * 4
-_WINDOW = _WINDOW_TOKENS
-_FRAMES_PER_CHUNK = max(_WINDOW // _FRAME, 1)
+_WINDOW_TOKENS_RAW = max(int(os.getenv("TTS_DECODE_WINDOW", "28")), 28)
+_WINDOW_TOKENS_ADJ = _WINDOW_TOKENS_RAW - (_WINDOW_TOKENS_RAW % _FRAME)
+if _WINDOW_TOKENS_ADJ < (_FRAME * 4):
+    _WINDOW_TOKENS_ADJ = _FRAME * 4
+WINDOW_TOKENS = _WINDOW_TOKENS_ADJ
 _SAMPLE_RATE = int(os.getenv("SNAC_SR", "24000"))
 _MAX_SEC = float(os.getenv("TTS_MAX_SEC", "0"))
 # Optional wall-clock guard; zero disables the cap.
@@ -56,15 +54,27 @@ async def aiter_pcm_from_custom_tokens(engine, prompt: str, voice: str, sp) -> b
     # How many **audio** tokens we've consumed so far (mod 7 selects the sub-codec stream)
     audio_tok_idx = 0
 
-    # Track frames and emitted PCM length so we don't resend the same chunk
+    # Track emitted frames and samples
     frames_emitted = 0
     total_samples = 0
 
-    # We decode in windows of 28 tokens (4 frames * 7)
-    WINDOW = max(_WINDOW, 28)
-    FRAME = _FRAME  # 7
-
+    WINDOW = max(WINDOW_TOKENS, _FRAME * 4)
+    FRAME = _FRAME
     prev_len = 0  # previous length of token_ids
+
+    async def _decode_window(window_codes: list[int]) -> np.ndarray:
+        arr = np.asarray(window_codes, dtype=np.int32).reshape(-1, FRAME)
+        if arr.size == 0:
+            return np.empty(0, dtype=np.int16)
+
+        # channel regrouping: [0], [1,4], [2,3,5,6] (SNAC's layout)
+        codes_0 = torch.from_numpy(arr[:, 0]).unsqueeze(0).to(SNAC_DEVICE)
+        codes_1 = torch.from_numpy(arr[:, [1, 4]].reshape(-1)).unsqueeze(0).to(SNAC_DEVICE)
+        codes_2 = torch.from_numpy(arr[:, [2, 3, 5, 6]].reshape(-1)).unsqueeze(0).to(SNAC_DEVICE)
+
+        audio = await snacx.decode_codes([codes_0, codes_1, codes_2])  # [-1, 1]
+        wav = (np.clip(audio, -1.0, 1.0) * 32767.0).astype(np.int16)
+        return wav.reshape(-1)
 
     async for chunk in engine.generate_async(formatted, sp, streaming=True):
         if not getattr(chunk, "outputs", None):
@@ -95,110 +105,71 @@ async def aiter_pcm_from_custom_tokens(engine, prompt: str, voice: str, sp) -> b
                 codes_buf.append(int(code))
                 audio_tok_idx += 1
 
-                # Emit once per completed frame once we have enough context for SNAC (4 frames by default)
                 if (audio_tok_idx % FRAME) == 0 and len(codes_buf) >= WINDOW:
                     frames_ready = audio_tok_idx // FRAME
                     if frames_ready <= frames_emitted:
                         continue
 
-                    new_frames = frames_ready - frames_emitted
-                    if new_frames < _FRAMES_PER_CHUNK:
-                        continue
-
-                    arr = np.asarray(codes_buf[-WINDOW:], dtype=np.int32).reshape(-1, FRAME)
-                    frames_in_window = arr.shape[0]
-                    if frames_in_window == 0:
-                        continue
-
-                    emit_frames = min((new_frames // _FRAMES_PER_CHUNK) * _FRAMES_PER_CHUNK, frames_in_window)
-                    if emit_frames <= 0:
-                        continue
-
-                    # channel regrouping: [0], [1,4], [2,3,5,6] (SNAC's layout)
-                    codes_0 = torch.from_numpy(arr[:, 0]).unsqueeze(0).to(SNAC_DEVICE)
-                    codes_1 = torch.from_numpy(arr[:, [1, 4]].reshape(-1)).unsqueeze(0).to(SNAC_DEVICE)
-                    codes_2 = torch.from_numpy(arr[:, [2, 3, 5, 6]].reshape(-1)).unsqueeze(0).to(SNAC_DEVICE)
-
-                    audio = await snacx.decode_codes([codes_0, codes_1, codes_2])  # [-1,1]
-                    wav = (np.clip(audio, -1.0, 1.0) * 32767.0).astype(np.int16)
-                    if wav.size == 0:
+                    window_codes = codes_buf[-WINDOW:]
+                    pcm = await _decode_window(window_codes)
+                    if pcm.size == 0:
                         frames_emitted = frames_ready
                         continue
 
-                    flat = wav.reshape(-1)
-                    samples_total = flat.size
-                    samples_per_frame = samples_total // frames_in_window
-                    if samples_per_frame == 0:
-                        frames_emitted = frames_ready
-                        continue
-
-                    emit_samples = emit_frames * samples_per_frame
-                    if emit_samples > samples_total:
-                        emit_samples = samples_total
-
-                    start = samples_total - emit_samples
-                    pcm_chunk = flat[start:]
-                    if pcm_chunk.size == 0:
-                        frames_emitted = frames_ready
-                        continue
-
+                    emit_pcm = pcm
+                    emit_samples = emit_pcm.size
                     if _MAX_SAMPLES:
                         remaining = _MAX_SAMPLES - total_samples
                         if remaining <= 0:
                             return
                         if emit_samples > remaining:
-                            start = samples_total - remaining
-                            pcm_chunk = flat[start:]
-                            emit_samples = remaining
+                            emit_pcm = emit_pcm[-remaining:]
+                            emit_samples = emit_pcm.size
 
-                    total_samples += emit_samples
+                    if emit_samples == 0:
+                        frames_emitted = frames_ready
+                        continue
 
-                    yield pcm_chunk.tobytes()
-                    frames_emitted += emit_frames
                     await asyncio.sleep(0)
-
-                    if _MAX_SAMPLES and total_samples >= _MAX_SAMPLES:
-                        return
+                    chunk_bytes = emit_pcm.tobytes()
+                    if chunk_bytes:
+                        total_samples += emit_samples
+                        frames_emitted = frames_ready
+                        yield chunk_bytes
+                        if _MAX_SAMPLES and total_samples >= _MAX_SAMPLES:
+                            return
             else:
                 # Not an audio token; ignore without advancing chan
                 continue
 
     # natural termination on EOS / EOA / EOT
-    leftover_frames = (audio_tok_idx // FRAME) - frames_emitted
-    if leftover_frames > 0 and len(codes_buf) >= FRAME:
-        window_tokens = min(len(codes_buf), WINDOW)
-        window_tokens -= window_tokens % FRAME
-        if window_tokens < FRAME:
-            return
-        arr = np.asarray(codes_buf[-window_tokens:], dtype=np.int32).reshape(-1, FRAME)
-        frames_in_window = arr.shape[0]
-        if frames_in_window > 0:
-            emit_frames = min(leftover_frames, frames_in_window)
+    frames_ready = audio_tok_idx // FRAME
+    leftover_frames = frames_ready - frames_emitted
+    if leftover_frames > 0:
+        window_frames = min(frames_ready, WINDOW // FRAME)
+        window_tokens = window_frames * FRAME
+        if window_tokens <= len(codes_buf):
+            window_codes = codes_buf[-window_tokens:]
+            pcm = await _decode_window(window_codes)
+            if pcm.size == 0:
+                return
 
-            codes_0 = torch.from_numpy(arr[:, 0]).unsqueeze(0).to(SNAC_DEVICE)
-            codes_1 = torch.from_numpy(arr[:, [1, 4]].reshape(-1)).unsqueeze(0).to(SNAC_DEVICE)
-            codes_2 = torch.from_numpy(arr[:, [2, 3, 5, 6]].reshape(-1)).unsqueeze(0).to(SNAC_DEVICE)
+            emit_pcm = pcm
+            emit_samples = emit_pcm.size
+            if _MAX_SAMPLES:
+                remaining = _MAX_SAMPLES - total_samples
+                if remaining <= 0:
+                    return
+                if emit_samples > remaining:
+                    emit_pcm = emit_pcm[-remaining:]
+                    emit_samples = emit_pcm.size
 
-            audio = await snacx.decode_codes([codes_0, codes_1, codes_2])
-            wav = (np.clip(audio, -1.0, 1.0) * 32767.0).astype(np.int16)
-            flat = wav.reshape(-1)
-            samples_total = flat.size
-            samples_per_frame = samples_total // frames_in_window
-            if samples_per_frame > 0:
-                emit_samples = emit_frames * samples_per_frame
-                if emit_samples > samples_total:
-                    emit_samples = samples_total
+            if emit_samples == 0:
+                return
 
-                start = samples_total - emit_samples
-                pcm_chunk = flat[start:]
-                if pcm_chunk.size > 0:
-                    if _MAX_SAMPLES:
-                        remaining = _MAX_SAMPLES - total_samples
-                        if remaining <= 0:
-                            return
-                        if emit_samples > remaining:
-                            start = samples_total - remaining
-                            pcm_chunk = flat[start:]
-                            emit_samples = remaining
-                    total_samples += emit_samples
-                    yield pcm_chunk.tobytes()
+            chunk_bytes = emit_pcm.tobytes()
+            if chunk_bytes:
+                total_samples += emit_samples
+                frames_emitted = frames_ready
+                await asyncio.sleep(0)
+                yield chunk_bytes
