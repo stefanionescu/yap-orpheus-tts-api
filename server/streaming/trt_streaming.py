@@ -50,8 +50,9 @@ async def aiter_pcm_from_custom_tokens(engine, prompt: str, voice: str, sp) -> b
     # How many **audio** tokens we've consumed so far (mod 7 selects the sub-codec stream)
     audio_tok_idx = 0
 
-    # For incremental emission
-    emitted_samples = 0
+    # Track frames and emitted PCM length so we don't resend the same chunk
+    frames_emitted = 0
+    total_samples = 0
 
     # We decode in windows of 28 tokens (4 frames * 7)
     WINDOW = max(_WINDOW, 28)
@@ -88,9 +89,17 @@ async def aiter_pcm_from_custom_tokens(engine, prompt: str, voice: str, sp) -> b
                 codes_buf.append(int(code))
                 audio_tok_idx += 1
 
-                # Decode on every full window
-                if len(codes_buf) >= WINDOW:
+                # Emit once per completed frame once we have enough context for SNAC (4 frames by default)
+                if (audio_tok_idx % FRAME) == 0 and len(codes_buf) >= WINDOW:
+                    frames_ready = audio_tok_idx // FRAME
+                    if frames_ready <= frames_emitted:
+                        continue
+
                     arr = np.asarray(codes_buf[-WINDOW:], dtype=np.int32).reshape(-1, FRAME)
+                    frames_in_window = arr.shape[0]
+                    if frames_in_window == 0:
+                        continue
+
                     # channel regrouping: [0], [1,4], [2,3,5,6] (SNAC's layout)
                     codes_0 = torch.from_numpy(arr[:, 0]).unsqueeze(0).to(SNAC_DEVICE)
                     codes_1 = torch.from_numpy(arr[:, [1, 4]].reshape(-1)).unsqueeze(0).to(SNAC_DEVICE)
@@ -98,15 +107,49 @@ async def aiter_pcm_from_custom_tokens(engine, prompt: str, voice: str, sp) -> b
 
                     audio = await snacx.decode_codes([codes_0, codes_1, codes_2])  # [-1,1]
                     wav = (np.clip(audio, -1.0, 1.0) * 32767.0).astype(np.int16)
+                    if wav.size == 0:
+                        frames_emitted = frames_ready
+                        continue
 
-                    if emitted_samples < wav.shape[-1]:
-                        new_pcm = wav[emitted_samples:].tobytes()
-                        emitted_samples = wav.shape[-1]
-                        if new_pcm:
-                            yield new_pcm
-                            if _MAX_SAMPLES and emitted_samples >= _MAX_SAMPLES:
-                                return
+                    # Only emit newly produced frames from this decode
+                    flat = wav.reshape(-1)
+                    samples_total = flat.size
+                    samples_per_frame = samples_total // frames_in_window
+                    if samples_per_frame == 0:
+                        frames_emitted = frames_ready
+                        continue
+
+                    new_frames = frames_ready - frames_emitted
+                    if new_frames <= 0:
+                        continue
+
+                    emit_samples = new_frames * samples_per_frame
+                    if emit_samples > samples_total:
+                        emit_samples = samples_total
+
+                    start = samples_total - emit_samples
+                    pcm_chunk = flat[start:]
+                    if pcm_chunk.size == 0:
+                        frames_emitted = frames_ready
+                        continue
+
+                    if _MAX_SAMPLES:
+                        remaining = _MAX_SAMPLES - total_samples
+                        if remaining <= 0:
+                            return
+                        if emit_samples > remaining:
+                            start = samples_total - remaining
+                            pcm_chunk = flat[start:]
+                            emit_samples = remaining
+
+                    total_samples += emit_samples
+
+                    yield pcm_chunk.tobytes()
+                    frames_emitted = frames_ready
                     await asyncio.sleep(0)
+
+                    if _MAX_SAMPLES and total_samples >= _MAX_SAMPLES:
+                        return
             else:
                 # Not an audio token; ignore without advancing chan
                 continue
