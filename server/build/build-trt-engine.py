@@ -379,10 +379,9 @@ def build_engine(args: argparse.Namespace) -> Path:
     build_cfg.max_batch_size = max_bsz
     build_cfg.precision = args.dtype
     try:
-        # Cap token scheduling to avoid over-allocating KV cache pages.
+        # Allow scheduler to consider higher batched throughput on A100
         build_cfg.max_num_tokens = max(1, max_bsz * total_seq)  # type: ignore[attr-defined]
-        # Hint the typical batched token count so tactic selection stays efficient.
-        build_cfg.opt_num_tokens = max(256, min(total_seq, max_bsz * 256))  # type: ignore[attr-defined]
+        build_cfg.opt_num_tokens = max(total_seq, max_bsz * 256)  # type: ignore[attr-defined]
         build_cfg.profiling_verbosity = "layer_names_only"  # type: ignore[attr-defined]
         build_cfg.force_num_profiles = 1  # type: ignore[attr-defined]
         build_cfg.monitor_memory = True  # type: ignore[attr-defined]
@@ -403,28 +402,8 @@ def build_engine(args: argparse.Namespace) -> Path:
 
     model_path = resolve_model_source(args.model, token)
 
-    model_for_build: Path
-    if args.kv_cache_dtype:
-        ensure_quantization_available()
-        export_dir = (
-            Path(args.quantized_dir).expanduser().resolve()
-            if args.quantized_dir
-            else output_dir / "quantized-checkpoint"
-        )
-        model_for_build = export_quantized_checkpoint(
-            model_path,
-            export_dir,
-            args.kv_cache_dtype,
-            calib_max_seq_len=int(build_cfg.max_seq_len),
-            calib_batch_size=int(build_cfg.max_batch_size),
-            tokenizer_max_seq_length_hint=int(build_cfg.max_seq_len),
-            dtype_str=str(build_cfg.precision),
-            weight_quant=str(getattr(args, "weight_quant", "none")),
-            auto_quantize_bits=(float(getattr(args, "auto_quantize_bits", 8.0))
-                                if getattr(args, "weight_quant", "none") == "auto8" else None),
-        )
-    else:
-        model_for_build = model_path
+    # No offline export needed when using runtime KvCacheConfig
+    model_for_build = model_path
 
     print("[build-trt] Initializing LLM API (this can take a few minutes)...")
     llm = LLM(model=str(model_for_build), build_config=build_cfg, dtype=args.dtype)
@@ -463,34 +442,10 @@ def parse_args(argv: Optional[Iterable[str]] = None) -> argparse.Namespace:
     parser.add_argument("--max_input_len", type=int, default=128)
     parser.add_argument("--max_output_len", type=int, default=2048)
     parser.add_argument("--max_batch_size", type=int, default=1)
-    parser.add_argument(
-        "--kv_cache_dtype",
-        choices=["fp8", "int8"],
-        default=kv_env,
-        help="Enable KV-cache quantization via quantize_and_export",
-    )
-    parser.add_argument(
-        "--quantized_dir",
-        default=os.getenv("TRTLLM_QUANTIZED_DIR", ""),
-        help="Directory to write/read quantized checkpoint when kv_cache_dtype is set",
-    )
-    parser.add_argument(
-        "--weight_quant",
-        choices=["none", "w8a8", "auto8"],
-        default=os.getenv("TRTLLM_WEIGHT_QUANT", "none"),
-        help="Quantize model weights to 8-bit (SmoothQuant or AutoQuant)",
-    )
-    parser.add_argument(
-        "--auto_quantize_bits",
-        type=float,
-        default=float(os.getenv("TRTLLM_AUTO_QUANTIZE_BITS", "8.0")),
-        help="Target bits for AutoQuant when --weight_quant=auto8",
-    )
+    parser.add_argument("--kv_cache_dtype", choices=["fp8", "int8"], default=kv_env)
     args = parser.parse_args(argv)
     if not args.kv_cache_dtype:
         args.kv_cache_dtype = None
-    if not args.quantized_dir:
-        args.quantized_dir = ""
     return args
 
 

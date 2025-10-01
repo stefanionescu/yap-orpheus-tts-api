@@ -2,7 +2,7 @@
 set -euo pipefail
 
 : "${VENV_DIR:=$PWD/.venv}"
-: "${TRTLLM_WHEEL_URL:=https://pypi.nvidia.com/tensorrt-llm/tensorrt_llm-0.20.0-cp310-cp310-linux_x86_64.whl}"
+: "${TRTLLM_WHEEL_URL:=https://pypi.nvidia.com/tensorrt-llm/tensorrt_llm-1.0.0-cp310-cp310-linux_x86_64.whl}"
 
 if [ "$(uname -s)" != "Linux" ]; then
   echo "[install-trt] TensorRT-LLM requires Linux with NVIDIA GPUs. Skipping."
@@ -85,7 +85,7 @@ pip install -r requirements-base.txt
 
 echo "[install-trt] Installing TensorRT-LLM + libs"
 pip install --upgrade --extra-index-url https://pypi.nvidia.com \
-  "${TRTLLM_WHEEL_URL:-tensorrt-llm==0.20.0}" \
+  "${TRTLLM_WHEEL_URL:-tensorrt-llm==1.0.0}" \
   "tensorrt-cu12-bindings" \
   "tensorrt-cu12-libs"
 

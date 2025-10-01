@@ -14,9 +14,6 @@ load_env_if_present
 : "${TRTLLM_MAX_OUTPUT_LEN:=2048}"
 : "${TRTLLM_MAX_BATCH_SIZE:=16}"
 : "${TRTLLM_KV_CACHE_DTYPE:=int8}"
-: "${TRTLLM_QUANTIZED_DIR:=}"
-: "${TRTLLM_WEIGHT_QUANT:=none}"  # none|w8a8|auto8
-: "${TRTLLM_AUTO_QUANTIZE_BITS:=8.0}"
 : "${PYTHON_EXEC:=python}"
 
 usage() {
@@ -123,171 +120,6 @@ PY
   CKPT_DIR="${PWD}/.hf/${MODEL_ID//\//-}"
   OUT_DIR="${TRTLLM_ENGINE_DIR}"
 
-  # Optional quantize-and-export for KV cache
-  if [ -n "${TRTLLM_KV_CACHE_DTYPE}" ]; then
-    echo "[build-trt] Exporting quantized checkpoint (kv_cache_dtype=${TRTLLM_KV_CACHE_DTYPE})..."
-    QUANT_DIR="${TRTLLM_QUANTIZED_DIR:-${OUT_DIR}/quantized-checkpoint}"
-    export CKPT_DIR QUANT_DIR TRTLLM_KV_CACHE_DTYPE
-    mkdir -p "${QUANT_DIR}"
-    "${PYTHON_EXEC}" - <<'PY'
-import os
-from pathlib import Path
-from tensorrt_llm.quantization import quantize_and_export
-import inspect
-from transformers import AutoTokenizer
-src = os.environ["CKPT_DIR"]
-dst = os.environ["QUANT_DIR"]
-kv = os.environ["TRTLLM_KV_CACHE_DTYPE"].lower()
-Path(dst).mkdir(parents=True, exist_ok=True)
-if any(Path(dst).iterdir()):
-    print(f"[build-trt] Using existing quantized checkpoint at: {dst}")
-else:
-    sig = inspect.signature(quantize_and_export)
-    params = sig.parameters
-    if "kv_cache_dtype" not in params:
-        print("[build-trt] WARN: quantize_and_export does not support kv_cache_dtype on this version; skipping export.")
-    else:
-        # Some versions require full calibration kwargs. If we detect those parameters, skip.
-        required_kwonly = {
-            "device",
-            "calib_dataset",
-            "dtype",
-            "qformat",
-            "calib_size",
-            "batch_size",
-            "calib_max_seq_length",
-            "awq_block_size",
-            "tp_size",
-            "pp_size",
-            "cp_size",
-            "seed",
-            "tokenizer_max_seq_length",
-        }
-        needs_calib = any(name in params for name in required_kwonly)
-        if needs_calib:
-            # Build a tiny synthetic calibration dataset
-            try:
-                tokenizer = AutoTokenizer.from_pretrained(src)
-            except Exception:
-                tokenizer = AutoTokenizer.from_pretrained(os.environ.get("MODEL_ID", "canopylabs/orpheus-3b-0.1-ft"))
-            try:
-                import importlib.util, sys
-                p = os.path.join(os.getcwd(), "server", "build", "calibration_samples.py")
-                spec = importlib.util.spec_from_file_location("calib_samples", p)
-                mod = importlib.util.module_from_spec(spec)
-                assert spec.loader is not None
-                spec.loader.exec_module(mod)
-                texts = list(getattr(mod, "SAMPLES", []))
-            except Exception:
-                texts = [
-                    "Hello there!",
-                    "Please read this sentence clearly and naturally.",
-                    "Good morning, how can I help you today?",
-                    "Welcome to our service. Your order has shipped.",
-                    "The package will arrive on Tuesday.",
-                    "Open the settings and enable notifications.",
-                    "Today the forecast calls for light rain and mild winds.",
-                    "This product is durable, light, and easy to use.",
-                    "Remember to save your work frequently.",
-                    "Thank you for your patience.",
-                    "Here is a brief summary of the meeting.",
-                    "Let us start with a short introduction.",
-                    "Read the headline and the first paragraph.",
-                    "Congratulations on your new account.",
-                    "Please speak in a calm and friendly tone.",
-                    "Set a timer for ten minutes.",
-                    "Add milk, eggs, and flour to the bowl.",
-                    "Start the recording when you are ready.",
-                    "The train departs at nine thirty.",
-                    "Our goal is to make this process simple.",
-                    "I will walk you through the next steps.",
-                    "Keep the explanation short and to the point.",
-                    "Your appointment is scheduled for next week.",
-                    "Please confirm that you can attend.",
-                    "The device is ready. Press the start button.",
-                    "Speak slowly and emphasize key words.",
-                    "We appreciate your feedback and suggestions.",
-                    "This update improves speed and stability.",
-                    "Turn the volume up slightly.",
-                    "End the message with a friendly goodbye.",
-                    "Tap the icon to open the menu, then choose preferences.",
-                    "Place the document on a flat surface before scanning.",
-                    "Charge the battery fully before the first use.",
-                    "Clean the lens with a soft cloth.",
-                    "Check that your microphone is on before you speak.",
-                    "Use a clear voice and avoid background noise.",
-                    "I am happy to help with that request.",
-                    "Let me check your account details now.",
-                    "I understand the issue. Here is what we can do.",
-                    "Could you try restarting the app and signing in again?",
-                    "Thanks for confirming your email address.",
-                    "The hallway was quiet as the lights dimmed for the evening.",
-                    "She poured a cup of tea and sat near the window to read.",
-                    "The crowd cheered when the band started the first song.",
-                    "Bright colors and simple shapes make the design easy to follow.",
-                    "This is a brief product description. It is a compact and reliable device designed for daily use. It starts quickly, responds smoothly, and features simple controls to help you focus on the task.",
-                    "A short news update. Markets opened higher today as investors waited for comments from the central bank. Analysts expect moderate changes and will be watching for signs of a shift in policy.",
-                    "An educational snippet. Photosynthesis uses light, water, and carbon dioxide to produce glucose and oxygen. This process fuels plant growth and supports many forms of life on Earth.",
-                    "A safety reminder. Unplug the appliance before cleaning. Keep devices away from water and heat, and follow the instructions provided by the manufacturer at all times.",
-                    "Speak the title, then pause briefly.",
-                    "Now read the list of items at a steady pace.",
-                    "Please slow down slightly for clarity.",
-                    "Finish with a clear call to action.",
-                    "Summarize the key points in one or two sentences.",
-                    "Ask if the listener needs any more details.",
-                ]
-            desired_batch = int(os.environ.get("TRTLLM_MAX_BATCH_SIZE", "16"))
-            desired_calib_size = int(os.environ.get("TRTLLM_CALIB_SIZE", "$((TRTLLM_MAX_BATCH_SIZE*4))"))
-            if len(texts) < desired_calib_size:
-                reps = (desired_calib_size + len(texts) - 1) // len(texts)
-                texts = (texts * reps)[:desired_calib_size]
-
-            tokenizer_limit = getattr(tokenizer, "model_max_length", 2048) or 2048
-            seq_hint = int(os.environ.get("TRTLLM_MAX_INPUT_LEN", "128"))
-            max_len = min(seq_hint, tokenizer_limit, 128)
-            enc = tokenizer(texts, padding=False, truncation=True, max_length=max_len, return_tensors=None)
-            class _Calib:
-                def __init__(self, e): self._ids = e["input_ids"] if isinstance(e, dict) else e
-                def __len__(self): return len(self._ids)
-                def __iter__(self):
-                    for ids in self._ids:
-                        yield {"input_ids": ids}
-            calib = _Calib(enc)
-            try:
-                from tensorrt_llm.quantization import QuantMode
-                qformat = getattr(QuantMode, "PTQ", "ptq")
-            except Exception:
-                qformat = "ptq"
-            print("[build-trt] Performing PTQ export for KV-cache aligned to build config...")
-            quantize_and_export(
-                model=src if "model" in params else None,
-                model_dir=src if "model_dir" in params else None,
-                checkpoint_dir=src if "checkpoint_dir" in params else None,
-                export_dir=dst if "export_dir" in params else None,
-                output_dir=dst if "output_dir" in params else None,
-                kv_cache_dtype=kv,
-                device="cuda",
-                calib_dataset=calib,
-                dtype=os.environ.get("TRTLLM_DTYPE", "bfloat16"),
-                qformat=qformat,
-                calib_size=len(calib),
-                batch_size=max(1, min(desired_batch, len(calib))),
-                calib_max_seq_length=int(max_len),
-                awq_block_size=128,
-                tp_size=int(os.environ.get("TP_SIZE", "1")),
-                pp_size=int(os.environ.get("PP_SIZE", "1")),
-                cp_size=int(os.environ.get("CP_SIZE", "1")),
-                seed=17,
-                tokenizer_max_seq_length=int(max_len),
-            )
-        else:
-            print(f"[build-trt] quantize_and_export(model={src}, export_dir={dst}, kv_cache_dtype={kv})")
-            quantize_and_export(model=src, export_dir=dst, kv_cache_dtype=kv)
-print(f"[build-trt] Quantized checkpoint ready: {dst}")
-PY
-    CKPT_DIR="${QUANT_DIR}"
-  fi
-
   CONTEXT_FMHA_ARGS=""
   if [ "${TRTLLM_KV_CACHE_DTYPE}" = "fp8" ]; then
     CONTEXT_FMHA_ARGS=" --use_fp8_context_fmha enable"
@@ -325,9 +157,7 @@ else
     --max_batch_size "${TRTLLM_MAX_BATCH_SIZE}"
   )
   if [ -n "${TRTLLM_KV_CACHE_DTYPE}" ]; then CMD+=(--kv_cache_dtype "${TRTLLM_KV_CACHE_DTYPE}"); fi
-  if [ -n "${TRTLLM_QUANTIZED_DIR}" ]; then CMD+=(--quantized_dir "${TRTLLM_QUANTIZED_DIR}"); fi
-  if [ -n "${TRTLLM_WEIGHT_QUANT}" ]; then CMD+=(--weight_quant "${TRTLLM_WEIGHT_QUANT}"); fi
-  if [ "${TRTLLM_WEIGHT_QUANT}" = "auto8" ]; then CMD+=(--auto_quantize_bits "${TRTLLM_AUTO_QUANTIZE_BITS}"); fi
+  # No offline quantization flags; KV cache quant is runtime-only via KvCacheConfig
   if [ "$MINIMAL" = true ]; then CMD+=(--minimal); fi
   echo "[build-trt] Running: ${CMD[*]}"
   "${CMD[@]}"
