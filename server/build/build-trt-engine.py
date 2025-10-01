@@ -51,11 +51,16 @@ def export_quantized_checkpoint(
         "[build-trt] Exporting quantized checkpoint (kv_cache_dtype="
         f"{kv_cache_dtype}) → {export_dir}"
     )
-    quantize_and_export(
-        model=str(source),
-        export_dir=str(export_dir),
-        kv_cache_dtype=kv_cache_dtype,
-    )
+    try:
+        # TensorRT-LLM 0.20 renamed the first parameter to `model_dir`; use positional args
+        quantize_and_export(str(source), str(export_dir), kv_cache_dtype=kv_cache_dtype)
+    except TypeError:
+        # Older releases expect keyword `model`
+        quantize_and_export(
+            model=str(source),
+            export_dir=str(export_dir),
+            kv_cache_dtype=kv_cache_dtype,
+        )
     return export_dir
 
 
