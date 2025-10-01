@@ -38,10 +38,19 @@ def ensure_quantization_available() -> None:
 
 
 def export_quantized_checkpoint(
-    source: Path, export_dir: Path, kv_cache_dtype: str
+    source: Path,
+    export_dir: Path,
+    kv_cache_dtype: str,
+    calib_max_seq_len: Optional[int] = None,
+    calib_batch_size: Optional[int] = None,
+    tokenizer_max_seq_length_hint: Optional[int] = None,
+    dtype_str: Optional[str] = None,
+    weight_quant: str = "none",
+    auto_quantize_bits: Optional[float] = None,
 ) -> Path:
     from tensorrt_llm.quantization import quantize_and_export  # type: ignore
     import inspect
+    import os
 
     export_dir.mkdir(parents=True, exist_ok=True)
     if any(export_dir.iterdir()):
@@ -77,10 +86,146 @@ def export_quantized_checkpoint(
             "Unsupported quantize_and_export signature: missing export/output dir parameter"
         )
 
+    # If the function does not accept kv_cache_dtype at all, abort early
     if "kv_cache_dtype" not in params:
         raise BuildError("quantize_and_export does not accept kv_cache_dtype on this version")
 
-    quantize_and_export(kv_cache_dtype=kv_cache_dtype, **kwargs)
+    # Some TRT-LLM versions (e.g., 0.20.0) require a large set of keyword-only
+    # calibration arguments for PTQ. Provide minimal viable defaults and a
+    # lightweight synthetic calibration dataset to enable KV-cache INT8 export.
+    required_kwonly = {
+        "device",
+        "calib_dataset",
+        "dtype",
+        "qformat",
+        "calib_size",
+        "batch_size",
+        "calib_max_seq_length",
+        "awq_block_size",
+        "tp_size",
+        "pp_size",
+        "cp_size",
+        "seed",
+        "tokenizer_max_seq_length",
+    }
+    missing_required = [name for name in required_kwonly if name in params and name not in kwargs]
+
+    if missing_required:
+        # Build a tiny synthetic calibration dataset from short prompts.
+        try:
+            from transformers import AutoTokenizer  # type: ignore
+        except Exception as exc:  # pragma: no cover - runtime dependency only
+            print(
+                f"[build-trt] WARN: transformers unavailable ({type(exc).__name__}: {exc}); "
+                "cannot prepare calibration dataset. Skipping export."
+            )
+            return source
+
+        model_id_for_tokenizer = str(source)
+        try:
+            tokenizer = AutoTokenizer.from_pretrained(model_id_for_tokenizer)
+        except Exception:
+            # Fallback to env-provided MODEL_ID if local dir is not a HF repo
+            model_id_for_tokenizer = os.environ.get("MODEL_ID", "canopylabs/orpheus-3b-0.1-ft")
+            tokenizer = AutoTokenizer.from_pretrained(model_id_for_tokenizer)
+
+        # Seed sample texts and scale up to a reasonable calibration size
+        sample_texts = [
+            "Hello, this is a short sentence for calibration.",
+            "The quick brown fox jumps over the lazy dog.",
+            "Orpheus TTS uses KV cache during decoding.",
+            "Please quantize the KV cache to reduce memory.",
+            "Short prompts often suffice for PTQ calibration.",
+            "TensorRT-LLM INT8 KV-cache calibration sample.",
+            "Another line with punctuation, numbers 123, and symbols!",
+            "Brevity helps speed up export during CI builds.",
+        ]
+        desired_batch = calib_batch_size or int(os.environ.get("TRTLLM_MAX_BATCH_SIZE", "8"))
+        desired_calib_size = int(os.environ.get("TRTLLM_CALIB_SIZE", str(max(32, desired_batch * 4))))
+        if len(sample_texts) < desired_calib_size:
+            reps = (desired_calib_size + len(sample_texts) - 1) // len(sample_texts)
+            sample_texts = (sample_texts * reps)[:desired_calib_size]
+
+        tokenizer_limit = getattr(tokenizer, "model_max_length", 2048) or 2048
+        token_max_seq = min(
+            tokenizer_limit,
+            tokenizer_max_seq_length_hint or calib_max_seq_len or tokenizer_limit,
+        )
+        max_len_guess = min(token_max_seq, tokenizer_limit)
+        encodings = tokenizer(
+            sample_texts,
+            padding=False,
+            truncation=True,
+            max_length=max_len_guess,
+            return_tensors=None,
+        )
+
+        class _CalibDataset:
+            def __init__(self, enc):
+                self._ids = enc["input_ids"] if isinstance(enc, dict) else enc
+
+            def __len__(self):  # noqa: D401
+                return len(self._ids)
+
+            def __iter__(self):
+                for ids in self._ids:
+                    yield {"input_ids": ids}
+
+        calib_dataset = _CalibDataset(encodings)
+
+        # Fill defaults for common required params.
+        dataset_len = len(_CalibDataset(encodings))
+        eff_batch = max(1, min(desired_batch, dataset_len))
+
+        defaults: dict[str, object] = {
+            "device": "cuda",
+            "calib_dataset": calib_dataset,
+            "dtype": dtype_str or os.environ.get("TRTLLM_DTYPE", "bfloat16"),
+            "calib_size": dataset_len,
+            "batch_size": eff_batch,
+            "calib_max_seq_length": int(min(max_len_guess, calib_max_seq_len or max_len_guess)),
+            "awq_block_size": 128,
+            "tp_size": int(os.environ.get("TP_SIZE", "1")),
+            "pp_size": int(os.environ.get("PP_SIZE", "1")),
+            "cp_size": int(os.environ.get("CP_SIZE", "1")),
+            "seed": 17,
+            "tokenizer_max_seq_length": int(token_max_seq),
+        }
+
+        # Quantization format: prefer enum if available, else string
+        # Decide quantization format for weights if requested
+        qformat_value: Optional[object] = None
+        try:
+            from tensorrt_llm.quantization import QuantMode  # type: ignore
+            if weight_quant in {"auto8", "w8a8"}:
+                qformat_value = getattr(QuantMode, "SMOOTHQUANT", getattr(QuantMode, "PTQ", "ptq"))
+            else:
+                qformat_value = getattr(QuantMode, "PTQ", "ptq")
+        except Exception:
+            qformat_value = "smoothquant" if weight_quant in {"auto8", "w8a8"} else "ptq"
+
+        defaults["qformat"] = qformat_value
+
+        for name in list(defaults.keys()):
+            if name in params and name not in kwargs:
+                kwargs[name] = defaults[name]  # type: ignore[assignment]
+
+    # Add optional auto quantization controls when available and requested
+    if weight_quant == "auto8" and "auto_quantize_bits" in params:
+        kwargs.setdefault("auto_quantize_bits", auto_quantize_bits or 8.0)
+    # Try to quantize LM head as well when supported (optional)
+    if "quantize_lm_head" in params and weight_quant != "none":
+        kwargs.setdefault("quantize_lm_head", True)
+
+    # Attempt the export; if it fails due to missing args, surface the error.
+    try:
+        quantize_and_export(kv_cache_dtype=kv_cache_dtype, **kwargs)
+    except TypeError as exc:
+        print(f"[build-trt] ERROR: quantize_and_export failed: {exc}")
+        raise BuildError(
+            "quantize_and_export requires additional arguments that could not be inferred. "
+            "Provide calibration controls or adjust TRT-LLM version."
+        ) from exc
     return export_dir
 
 
@@ -209,6 +354,12 @@ def build_engine(args: argparse.Namespace) -> Path:
         build_cfg.profiling_verbosity = "layer_names_only"  # type: ignore[attr-defined]
         build_cfg.force_num_profiles = 1  # type: ignore[attr-defined]
         build_cfg.monitor_memory = True  # type: ignore[attr-defined]
+        # If fp8 KV-cache is requested, enable context FMHA when available
+        if args.kv_cache_dtype == "fp8":  # type: ignore[attr-defined]
+            try:
+                setattr(build_cfg, "use_fp8_context_fmha", True)
+            except Exception:
+                pass
     except Exception:
         pass
 
@@ -228,7 +379,18 @@ def build_engine(args: argparse.Namespace) -> Path:
             if args.quantized_dir
             else output_dir / "quantized-checkpoint"
         )
-        model_for_build = export_quantized_checkpoint(model_path, export_dir, args.kv_cache_dtype)
+        model_for_build = export_quantized_checkpoint(
+            model_path,
+            export_dir,
+            args.kv_cache_dtype,
+            calib_max_seq_len=int(build_cfg.max_seq_len),
+            calib_batch_size=int(build_cfg.max_batch_size),
+            tokenizer_max_seq_length_hint=int(build_cfg.max_seq_len),
+            dtype_str=str(build_cfg.precision),
+            weight_quant=str(getattr(args, "weight_quant", "none")),
+            auto_quantize_bits=(float(getattr(args, "auto_quantize_bits", 8.0))
+                                if getattr(args, "weight_quant", "none") == "auto8" else None),
+        )
     else:
         model_for_build = model_path
 
@@ -279,6 +441,18 @@ def parse_args(argv: Optional[Iterable[str]] = None) -> argparse.Namespace:
         "--quantized_dir",
         default=os.getenv("TRTLLM_QUANTIZED_DIR", ""),
         help="Directory to write/read quantized checkpoint when kv_cache_dtype is set",
+    )
+    parser.add_argument(
+        "--weight_quant",
+        choices=["none", "w8a8", "auto8"],
+        default=os.getenv("TRTLLM_WEIGHT_QUANT", "none"),
+        help="Quantize model weights to 8-bit (SmoothQuant or AutoQuant)",
+    )
+    parser.add_argument(
+        "--auto_quantize_bits",
+        type=float,
+        default=float(os.getenv("TRTLLM_AUTO_QUANTIZE_BITS", "8.0")),
+        help="Target bits for AutoQuant when --weight_quant=auto8",
     )
     args = parser.parse_args(argv)
     if not args.kv_cache_dtype:

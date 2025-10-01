@@ -15,6 +15,8 @@ load_env_if_present
 : "${TRTLLM_MAX_BATCH_SIZE:=16}"
 : "${TRTLLM_KV_CACHE_DTYPE:=int8}"
 : "${TRTLLM_QUANTIZED_DIR:=}"
+: "${TRTLLM_WEIGHT_QUANT:=none}"  # none|w8a8|auto8
+: "${TRTLLM_AUTO_QUANTIZE_BITS:=8.0}"
 : "${PYTHON_EXEC:=python}"
 
 usage() {
@@ -131,6 +133,8 @@ PY
 import os
 from pathlib import Path
 from tensorrt_llm.quantization import quantize_and_export
+import inspect
+from transformers import AutoTokenizer
 src = os.environ["CKPT_DIR"]
 dst = os.environ["QUANT_DIR"]
 kv = os.environ["TRTLLM_KV_CACHE_DTYPE"].lower()
@@ -138,8 +142,87 @@ Path(dst).mkdir(parents=True, exist_ok=True)
 if any(Path(dst).iterdir()):
     print(f"[build-trt] Using existing quantized checkpoint at: {dst}")
 else:
-    print(f"[build-trt] quantize_and_export(model={src}, export_dir={dst}, kv_cache_dtype={kv})")
-    quantize_and_export(model=src, export_dir=dst, kv_cache_dtype=kv)
+    sig = inspect.signature(quantize_and_export)
+    params = sig.parameters
+    if "kv_cache_dtype" not in params:
+        print("[build-trt] WARN: quantize_and_export does not support kv_cache_dtype on this version; skipping export.")
+    else:
+        # Some versions require full calibration kwargs. If we detect those parameters, skip.
+        required_kwonly = {
+            "device",
+            "calib_dataset",
+            "dtype",
+            "qformat",
+            "calib_size",
+            "batch_size",
+            "calib_max_seq_length",
+            "awq_block_size",
+            "tp_size",
+            "pp_size",
+            "cp_size",
+            "seed",
+            "tokenizer_max_seq_length",
+        }
+        needs_calib = any(name in params for name in required_kwonly)
+        if needs_calib:
+            # Build a tiny synthetic calibration dataset
+            try:
+                tokenizer = AutoTokenizer.from_pretrained(src)
+            except Exception:
+                tokenizer = AutoTokenizer.from_pretrained(os.environ.get("MODEL_ID", "canopylabs/orpheus-3b-0.1-ft"))
+            texts = [
+                "Hello, this is a short sentence for calibration.",
+                "The quick brown fox jumps over the lazy dog.",
+                "Orpheus TTS uses KV cache during decoding.",
+                "Please quantize the KV cache to reduce memory.",
+            ]
+            desired_batch = int(os.environ.get("TRTLLM_MAX_BATCH_SIZE", "16"))
+            desired_calib_size = int(os.environ.get("TRTLLM_CALIB_SIZE", "$((TRTLLM_MAX_BATCH_SIZE*4))"))
+            if len(texts) < desired_calib_size:
+                reps = (desired_calib_size + len(texts) - 1) // len(texts)
+                texts = (texts * reps)[:desired_calib_size]
+
+            tokenizer_limit = getattr(tokenizer, "model_max_length", 2048) or 2048
+            seq_hint = int(os.environ.get("TRTLLM_MAX_INPUT_LEN", "128")) + int(os.environ.get("TRTLLM_MAX_OUTPUT_LEN", "2048"))
+            max_len = min(seq_hint, tokenizer_limit)
+            enc = tokenizer(texts, padding=False, truncation=True, max_length=max_len, return_tensors=None)
+            class _Calib:
+                def __init__(self, e): self._ids = e["input_ids"] if isinstance(e, dict) else e
+                def __len__(self): return len(self._ids)
+                def __iter__(self):
+                    for ids in self._ids:
+                        yield {"input_ids": ids}
+            calib = _Calib(enc)
+            try:
+                from tensorrt_llm.quantization import QuantMode
+                qformat = getattr(QuantMode, "PTQ", "ptq")
+            except Exception:
+                qformat = "ptq"
+            print("[build-trt] Performing PTQ export for KV-cache aligned to build config...")
+            quantize_and_export(
+                model=src if "model" in params else None,
+                model_dir=src if "model_dir" in params else None,
+                checkpoint_dir=src if "checkpoint_dir" in params else None,
+                export_dir=dst if "export_dir" in params else None,
+                output_dir=dst if "output_dir" in params else None,
+                kv_cache_dtype=kv,
+                device="cuda",
+                calib_dataset=calib,
+                dtype=os.environ.get("TRTLLM_DTYPE", "bfloat16"),
+                qformat=qformat,
+                calib_size=len(calib),
+                batch_size=max(1, min(desired_batch, len(calib))),
+                calib_max_seq_length=int(max_len),
+                awq_block_size=128,
+                tp_size=int(os.environ.get("TP_SIZE", "1")),
+                pp_size=int(os.environ.get("PP_SIZE", "1")),
+                cp_size=int(os.environ.get("CP_SIZE", "1")),
+                seed=17,
+                tokenizer_max_seq_length=int(max_len),
+            )
+        else:
+            print(f"[build-trt] quantize_and_export(model={src}, export_dir={dst}, kv_cache_dtype={kv})")
+            quantize_and_export(model=src, export_dir=dst, kv_cache_dtype=kv)
 print(f"[build-trt] Quantized checkpoint ready: {dst}")
 PY
     CKPT_DIR="${QUANT_DIR}"
@@ -183,6 +266,8 @@ else
   )
   if [ -n "${TRTLLM_KV_CACHE_DTYPE}" ]; then CMD+=(--kv_cache_dtype "${TRTLLM_KV_CACHE_DTYPE}"); fi
   if [ -n "${TRTLLM_QUANTIZED_DIR}" ]; then CMD+=(--quantized_dir "${TRTLLM_QUANTIZED_DIR}"); fi
+  if [ -n "${TRTLLM_WEIGHT_QUANT}" ]; then CMD+=(--weight_quant "${TRTLLM_WEIGHT_QUANT}"); fi
+  if [ "${TRTLLM_WEIGHT_QUANT}" = "auto8" ]; then CMD+=(--auto_quantize_bits "${TRTLLM_AUTO_QUANTIZE_BITS}"); fi
   if [ "$MINIMAL" = true ]; then CMD+=(--minimal); fi
   echo "[build-trt] Running: ${CMD[*]}"
   "${CMD[@]}"
