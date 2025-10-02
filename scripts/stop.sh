@@ -61,18 +61,68 @@ if command -v nvidia-smi >/dev/null 2>&1; then
       echo "$PIDS" | xargs -r -n1 kill -9 2>/dev/null || true
     fi
   fi
+  
+  # Kill any Python processes that might have CUDA contexts
+  echo "[stop] Killing Python/TensorRT processes"
+  pkill -9 -f "python.*tensorrt" 2>/dev/null || true
+  pkill -9 -f "python.*trtllm" 2>/dev/null || true
+  pkill -9 -f "mpirun" 2>/dev/null || true
+  pkill -9 -f "mpi4py" 2>/dev/null || true
+  sleep 1
+  
   # As a fallback, kill any process holding /dev/nvidia* (container-local)
   if command -v fuser >/dev/null 2>&1; then
-    for dev in /dev/nvidiactl /dev/nvidia-uvm /dev/nvidia0; do
-      [ -e "$dev" ] && fuser -k "$dev" 2>/dev/null || true
+    echo "[stop] Killing processes using NVIDIA devices"
+    for dev in /dev/nvidiactl /dev/nvidia-uvm /dev/nvidia-uvm-tools /dev/nvidia0 /dev/nvidia1; do
+      if [ -e "$dev" ]; then
+        fuser -k -9 "$dev" 2>/dev/null || true
+      fi
     done
   fi
+  
+  # Clear CUDA IPC handles and shared memory
+  echo "[stop] Clearing CUDA shared memory"
+  rm -rf /dev/shm/nvidia* 2>/dev/null || true
+  rm -rf /dev/shm/cuda* 2>/dev/null || true
+  rm -rf /tmp/cuda* 2>/dev/null || true
+  rm -rf /tmp/.X11-unix/* 2>/dev/null || true
+  
+  # Clear any lingering IPC semaphores/message queues
+  if command -v ipcs >/dev/null 2>&1; then
+    echo "[stop] Clearing IPC resources"
+    # Get current user
+    CURRENT_USER=$(whoami)
+    # Clear semaphores
+    ipcs -s | grep "$CURRENT_USER" | awk '{print $2}' | xargs -r -n1 ipcrm -s 2>/dev/null || true
+    # Clear message queues
+    ipcs -q | grep "$CURRENT_USER" | awk '{print $2}' | xargs -r -n1 ipcrm -q 2>/dev/null || true
+    # Clear shared memory segments
+    ipcs -m | grep "$CURRENT_USER" | awk '{print $2}' | xargs -r -n1 ipcrm -m 2>/dev/null || true
+  fi
+  
+  sleep 2
+  
   # Attempt GPU reset if no compute procs remain (may require privileges)
   LEFT=$(nvidia-smi --query-compute-apps=pid --format=csv,noheader 2>/dev/null | tr -d ' ' || true)
   if [ -z "$LEFT" ]; then
+    echo "[stop] Resetting GPU"
     GPU_INDEX=${GPU_INDEX:-0}
+    # Try multiple reset methods
     nvidia-smi --gpu-reset -i "$GPU_INDEX" 2>/dev/null || true
+    # Alternative: reset compute mode
+    nvidia-smi -i "$GPU_INDEX" -pm 0 2>/dev/null || true
+    nvidia-smi -i "$GPU_INDEX" -pm 1 2>/dev/null || true
+    # Clear persistence mode and re-enable
+    nvidia-smi -i "$GPU_INDEX" -pm 0 2>/dev/null || true
+    sleep 1
+    nvidia-smi -i "$GPU_INDEX" -pm 1 2>/dev/null || true
+  else
+    echo "[stop] WARNING: GPU processes still running: $LEFT"
   fi
+  
+  # Final check
+  echo "[stop] Final GPU memory status:"
+  nvidia-smi --query-gpu=memory.used,memory.total --format=csv,noheader 2>/dev/null || true
 else
   echo "[stop] nvidia-smi not available; skipping GPU process kill"
 fi
@@ -120,20 +170,28 @@ if [ "$CLEAN_TRT" = "1" ]; then
   echo "[stop] Removing TensorRT-LLM artefacts"
   # Engine output directory (env override or default used by scripts/03-build-trt-engine.sh)
   rm -rf "${TRTLLM_ENGINE_DIR}" || true
+  # TensorRT-LLM checkpoint directories (converted from HF format)
+  rm -rf "${TRTLLM_ENGINE_DIR}-ckpt" || true
+  rm -rf "$PWD/models/orpheus-trt-ckpt" || true
   # FP16 checkpoints generated ahead of TRT builds
   rm -rf "${FP16_MODEL_DIR}" || true
   # Common streaming engine directory used by experiments
   rm -rf "$PWD/models/orpheus-streaming" || true
+  rm -rf "$PWD/models/orpheus-streaming-ckpt" || true
   # Local HF snapshot cache used by build flow
   if [ -n "${TRTLLM_CACHE_DIR:-}" ]; then
     rm -rf "${TRTLLM_CACHE_DIR}" || true
   fi
   rm -rf "${HF_SNAPSHOT_DIR}" || true
-  # As a safety net, remove stray engine files under models/
+  # As a safety net, remove stray engine files and checkpoint dirs under models/
   if [ -d "$PWD/models" ]; then
     find "$PWD/models" -type f -name "*.engine" -delete 2>/dev/null || true
     find "$PWD/models" -type f -name "model.plan" -delete 2>/dev/null || true
+    find "$PWD/models" -type f -name "rank*.safetensors" -delete 2>/dev/null || true
+    find "$PWD/models" -type d -name "*-ckpt" -exec rm -rf {} + 2>/dev/null || true
   fi
+  # Clear Python bytecode that might hold references
+  find "$PWD/server" -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
 fi
 
 if [ "$CLEAN_SYSTEM" = "1" ]; then
