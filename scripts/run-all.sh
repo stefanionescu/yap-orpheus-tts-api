@@ -18,11 +18,9 @@ CMD='\
   if [ "${BACKEND:-vllm}" = "trtllm" ]; then \
     echo "[run-all] Installing TRT-LLM backend" && \
     bash scripts/01-install-trt.sh && \
-    echo "[run-all] Preparing FP16 checkpoint" && \
-    bash scripts/02-export-fp16.sh && \
-    echo "[run-all] Building TRT-LLM engine (03-build-trt-engine.sh)" && \
-    bash scripts/03-build-trt-engine.sh && \
-    : "${TRTLLM_ENGINE_DIR:=$PWD/models/orpheus-trt}" && \
+    echo "[run-all] Building TRT-LLM engine (INT8 SQ + KV INT8)" && \
+    bash scripts/02-build-int8-sq-kvint8.sh && \
+    : "${TRTLLM_ENGINE_DIR:=$PWD/models/orpheus-trt-int8sq}" && \
     export TRTLLM_ENGINE_DIR; \
   fi && \
   echo "[run-all] 3/3 start server" && \
