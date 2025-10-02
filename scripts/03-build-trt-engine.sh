@@ -97,12 +97,12 @@ if [ -d "${MODEL_ID}" ]; then
     MODEL_FOR_BUILD="$(cd "${MODEL_ID}" && pwd)"
   else
     echo "[build-trt] Source directory lacks FP16 sentinel; exporting to ${FP16_MODEL_DIR}"
-    bash scripts/01b-export-fp16-checkpoint.sh --model "${MODEL_ID}" --output "${FP16_MODEL_DIR}"
+    bash scripts/02-export-fp16.sh --model "${MODEL_ID}" --output "${FP16_MODEL_DIR}"
     MODEL_FOR_BUILD="$(cd "${FP16_MODEL_DIR}" && pwd)"
   fi
 else
   echo "[build-trt] Exporting FP16 checkpoint for ${MODEL_ID}"
-  bash scripts/01b-export-fp16-checkpoint.sh --model "${MODEL_ID}" --output "${FP16_MODEL_DIR}"
+  bash scripts/02-export-fp16.sh --model "${MODEL_ID}" --output "${FP16_MODEL_DIR}"
   MODEL_FOR_BUILD="$(cd "${FP16_MODEL_DIR}" && pwd)"
 fi
 
@@ -159,4 +159,4 @@ else
 fi
 
 echo "[build-trt] Engine directory ready: ${TRTLLM_ENGINE_DIR}"
-echo "[build-trt] To use it: export BACKEND=trtllm; export TRTLLM_ENGINE_DIR=\"${TRTLLM_ENGINE_DIR}\"; bash scripts/03-run-server.sh"
+echo "[build-trt] To use it: export BACKEND=trtllm; export TRTLLM_ENGINE_DIR=\"${TRTLLM_ENGINE_DIR}\"; bash scripts/04-run-server.sh"

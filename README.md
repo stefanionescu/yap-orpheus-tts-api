@@ -63,13 +63,13 @@ bash scripts/01-install.sh
 bash scripts/01-install-trt.sh
 
 # 3) Build engine directory (installs TRT-LLM if missing)
-bash scripts/02-build-trt-engine.sh --output /models/orpheus-trt \
+bash scripts/03-build-trt-engine.sh --output /models/orpheus-trt \
   --dtype bfloat16 --max-input-len 2048 --max-output-len 2048 --max-batch-size 16
 
 # 4) Run server with TRT backend
 export BACKEND=trtllm
 export TRTLLM_ENGINE_DIR=/models/orpheus-trt
-bash scripts/03-run-server.sh
+bash scripts/04-run-server.sh
 ```
 
 ### Recommended container base for TRT-LLM

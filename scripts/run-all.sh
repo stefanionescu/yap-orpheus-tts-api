@@ -19,14 +19,14 @@ CMD='\
     echo "[run-all] Installing TRT-LLM backend" && \
     bash scripts/01-install-trt.sh && \
     echo "[run-all] Preparing FP16 checkpoint" && \
-    bash scripts/01b-export-fp16-checkpoint.sh && \
-    echo "[run-all] Building TRT-LLM engine (02-build-trt-engine.sh)" && \
-    bash scripts/02-build-trt-engine.sh && \
+    bash scripts/02-export-fp16.sh && \
+    echo "[run-all] Building TRT-LLM engine (03-build-trt-engine.sh)" && \
+    bash scripts/03-build-trt-engine.sh && \
     : "${TRTLLM_ENGINE_DIR:=$PWD/models/orpheus-trt}" && \
     export TRTLLM_ENGINE_DIR; \
   fi && \
   echo "[run-all] 3/3 start server" && \
-  bash scripts/03-run-server.sh'
+  bash scripts/04-run-server.sh'
 
 setsid nohup bash -lc "$CMD" </dev/null > logs/run-all.log 2>&1 &
 bg_pid=$!
