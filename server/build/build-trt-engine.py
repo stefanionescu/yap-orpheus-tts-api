@@ -378,6 +378,13 @@ def build_engine(args: argparse.Namespace) -> Path:
     build_cfg.max_seq_len = total_seq
     build_cfg.max_batch_size = max_bsz
     build_cfg.precision = args.dtype
+    
+    # Force TensorRT engine building (not PyTorch backend)
+    # Set backend to None to force TensorRT engine compilation
+    try:
+        build_cfg.backend = None  # Force TensorRT, not PyTorch
+    except Exception:
+        pass
     try:
         # Allow scheduler to consider higher batched throughput on A100
         build_cfg.max_num_tokens = max(1, max_bsz * total_seq)  # type: ignore[attr-defined]
@@ -414,35 +421,32 @@ def build_engine(args: argparse.Namespace) -> Path:
     model_for_build = model_path
 
     print("[build-trt] Initializing LLM API (this can take a few minutes)...")
-    llm = LLM(model=str(model_for_build), build_config=build_cfg, dtype=args.dtype)
+    
+    # In TensorRT-LLM v1.0.0, when using the LLM API with BuildConfig,
+    # it may default to PyTorch backend. To build and save an actual TensorRT engine,
+    # we need to pass engine_dir to LLM() constructor
+    llm = LLM(
+        model=str(model_for_build), 
+        build_config=build_cfg, 
+        dtype=args.dtype,
+        engine_dir=str(output_dir)  # This triggers TensorRT engine building and saves it
+    )
 
-    print("[build-trt] Saving engine artefacts...")
+    print("[build-trt] Engine build complete")
     
-    # Debug: List available methods on LLM object
-    llm_methods = [m for m in dir(llm) if not m.startswith('_') and callable(getattr(llm, m, None))]
-    print(f"[build-trt] Available methods on LLM object: {', '.join(llm_methods[:10])}...")
-    
-    # Try to access the engine attribute first (TRT-LLM 1.0.0+)
-    save_candidates = [
-        ("engine.save", getattr(getattr(llm, "engine", None), "save", None)),
-        ("save", getattr(llm, "save", None)),
-        ("save_engine", getattr(llm, "save_engine", None)),
-        ("export_engine", getattr(llm, "export_engine", None)),
-    ]
-    for name, maybe_callable in save_candidates:
-        if callable(maybe_callable):
-            print(f"[build-trt] Using {name}()")
-            maybe_callable(str(output_dir))
-            break
-    else:
-        # Check if engine files were already saved during initialization
-        if any((output_dir / sentinel).exists() for sentinel in ENGINE_SENTINELS):
-            print("[build-trt] Engine files already present in output directory")
+    # Verify engine files were created
+    if not any((output_dir / sentinel).exists() for sentinel in ENGINE_SENTINELS):
+        # Try calling save() if available
+        if hasattr(llm, 'save') and callable(getattr(llm, 'save', None)):
+            print(f"[build-trt] Calling llm.save('{output_dir}')")
+            llm.save(str(output_dir))
         else:
+            # Debug output
+            llm_methods = [m for m in dir(llm) if not m.startswith('_') and callable(getattr(llm, m, None))]
             raise BuildError(
-                "TensorRT-LLM LLM API exposes no save method and no engine files found. "
-                "Checked: engine.save, save, save_engine, export_engine. "
-                "Upgrade TensorRT-LLM or adjust to the installed version."
+                f"TensorRT engine files not found and LLM object has no save() method. "
+                f"PyTorch backend was used instead of TensorRT engine. "
+                f"Available methods: {', '.join(llm_methods[:20])}"
             )
 
     ensure_engine_files(output_dir)
