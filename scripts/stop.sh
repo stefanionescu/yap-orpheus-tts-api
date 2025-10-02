@@ -4,7 +4,11 @@ set -euo pipefail
 # Flags:
 #  --clean-install  Remove venv and Python/HF/torch caches created by 01-install.sh
 #  --clean-system   Clean apt caches created by 00-bootstrap.sh (best-effort)
-#  --clean-trt      Remove TensorRT-LLM build artefacts (engines, local HF cache)
+#  --clean-trt      Remove TensorRT-LLM build artefacts (engines, local HF/FP16 caches)
+
+: "${TRTLLM_ENGINE_DIR:=$PWD/models/orpheus-trt}"
+: "${FP16_MODEL_DIR:=$PWD/models/orpheus-fp16}"
+: "${HF_SNAPSHOT_DIR:=$PWD/.hf}"
 
 CLEAN_INSTALL=0
 CLEAN_SYSTEM=0
@@ -31,6 +35,18 @@ if [ -f .run/server.pid ]; then
 fi
 pkill -f "uvicorn server.server:app" || true
 sleep 1
+
+if [ -f .run/run-all.pid ]; then
+  echo "[stop] Stopping background pipeline"
+  RA_PID=$(cat .run/run-all.pid || true)
+  if [ -n "$RA_PID" ]; then
+    kill "$RA_PID" 2>/dev/null || true
+    sleep 1
+    kill -9 "$RA_PID" 2>/dev/null || true
+  fi
+  rm -f .run/run-all.pid || true
+fi
+pkill -f "scripts/run-all.sh" 2>/dev/null || true
 
 # Kill any lingering GPU compute processes (free VRAM)
 if command -v nvidia-smi >/dev/null 2>&1; then
@@ -103,15 +119,16 @@ fi
 if [ "$CLEAN_TRT" = "1" ]; then
   echo "[stop] Removing TensorRT-LLM artefacts"
   # Engine output directory (env override or default used by scripts/03-build-trt-engine.sh)
-  TRT_ENGINE_DIR="${TRTLLM_ENGINE_DIR:-$PWD/models/orpheus-trt}"
-  rm -rf "${TRT_ENGINE_DIR}" || true
+  rm -rf "${TRTLLM_ENGINE_DIR}" || true
+  # FP16 checkpoints generated ahead of TRT builds
+  rm -rf "${FP16_MODEL_DIR}" || true
   # Common streaming engine directory used by experiments
   rm -rf "$PWD/models/orpheus-streaming" || true
-  # Local HF snapshot cache used by server/build/build-trt-engine.py and 03-build-trt-engine.sh
+  # Local HF snapshot cache used by build flow
   if [ -n "${TRTLLM_CACHE_DIR:-}" ]; then
     rm -rf "${TRTLLM_CACHE_DIR}" || true
   fi
-  rm -rf "$PWD/.hf" || true
+  rm -rf "${HF_SNAPSHOT_DIR}" || true
   # As a safety net, remove stray engine files under models/
   if [ -d "$PWD/models" ]; then
     find "$PWD/models" -type f -name "*.engine" -delete 2>/dev/null || true
@@ -130,4 +147,3 @@ if [ "$CLEAN_SYSTEM" = "1" ]; then
 fi
 
 echo "[stop] Wipe complete."
-

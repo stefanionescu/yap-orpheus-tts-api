@@ -68,10 +68,6 @@ if [ "$(uname -s)" != "Linux" ]; then
   exit 1
 fi
 
-if [ -z "${MODEL_FOR_BUILD}" ]; then
-  echo "[build-trt] ERROR: Failed to resolve checkpoint directory." >&2
-  exit 1
-fi
 if ! command -v nvidia-smi >/dev/null 2>&1; then
   echo "[build-trt] ERROR: nvidia-smi not detected. Ensure the GPU is visible to this runtime." >&2
   exit 1
@@ -96,6 +92,10 @@ if [ -d "${MODEL_ID}" ]; then
   if [ -f "${SENTINEL_PATH}" ]; then
     MODEL_FOR_BUILD="$(cd "${MODEL_ID}" && pwd)"
   else
+    if [ "${MODEL_ID%/}" = "${FP16_MODEL_DIR%/}" ]; then
+      echo "[build-trt] ERROR: ${MODEL_ID} is missing ${SENTINEL_PATH##*/}. Run scripts/02-export-fp16.sh --force first." >&2
+      exit 1
+    fi
     echo "[build-trt] Source directory lacks FP16 sentinel; exporting to ${FP16_MODEL_DIR}"
     bash scripts/02-export-fp16.sh --model "${MODEL_ID}" --output "${FP16_MODEL_DIR}"
     MODEL_FOR_BUILD="$(cd "${FP16_MODEL_DIR}" && pwd)"
@@ -104,6 +104,11 @@ else
   echo "[build-trt] Exporting FP16 checkpoint for ${MODEL_ID}"
   bash scripts/02-export-fp16.sh --model "${MODEL_ID}" --output "${FP16_MODEL_DIR}"
   MODEL_FOR_BUILD="$(cd "${FP16_MODEL_DIR}" && pwd)"
+fi
+
+if [ -z "${MODEL_FOR_BUILD}" ]; then
+  echo "[build-trt] ERROR: Failed to resolve checkpoint directory." >&2
+  exit 1
 fi
 
 echo "[build-trt] Model: ${MODEL_ID}"
