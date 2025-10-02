@@ -364,11 +364,49 @@ def build_engine(args: argparse.Namespace) -> Path:
 
     model_path = resolve_model_source(args.model, token)
 
-    # No offline export needed when using runtime KvCacheConfig
-    model_for_build = model_path
+    # Convert HuggingFace checkpoint to TensorRT-LLM checkpoint format
+    trtllm_ckpt_dir = output_dir.parent / f"{output_dir.name}-ckpt"
+    trtllm_ckpt_dir.mkdir(parents=True, exist_ok=True)
+    
+    # Check if conversion is needed (look for TensorRT-LLM checkpoint marker)
+    needs_conversion = not (trtllm_ckpt_dir / "config.json").exists() or \
+                       not any(trtllm_ckpt_dir.glob("rank*.safetensors"))
+    
+    if needs_conversion:
+        print(f"[build-trt] Converting HuggingFace checkpoint to TensorRT-LLM format...")
+        print(f"[build-trt] Source: {model_path}")
+        print(f"[build-trt] Target: {trtllm_ckpt_dir}")
+        
+        import subprocess
+        import json
+        
+        # Read the HF config to determine model type
+        hf_config_path = model_path / "config.json"
+        with open(hf_config_path) as f:
+            hf_config = json.load(f)
+        
+        model_type = hf_config.get("model_type", "llama")
+        
+        # Use convert_checkpoint command for Llama models
+        convert_cmd = [
+            "python", "-m", "tensorrt_llm.commands.convert_checkpoint",
+            "--model_dir", str(model_path),
+            "--output_dir", str(trtllm_ckpt_dir),
+            "--dtype", args.dtype,
+        ]
+        
+        print(f"[build-trt] Running: {' '.join(convert_cmd)}")
+        result = subprocess.run(convert_cmd, check=False)
+        if result.returncode != 0:
+            raise BuildError(f"Checkpoint conversion failed with exit code {result.returncode}")
+        
+        print(f"[build-trt] Conversion complete")
+    else:
+        print(f"[build-trt] Using existing TensorRT-LLM checkpoint at {trtllm_ckpt_dir}")
+    
+    model_for_build = trtllm_ckpt_dir
 
-    # TensorRT-LLM v1.0.0 Python API defaults to PyTorch backend and lacks save() method
-    # Use trtllm-build CLI tool instead for reliable engine building
+    # Use trtllm-build CLI tool to build the engine
     print("[build-trt] Building TensorRT engine using trtllm-build CLI...")
     
     import subprocess
