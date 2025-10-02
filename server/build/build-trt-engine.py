@@ -364,84 +364,93 @@ def build_engine(args: argparse.Namespace) -> Path:
 
     model_path = resolve_model_source(args.model, token)
 
-    # Convert HuggingFace checkpoint to TensorRT-LLM checkpoint format
-    trtllm_ckpt_dir = output_dir.parent / f"{output_dir.name}-ckpt"
-    trtllm_ckpt_dir.mkdir(parents=True, exist_ok=True)
+    # TensorRT-LLM v1.0.0: trtllm-build can work directly with HuggingFace checkpoints
+    # but needs proper config. Try building directly first, convert only if needed.
     
-    # Check if conversion is needed (look for TensorRT-LLM checkpoint marker)
-    needs_conversion = not (trtllm_ckpt_dir / "config.json").exists() or \
-                       not any(trtllm_ckpt_dir.glob("rank*.safetensors"))
+    import subprocess
+    import json
     
-    if needs_conversion:
-        print(f"[build-trt] Converting HuggingFace checkpoint to TensorRT-LLM format...")
-        print(f"[build-trt] Source: {model_path}")
-        print(f"[build-trt] Target: {trtllm_ckpt_dir}")
-        
-        import subprocess
-        import json
-        
-        # Read the HF config to determine model type
-        hf_config_path = model_path / "config.json"
-        with open(hf_config_path) as f:
-            hf_config = json.load(f)
-        
-        model_type = hf_config.get("model_type", "llama")
-        
-        # Use convert_checkpoint command for Llama models
-        convert_cmd = [
-            "python", "-m", "tensorrt_llm.commands.convert_checkpoint",
-            "--model_dir", str(model_path),
-            "--output_dir", str(trtllm_ckpt_dir),
-            "--dtype", args.dtype,
-        ]
-        
-        print(f"[build-trt] Running: {' '.join(convert_cmd)}")
-        result = subprocess.run(convert_cmd, check=False)
-        if result.returncode != 0:
-            raise BuildError(f"Checkpoint conversion failed with exit code {result.returncode}")
-        
-        print(f"[build-trt] Conversion complete")
+    # Check if this is already a TensorRT-LLM checkpoint (has 'architecture' field)
+    config_path = model_path / "config.json"
+    config_backup_path = model_path / "config.json.orig"
+    
+    with open(config_path) as f:
+        config = json.load(f)
+    
+    is_trtllm_format = "architecture" in config
+    needs_restore = False
+    
+    if is_trtllm_format:
+        print(f"[build-trt] Checkpoint is already in TensorRT-LLM format")
+        model_for_build = model_path
     else:
-        print(f"[build-trt] Using existing TensorRT-LLM checkpoint at {trtllm_ckpt_dir}")
-    
-    model_for_build = trtllm_ckpt_dir
+        # HuggingFace format - need to add minimal TensorRT-LLM fields
+        print(f"[build-trt] Patching HuggingFace config for TensorRT-LLM compatibility")
+        
+        # Create a patched config with required TensorRT-LLM fields
+        patched_config = config.copy()
+        patched_config["architecture"] = "LlamaForCausalLM"  # From 'architectures' field
+        patched_config["dtype"] = args.dtype
+        
+        # Map HF fields to TensorRT-LLM equivalents if needed
+        if "num_hidden_layers" in config:
+            patched_config["num_layers"] = config["num_hidden_layers"]
+        if "num_attention_heads" in config:
+            patched_config["num_heads"] = config["num_attention_heads"]
+        
+        # Backup original config
+        shutil.copy(config_path, config_backup_path)
+        needs_restore = True
+        
+        # Write patched config
+        with open(config_path, 'w') as f:
+            json.dump(patched_config, f, indent=2)
+        
+        print(f"[build-trt] Config patched with architecture field")
+        model_for_build = model_path
 
     # Use trtllm-build CLI tool to build the engine
     print("[build-trt] Building TensorRT engine using trtllm-build CLI...")
     
-    import subprocess
-    
-    max_seq = max_in + max_out
-    
-    cmd = [
-        "trtllm-build",
-        "--checkpoint_dir", str(model_for_build),
-        "--output_dir", str(output_dir),
-        "--max_input_len", str(max_in),
-        "--max_seq_len", str(max_seq),
-        "--max_batch_size", str(max_bsz),
-        "--remove_input_padding", "enable",
-        "--log_level", "info",
-    ]
-    
-    # Add context FMHA settings
-    if hasattr(args, 'context_fmha') and args.context_fmha:
-        if args.context_fmha != "auto":
-            cmd.extend(["--context_fmha", args.context_fmha])
-    
-    # Add KV cache dtype if specified
-    if hasattr(args, 'kv_cache_dtype') and args.kv_cache_dtype:
-        if args.kv_cache_dtype == "fp8":
-            cmd.extend(["--use_fp8_context_fmha", "enable"])
-    
-    print(f"[build-trt] Running: {' '.join(cmd)}")
-    
-    result = subprocess.run(cmd, check=False)
-    if result.returncode != 0:
-        raise BuildError(f"trtllm-build command failed with exit code {result.returncode}")
+    try:
+        max_seq = max_in + max_out
+        
+        cmd = [
+            "trtllm-build",
+            "--checkpoint_dir", str(model_for_build),
+            "--output_dir", str(output_dir),
+            "--max_input_len", str(max_in),
+            "--max_seq_len", str(max_seq),
+            "--max_batch_size", str(max_bsz),
+            "--remove_input_padding", "enable",
+            "--log_level", "info",
+        ]
+        
+        # Add context FMHA settings
+        if hasattr(args, 'context_fmha') and args.context_fmha:
+            if args.context_fmha != "auto":
+                cmd.extend(["--context_fmha", args.context_fmha])
+        
+        # Add KV cache dtype if specified
+        if hasattr(args, 'kv_cache_dtype') and args.kv_cache_dtype:
+            if args.kv_cache_dtype == "fp8":
+                cmd.extend(["--use_fp8_context_fmha", "enable"])
+        
+        print(f"[build-trt] Running: {' '.join(cmd)}")
+        
+        result = subprocess.run(cmd, check=False)
+        if result.returncode != 0:
+            raise BuildError(f"trtllm-build command failed with exit code {result.returncode}")
 
-    ensure_engine_files(output_dir)
-    return output_dir
+        ensure_engine_files(output_dir)
+        return output_dir
+    
+    finally:
+        # Restore original config if we patched it
+        if needs_restore and config_backup_path.exists():
+            print(f"[build-trt] Restoring original config.json")
+            shutil.copy(config_backup_path, config_path)
+            config_backup_path.unlink()
 
 
 def ensure_engine_files(output_dir: Path) -> None:
