@@ -349,22 +349,6 @@ def build_engine(args: argparse.Namespace) -> Path:
     ensure_mpi_runtime()
     token = ensure_token_env()
 
-    try:
-        from tensorrt_llm.llmapi import BuildConfig, LLM  # type: ignore  # noqa: WPS433
-    except ImportError as exc:  # pragma: no cover - runtime dependency only
-        message = str(exc).lower()
-        if "libpython" in message:
-            raise BuildError(
-                "TensorRT-LLM failed to import because libpython shared libraries are missing. "
-                "Install python3-dev/python3.10-dev and ensure libpython3.10.so is on LD_LIBRARY_PATH."
-            ) from exc
-        if "cuda" in message:
-            raise BuildError(
-                "TensorRT-LLM requires the cuda-python package and access to CUDA runtime libraries. "
-                "Install cuda-python>=12.4 and ensure libcuda/libcudart are visible (LD_LIBRARY_PATH)."
-            ) from exc
-        raise
-
     output_dir = Path(args.output).expanduser().resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -372,47 +356,10 @@ def build_engine(args: argparse.Namespace) -> Path:
     max_out = int(args.max_output_len)
     max_bsz = int(args.max_batch_size)
 
-    build_cfg = BuildConfig()
-    build_cfg.max_input_len = max_in
-    total_seq = max_in + max_out
-    build_cfg.max_seq_len = total_seq
-    build_cfg.max_batch_size = max_bsz
-    build_cfg.precision = args.dtype
-    
-    # Force TensorRT engine building (not PyTorch backend)
-    # Set backend to None to force TensorRT engine compilation
-    try:
-        build_cfg.backend = None  # Force TensorRT, not PyTorch
-    except Exception:
-        pass
-    try:
-        # Allow scheduler to consider higher batched throughput on A100
-        build_cfg.max_num_tokens = max(1, max_bsz * total_seq)  # type: ignore[attr-defined]
-        build_cfg.opt_num_tokens = max(total_seq, max_bsz * 256)  # type: ignore[attr-defined]
-        build_cfg.profiling_verbosity = "layer_names_only"  # type: ignore[attr-defined]
-        build_cfg.force_num_profiles = 1  # type: ignore[attr-defined]
-        build_cfg.monitor_memory = True  # type: ignore[attr-defined]
-        # Control context flash-attention per docs (disable on A100)
-        try:
-            setattr(build_cfg, "context_fmha", args.context_fmha)
-        except Exception:
-            try:
-                setattr(build_cfg, "context_fmha_type", args.context_fmha)
-            except Exception:
-                pass
-        # If fp8 KV-cache is requested, enable context FMHA when available
-        if args.kv_cache_dtype == "fp8":  # type: ignore[attr-defined]
-            try:
-                setattr(build_cfg, "use_fp8_context_fmha", True)
-            except Exception:
-                pass
-    except Exception:
-        pass
-
     print(
         "[build-trt] Build configuration: "
-        f"in={build_cfg.max_input_len} out={max_out} seq={build_cfg.max_seq_len} "
-        f"bsz={build_cfg.max_batch_size} dtype={build_cfg.precision}"
+        f"in={max_in} out={max_out} seq={max_in + max_out} "
+        f"bsz={max_bsz} dtype={args.dtype}"
     )
 
     model_path = resolve_model_source(args.model, token)
@@ -420,34 +367,40 @@ def build_engine(args: argparse.Namespace) -> Path:
     # No offline export needed when using runtime KvCacheConfig
     model_for_build = model_path
 
-    print("[build-trt] Initializing LLM API (this can take a few minutes)...")
+    # TensorRT-LLM v1.0.0 Python API defaults to PyTorch backend and lacks save() method
+    # Use trtllm-build CLI tool instead for reliable engine building
+    print("[build-trt] Building TensorRT engine using trtllm-build CLI...")
     
-    # In TensorRT-LLM v1.0.0, when using the LLM API with BuildConfig,
-    # it may default to PyTorch backend. To build and save an actual TensorRT engine,
-    # we need to pass engine_dir to LLM() constructor
-    llm = LLM(
-        model=str(model_for_build), 
-        build_config=build_cfg, 
-        dtype=args.dtype,
-        engine_dir=str(output_dir)  # This triggers TensorRT engine building and saves it
-    )
-
-    print("[build-trt] Engine build complete")
+    import subprocess
     
-    # Verify engine files were created
-    if not any((output_dir / sentinel).exists() for sentinel in ENGINE_SENTINELS):
-        # Try calling save() if available
-        if hasattr(llm, 'save') and callable(getattr(llm, 'save', None)):
-            print(f"[build-trt] Calling llm.save('{output_dir}')")
-            llm.save(str(output_dir))
-        else:
-            # Debug output
-            llm_methods = [m for m in dir(llm) if not m.startswith('_') and callable(getattr(llm, m, None))]
-            raise BuildError(
-                f"TensorRT engine files not found and LLM object has no save() method. "
-                f"PyTorch backend was used instead of TensorRT engine. "
-                f"Available methods: {', '.join(llm_methods[:20])}"
-            )
+    max_seq = max_in + max_out
+    
+    cmd = [
+        "trtllm-build",
+        "--checkpoint_dir", str(model_for_build),
+        "--output_dir", str(output_dir),
+        "--max_input_len", str(max_in),
+        "--max_seq_len", str(max_seq),
+        "--max_batch_size", str(max_bsz),
+        "--remove_input_padding", "enable",
+        "--log_level", "info",
+    ]
+    
+    # Add context FMHA settings
+    if hasattr(args, 'context_fmha') and args.context_fmha:
+        if args.context_fmha != "auto":
+            cmd.extend(["--context_fmha", args.context_fmha])
+    
+    # Add KV cache dtype if specified
+    if hasattr(args, 'kv_cache_dtype') and args.kv_cache_dtype:
+        if args.kv_cache_dtype == "fp8":
+            cmd.extend(["--use_fp8_context_fmha", "enable"])
+    
+    print(f"[build-trt] Running: {' '.join(cmd)}")
+    
+    result = subprocess.run(cmd, check=False)
+    if result.returncode != 0:
+        raise BuildError(f"trtllm-build command failed with exit code {result.returncode}")
 
     ensure_engine_files(output_dir)
     return output_dir
