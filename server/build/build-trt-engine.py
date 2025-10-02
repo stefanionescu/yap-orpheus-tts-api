@@ -417,7 +417,21 @@ def build_engine(args: argparse.Namespace) -> Path:
     llm = LLM(model=str(model_for_build), build_config=build_cfg, dtype=args.dtype)
 
     print("[build-trt] Saving engine artefacts...")
-    llm.save(str(output_dir))
+    save_candidates = [
+        ("save_engine", getattr(llm, "save_engine", None)),
+        ("export_engine", getattr(llm, "export_engine", None)),
+        ("save", getattr(llm, "save", None)),
+    ]
+    for name, maybe_callable in save_candidates:
+        if callable(maybe_callable):
+            print(f"[build-trt] Using llm.{name}()")
+            maybe_callable(str(output_dir))
+            break
+    else:
+        raise BuildError(
+            "TensorRT-LLM LLM API exposes no save_engine/export_engine/save method. "
+            "Upgrade the builder or adjust to the installed TensorRT-LLM version."
+        )
 
     ensure_engine_files(output_dir)
     return output_dir
