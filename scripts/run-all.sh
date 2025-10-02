@@ -18,6 +18,8 @@ CMD='\
   if [ "${BACKEND:-vllm}" = "trtllm" ]; then \
     echo "[run-all] Installing TRT-LLM backend" && \
     bash scripts/01-install-trt.sh && \
+    echo "[run-all] Preparing FP16 checkpoint" && \
+    bash scripts/01b-export-fp16-checkpoint.sh && \
     echo "[run-all] Building TRT-LLM engine (02-build-trt-engine.sh)" && \
     bash scripts/02-build-trt-engine.sh && \
     : "${TRTLLM_ENGINE_DIR:=$PWD/models/orpheus-trt}" && \

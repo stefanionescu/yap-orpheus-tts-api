@@ -9,6 +9,7 @@ load_env_if_present
 : "${VENV_DIR:=$PWD/.venv}"
 : "${MODEL_ID:=canopylabs/orpheus-3b-0.1-ft}"
 : "${TRTLLM_ENGINE_DIR:=$PWD/models/orpheus-trt}"
+: "${FP16_MODEL_DIR:=$PWD/models/orpheus-fp16}"
 : "${TRTLLM_DTYPE:=float16}"
 : "${TRTLLM_MAX_INPUT_LEN:=128}"
 : "${TRTLLM_MAX_OUTPUT_LEN:=2048}"
@@ -66,6 +67,11 @@ if [ "$(uname -s)" != "Linux" ]; then
   echo "[build-trt] ERROR: TensorRT-LLM builds require Linux with NVIDIA GPUs." >&2
   exit 1
 fi
+
+if [ -z "${MODEL_FOR_BUILD}" ]; then
+  echo "[build-trt] ERROR: Failed to resolve checkpoint directory." >&2
+  exit 1
+fi
 if ! command -v nvidia-smi >/dev/null 2>&1; then
   echo "[build-trt] ERROR: nvidia-smi not detected. Ensure the GPU is visible to this runtime." >&2
   exit 1
@@ -84,42 +90,30 @@ if [ "$USE_CLI" = true ]; then
   MODE="cli"
 fi
 
+MODEL_FOR_BUILD=""
+if [ -d "${MODEL_ID}" ]; then
+  SENTINEL_PATH="${MODEL_ID%/}/.fp16-export.json"
+  if [ -f "${SENTINEL_PATH}" ]; then
+    MODEL_FOR_BUILD="$(cd "${MODEL_ID}" && pwd)"
+  else
+    echo "[build-trt] Source directory lacks FP16 sentinel; exporting to ${FP16_MODEL_DIR}"
+    bash scripts/01b-export-fp16-checkpoint.sh --model "${MODEL_ID}" --output "${FP16_MODEL_DIR}"
+    MODEL_FOR_BUILD="$(cd "${FP16_MODEL_DIR}" && pwd)"
+  fi
+else
+  echo "[build-trt] Exporting FP16 checkpoint for ${MODEL_ID}"
+  bash scripts/01b-export-fp16-checkpoint.sh --model "${MODEL_ID}" --output "${FP16_MODEL_DIR}"
+  MODEL_FOR_BUILD="$(cd "${FP16_MODEL_DIR}" && pwd)"
+fi
+
 echo "[build-trt] Model: ${MODEL_ID}"
+echo "[build-trt] Using checkpoint directory: ${MODEL_FOR_BUILD}"
 echo "[build-trt] Output: ${TRTLLM_ENGINE_DIR}"
 echo "[build-trt] Mode: ${MODE}${MINIMAL:+ (minimal)}"
 
 mkdir -p "${TRTLLM_ENGINE_DIR}"
 
 if [ "$USE_CLI" = true ]; then
-  echo "[build-trt] Pre-downloading weights for ${MODEL_ID}..."
-  "${PYTHON_EXEC}" - <<'PY'
-import os
-from huggingface_hub import snapshot_download
-repo_id = os.environ["MODEL_ID"]
-ckpt_dir = os.path.join(os.getcwd(), ".hf", repo_id.replace("/", "-"))
-os.environ.setdefault("HF_HUB_ENABLE_HF_TRANSFER", "1")
-path = snapshot_download(
-    repo_id=repo_id,
-    local_dir=ckpt_dir,
-    local_dir_use_symlinks=False,
-    allow_patterns=[
-        "config.json",
-        "generation_config.json",
-        "tokenizer.json",
-        "tokenizer_config.json",
-        "special_tokens_map.json",
-        "*.safetensors",
-        "model.safetensors*",
-    ],
-    resume_download=True,
-    token=os.environ.get("HUGGING_FACE_HUB_TOKEN") or os.environ.get("HF_TOKEN"),
-)
-print(f"[build-trt] Weights cached at: {path}")
-PY
-
-  CKPT_DIR="${PWD}/.hf/${MODEL_ID//\//-}"
-  OUT_DIR="${TRTLLM_ENGINE_DIR}"
-
   CONTEXT_FMHA_ARGS=""
   if [ "${TRTLLM_KV_CACHE_DTYPE}" = "fp8" ]; then
     CONTEXT_FMHA_ARGS=" --use_fp8_context_fmha enable"
@@ -128,8 +122,8 @@ PY
   if [ "$MINIMAL" = true ]; then
     echo "[build-trt] Running minimal CLI build..."
     trtllm-build \
-      --checkpoint_dir "$CKPT_DIR" \
-      --output_dir "$OUT_DIR" \
+      --checkpoint_dir "$MODEL_FOR_BUILD" \
+      --output_dir "$TRTLLM_ENGINE_DIR" \
       --max_input_len 128 \
       --max_seq_len 256 \
       --max_batch_size 1 \
@@ -138,8 +132,8 @@ PY
   else
     echo "[build-trt] Running full CLI build..."
     trtllm-build \
-      --checkpoint_dir "$CKPT_DIR" \
-      --output_dir "$OUT_DIR" \
+      --checkpoint_dir "$MODEL_FOR_BUILD" \
+      --output_dir "$TRTLLM_ENGINE_DIR" \
       --max_input_len "${TRTLLM_MAX_INPUT_LEN}" \
       --max_seq_len "$((TRTLLM_MAX_INPUT_LEN + TRTLLM_MAX_OUTPUT_LEN))" \
       --max_batch_size "${TRTLLM_MAX_BATCH_SIZE}" \
@@ -149,7 +143,7 @@ PY
 else
   CMD=(
     "${PYTHON_EXEC}" server/build/build-trt-engine.py
-    --model "${MODEL_ID}"
+    --model "${MODEL_FOR_BUILD}"
     --output "${TRTLLM_ENGINE_DIR}"
     --dtype "${TRTLLM_DTYPE}"
     --max_input_len "${TRTLLM_MAX_INPUT_LEN}"
