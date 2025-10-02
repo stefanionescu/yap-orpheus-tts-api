@@ -90,6 +90,8 @@ echo "[build-trt] Mode: ${MODE}${MINIMAL:+ (minimal)}"
 
 mkdir -p "${TRTLLM_ENGINE_DIR}"
 
+export FLASHINFER_DISABLE=${FLASHINFER_DISABLE:-1}
+
 if [ "$USE_CLI" = true ]; then
   echo "[build-trt] Pre-downloading weights for ${MODEL_ID}..."
   "${PYTHON_EXEC}" - <<'PY'

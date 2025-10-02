@@ -452,6 +452,9 @@ def parse_args(argv: Optional[Iterable[str]] = None) -> argparse.Namespace:
 def main(argv: Optional[Iterable[str]] = None) -> int:
     args = parse_args(argv)
 
+    # Avoid FlashInfer JIT RMSNorm dtype issues during PyTorch warmup/build
+    os.environ.setdefault("FLASHINFER_DISABLE", "1")
+
     if os.environ.get("TENSORRT_LLM_LOG_LEVEL") and not os.environ.get("TLLM_LOG_LEVEL"):
         os.environ["TLLM_LOG_LEVEL"] = os.environ["TENSORRT_LLM_LOG_LEVEL"]
     os.environ.setdefault("TLLM_LOG_LEVEL", "INFO")
