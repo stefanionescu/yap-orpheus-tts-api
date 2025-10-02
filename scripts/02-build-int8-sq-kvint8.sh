@@ -84,10 +84,21 @@ fi
 
 # Pin repo tag to installed wheel version (critical for compatibility)
 echo "[build-int8sq] Syncing repo version with installed wheel..."
-TRTLLM_VER="$(${PYTHON_EXEC} -c 'import tensorrt_llm as t; print(t.__version__)')"
+# Extract version number, filtering out TRT-LLM log messages
+TRTLLM_VER="$(${PYTHON_EXEC} -c 'import tensorrt_llm as t; print(t.__version__)' 2>/dev/null | tail -1 | tr -d '[:space:]')"
 echo "[build-int8sq] Detected TensorRT-LLM version: ${TRTLLM_VER}"
 git -C "${TRTLLM_REPO_DIR}" fetch --tags
-git -C "${TRTLLM_REPO_DIR}" checkout "v${TRTLLM_VER}"
+
+# Try tag first, fallback to known commit for v1.0.0
+if ! git -C "${TRTLLM_REPO_DIR}" checkout "v${TRTLLM_VER}" 2>/dev/null; then
+  if [[ "${TRTLLM_VER}" == "1.0.0" ]]; then
+    echo "[build-int8sq] Tag v1.0.0 not found, using known commit ae8270b713446948246f16fadf4e2a32e35d0f62"
+    git -C "${TRTLLM_REPO_DIR}" checkout ae8270b713446948246f16fadf4e2a32e35d0f62
+  else
+    echo "[build-int8sq] ERROR: Could not checkout version ${TRTLLM_VER}" >&2
+    exit 1
+  fi
+fi
 
 # Install quantization dependencies
 echo "[build-int8sq] Installing quantization requirements..."
