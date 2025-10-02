@@ -385,6 +385,14 @@ def build_engine(args: argparse.Namespace) -> Path:
         build_cfg.profiling_verbosity = "layer_names_only"  # type: ignore[attr-defined]
         build_cfg.force_num_profiles = 1  # type: ignore[attr-defined]
         build_cfg.monitor_memory = True  # type: ignore[attr-defined]
+        # Control context flash-attention per docs (disable on A100)
+        try:
+            setattr(build_cfg, "context_fmha", args.context_fmha)
+        except Exception:
+            try:
+                setattr(build_cfg, "context_fmha_type", args.context_fmha)
+            except Exception:
+                pass
         # If fp8 KV-cache is requested, enable context FMHA when available
         if args.kv_cache_dtype == "fp8":  # type: ignore[attr-defined]
             try:
@@ -443,6 +451,12 @@ def parse_args(argv: Optional[Iterable[str]] = None) -> argparse.Namespace:
     parser.add_argument("--max_output_len", type=int, default=2048)
     parser.add_argument("--max_batch_size", type=int, default=1)
     parser.add_argument("--kv_cache_dtype", choices=["fp8", "int8"], default=kv_env)
+    parser.add_argument(
+        "--context_fmha",
+        choices=["enable", "disable", "auto"],
+        default=os.getenv("TRTLLM_CONTEXT_FMHA", "disable"),
+        help="Control context-phase fused attention; disable on A100 per docs",
+    )
     args = parser.parse_args(argv)
     if not args.kv_cache_dtype:
         args.kv_cache_dtype = None
@@ -452,13 +466,10 @@ def parse_args(argv: Optional[Iterable[str]] = None) -> argparse.Namespace:
 def main(argv: Optional[Iterable[str]] = None) -> int:
     args = parse_args(argv)
 
-    # Avoid FlashInfer JIT RMSNorm dtype issues during PyTorch warmup/build
-    os.environ.setdefault("FLASHINFER_DISABLE", "1")
-
     if os.environ.get("TENSORRT_LLM_LOG_LEVEL") and not os.environ.get("TLLM_LOG_LEVEL"):
         os.environ["TLLM_LOG_LEVEL"] = os.environ["TENSORRT_LLM_LOG_LEVEL"]
     os.environ.setdefault("TLLM_LOG_LEVEL", "INFO")
-
+    
     print(f"[build-trt] Model: {args.model}")
     print(f"[build-trt] Output directory: {Path(args.output).resolve()}")
 

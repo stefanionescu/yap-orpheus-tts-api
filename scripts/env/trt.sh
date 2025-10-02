@@ -19,4 +19,7 @@ export TRTLLM_MAX_BATCH_SIZE=${TRTLLM_MAX_BATCH_SIZE:-16}
 # KV-cache quantization defaults for A100 (use INT8)
 export TRTLLM_KV_CACHE_DTYPE=${TRTLLM_KV_CACHE_DTYPE:-int8}
 
+# Context attention fused kernels control (disable on A100)
+export TRTLLM_CONTEXT_FMHA=${TRTLLM_CONTEXT_FMHA:-disable}
+
 

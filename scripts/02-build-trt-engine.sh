@@ -90,8 +90,6 @@ echo "[build-trt] Mode: ${MODE}${MINIMAL:+ (minimal)}"
 
 mkdir -p "${TRTLLM_ENGINE_DIR}"
 
-export FLASHINFER_DISABLE=${FLASHINFER_DISABLE:-1}
-
 if [ "$USE_CLI" = true ]; then
   echo "[build-trt] Pre-downloading weights for ${MODEL_ID}..."
   "${PYTHON_EXEC}" - <<'PY'
@@ -157,6 +155,7 @@ else
     --max_input_len "${TRTLLM_MAX_INPUT_LEN}"
     --max_output_len "${TRTLLM_MAX_OUTPUT_LEN}"
     --max_batch_size "${TRTLLM_MAX_BATCH_SIZE}"
+    --context_fmha "${TRTLLM_CONTEXT_FMHA:-disable}"
   )
   if [ -n "${TRTLLM_KV_CACHE_DTYPE}" ]; then CMD+=(--kv_cache_dtype "${TRTLLM_KV_CACHE_DTYPE}"); fi
   # No offline quantization flags; KV cache quant is runtime-only via KvCacheConfig
