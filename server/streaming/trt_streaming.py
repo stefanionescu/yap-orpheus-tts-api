@@ -26,7 +26,7 @@ async def aiter_pcm_from_custom_tokens(engine, prompt: str, voice: str, sp) -> b
     TRT-LLM streaming: read token_ids deltas, not detokenized text.
     Map Orpheus audio token ids → 7-stream RVQ codes → SNAC decode.
     """
-    from tensorrt_llm.llmapi import SamplingParams as _SP  # type: ignore
+    from tensorrt_llm._tensorrt_engine import SamplingParams as _SP  # type: ignore
 
     # ---- sampling params that work with TRT-LLM streaming
     sp = _SP(

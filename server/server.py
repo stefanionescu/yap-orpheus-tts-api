@@ -22,7 +22,7 @@ if BACKEND == "trtllm":
     # Import TRT backend lazily to avoid requiring TRT deps when not in use
     from .engines.trt_engine import OrpheusTRTEngine as _Engine
     from .streaming.trt_streaming import aiter_pcm_from_custom_tokens
-    from tensorrt_llm.llmapi import SamplingParams  # type: ignore
+    from tensorrt_llm._tensorrt_engine import SamplingParams  # type: ignore
 else:
     from .engines.vllm_engine import OrpheusVLLMEngine as _Engine
     from .streaming.vllm_streaming import aiter_pcm_from_custom_tokens
