@@ -1,6 +1,6 @@
 # Yap Orpheus TTS API
 
-Run Orpheus 3B TTS behind a FastAPI server using TensorRT-LLM backend only. Optimized for A100 GPU instances (Runpod/AWS) using a plain Python virtualenv.
+Run Orpheus 3B TTS behind a FastAPI server using TensorRT-LLM backend. Optimized for A100 GPU instances (Runpod/AWS) using a plain Python virtualenv.
 
 - **Server**: `server/`
 - **Scripts**: `scripts/`

@@ -129,7 +129,6 @@ else
     --output_dir "${QUANTIZED_DIR}"
     --dtype "${QUANTIZE_DTYPE}"
     --qformat int8_sq
-    --kv_cache_dtype None
     --calib_size "${CALIB_SIZE}"
     --batch_size "${CALIB_BATCH_SIZE}"
     --calib_max_seq_length "${CALIB_MAX_SEQ_LENGTH}"
