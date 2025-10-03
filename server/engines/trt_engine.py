@@ -16,12 +16,11 @@ class OrpheusTRTEngine:
                 "TRTLLM_ENGINE_DIR must point to a valid TensorRT-LLM engine directory (e.g., contains rank0.engine)."
             )
 
-        # Let TRT-LLM auto-detect the model path format (engine/ckpt/etc.)
+        # Load a prebuilt TensorRT-LLM engine by directory
         kwargs = {
-            "model": engine_dir,
+            "engine_dir": engine_dir,
             "tokenizer": MODEL_ID,
             "dtype": dtype,
-            "backend": "trtllm",
         }
 
         # Optional KV cache runtime tuning (memory/behavior, not precision)
