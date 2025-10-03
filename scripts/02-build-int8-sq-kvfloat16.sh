@@ -110,7 +110,7 @@ if [ ! -f "${TRTLLM_REPO_DIR}/examples/quantization/quantize.py" ]; then
 fi
 
 echo "[build-int8sq] ============================================"
-echo "[build-int8sq] Step 1/2: Quantize to INT8 SQ + INT8 KV"
+echo "[build-int8sq] Step 1/2: Quantize to INT8 SQ + FP16 KV"
 echo "[build-int8sq] ============================================"
 
 # Enable fast HF downloads
@@ -129,7 +129,7 @@ else
     --output_dir "${QUANTIZED_DIR}"
     --dtype "${QUANTIZE_DTYPE}"
     --qformat int8_sq
-    --kv_cache_dtype int8
+    --kv_cache_dtype float16
     --calib_size "${CALIB_SIZE}"
     --batch_size "${CALIB_BATCH_SIZE}"
     --calib_max_seq_length "${CALIB_MAX_SEQ_LENGTH}"
