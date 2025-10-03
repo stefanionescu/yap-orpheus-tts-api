@@ -118,6 +118,30 @@ else
   rm -rf "${CHECKPOINT_DIR}"
   mkdir -p "${CHECKPOINT_DIR}"
   
+  # Download model from HF if it's a model ID (not a local path)
+  if [[ ! -d "${MODEL_ID}" ]]; then
+    echo "[build] Downloading model from HuggingFace: ${MODEL_ID}"
+    LOCAL_MODEL_DIR="${PWD}/models/$(basename ${MODEL_ID})-hf"
+    
+    if [[ ! -d "${LOCAL_MODEL_DIR}" ]]; then
+      mkdir -p "${LOCAL_MODEL_DIR}"
+      "${PYTHON_EXEC}" -c "
+from huggingface_hub import snapshot_download
+snapshot_download(
+    repo_id='${MODEL_ID}',
+    local_dir='${LOCAL_MODEL_DIR}',
+    local_dir_use_symlinks=False
+)
+"
+    else
+      echo "[build] Using cached HF model at ${LOCAL_MODEL_DIR}"
+    fi
+    MODEL_DIR_FOR_CONVERT="${LOCAL_MODEL_DIR}"
+  else
+    echo "[build] Using local model directory: ${MODEL_ID}"
+    MODEL_DIR_FOR_CONVERT="${MODEL_ID}"
+  fi
+  
   # Find the appropriate convert_checkpoint.py script
   # Orpheus is based on Llama architecture
   CONVERT_SCRIPT="${TRTLLM_REPO_DIR}/examples/models/core/llama/convert_checkpoint.py"
@@ -129,7 +153,7 @@ else
   
   CONVERT_CMD=(
     "${PYTHON_EXEC}" "${CONVERT_SCRIPT}"
-    --model_dir "${MODEL_ID}"
+    --model_dir "${MODEL_DIR_FOR_CONVERT}"
     --output_dir "${CHECKPOINT_DIR}"
     --dtype "${TRTLLM_DTYPE}"
   )

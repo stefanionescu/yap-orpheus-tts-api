@@ -43,9 +43,6 @@ Trivial path (one command runs install → engine build → server):
 
 ```bash
 export HF_TOKEN="hf_xxx"
- # Optional: customize engine output directory (default: $PWD/models/orpheus-trt-int8sq-kvfp16)
- # export TRTLLM_ENGINE_DIR=/models/orpheus-trt
-
 bash scripts/run-all.sh
 ```
 
@@ -64,7 +61,7 @@ bash scripts/01-install-trt.sh
 bash scripts/02-build.sh
 
 # 4) Run server
-export TRTLLM_ENGINE_DIR=/models/orpheus-trt-int8sq-kvfp16
+export TRTLLM_ENGINE_DIR=/models/orpheus-trt-fp16
 bash scripts/04-run-server.sh
 ```
 

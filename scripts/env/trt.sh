@@ -10,16 +10,10 @@ export TLLM_LOG_LEVEL=${TLLM_LOG_LEVEL:-INFO}
 # Sampling defaults used by server
 export ORPHEUS_MAX_TOKENS=${ORPHEUS_MAX_TOKENS:-1024}
 
-# Engine build/runtime defaults for A100
+# Engine build/runtime defaults - FP16 (no quantization)
 export TRTLLM_DTYPE=${TRTLLM_DTYPE:-float16}
 export TRTLLM_MAX_INPUT_LEN=${TRTLLM_MAX_INPUT_LEN:-128}
 export TRTLLM_MAX_OUTPUT_LEN=${TRTLLM_MAX_OUTPUT_LEN:-1024}
 export TRTLLM_MAX_BATCH_SIZE=${TRTLLM_MAX_BATCH_SIZE:-16}
-
-# KV-cache quantization defaults for A100 (use INT8)
-export TRTLLM_KV_CACHE_DTYPE=${TRTLLM_KV_CACHE_DTYPE:-int8}
-
-# Context attention fused kernels control (disable on A100)
-export TRTLLM_CONTEXT_FMHA=${TRTLLM_CONTEXT_FMHA:-disable}
 
 
