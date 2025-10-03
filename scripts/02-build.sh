@@ -98,6 +98,15 @@ echo "[build] ============================================"
 echo "[build] Step 1/2: Convert HF checkpoint to TRT-LLM format (FP16)"
 echo "[build] ============================================"
 
+# Install conversion dependencies
+LLAMA_REQUIREMENTS="${TRTLLM_REPO_DIR}/examples/models/core/llama/requirements.txt"
+if [ -f "${LLAMA_REQUIREMENTS}" ]; then
+  echo "[build] Installing Llama conversion requirements..."
+  pip install -r "${LLAMA_REQUIREMENTS}"
+else
+  echo "[build] WARNING: requirements.txt not found at ${LLAMA_REQUIREMENTS}, skipping..."
+fi
+
 # Enable fast HF downloads
 export HF_HUB_ENABLE_HF_TRANSFER=1
 
@@ -106,11 +115,26 @@ if [[ -d "${CHECKPOINT_DIR}" && "${FORCE}" != true ]]; then
   echo "[build] Reusing existing TRT-LLM checkpoint at ${CHECKPOINT_DIR}"
 else
   echo "[build] Converting HF checkpoint to TRT-LLM format..."
+  rm -rf "${CHECKPOINT_DIR}"
   mkdir -p "${CHECKPOINT_DIR}"
   
-  # Use trtllm-build directly from HF model (modern TRT-LLM supports this)
-  # No separate convert_checkpoint step needed for standard architectures
-  echo "[build] TRT-LLM will convert HF model during engine build..."
+  # Find the appropriate convert_checkpoint.py script
+  # Orpheus is based on Llama architecture
+  CONVERT_SCRIPT="${TRTLLM_REPO_DIR}/examples/models/core/llama/convert_checkpoint.py"
+  
+  if [ ! -f "${CONVERT_SCRIPT}" ]; then
+    echo "[build] ERROR: convert_checkpoint.py not found at ${CONVERT_SCRIPT}" >&2
+    exit 1
+  fi
+  
+  CONVERT_CMD=(
+    "${PYTHON_EXEC}" "${CONVERT_SCRIPT}"
+    --model_dir "${MODEL_ID}"
+    --output_dir "${CHECKPOINT_DIR}"
+    --dtype "${TRTLLM_DTYPE}"
+  )
+  echo "[build] Running: ${CONVERT_CMD[*]}"
+  "${CONVERT_CMD[@]}"
 fi
 
 echo ""
@@ -126,14 +150,16 @@ else
   
   BUILD_CMD=(
     trtllm-build
-    --model_dir "${MODEL_ID}"
+    --checkpoint_dir "${CHECKPOINT_DIR}"
     --output_dir "${TRTLLM_ENGINE_DIR}"
-    --dtype "${TRTLLM_DTYPE}"
+    --gemm_plugin float16
+    --gpt_attention_plugin float16
+    --context_fmha enable
+    --paged_kv_cache enable
+    --remove_input_padding enable
     --max_input_len "${TRTLLM_MAX_INPUT_LEN}"
     --max_seq_len "$((TRTLLM_MAX_INPUT_LEN + TRTLLM_MAX_OUTPUT_LEN))"
     --max_batch_size "${TRTLLM_MAX_BATCH_SIZE}"
-    --remove_input_padding enable
-    --gemm_plugin auto
     --log_level info
     --workers "$(nproc --all)"
   )
@@ -145,7 +171,6 @@ echo ""
 echo "[build] ============================================"
 echo "[build] Done. Engine: ${TRTLLM_ENGINE_DIR}"
 echo "[build] To run server:"
-echo "  export BACKEND=trtllm"
 echo "  export TRTLLM_ENGINE_DIR=\"${TRTLLM_ENGINE_DIR}\""
 echo "  bash scripts/04-run-server.sh"
 echo "[build] ============================================"
