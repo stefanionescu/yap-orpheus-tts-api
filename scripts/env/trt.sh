@@ -4,6 +4,9 @@ export BACKEND=${BACKEND:-trtllm}
 # Path to prebuilt TensorRT-LLM engine directory (recommended for production)
 export TRTLLM_ENGINE_DIR=${TRTLLM_ENGINE_DIR:-}
 
+# Tokenizer path/model ID (HuggingFace model or local path)
+export HF_TOKENIZER_DIR=${HF_TOKENIZER_DIR:-canopylabs/orpheus-3b-0.1-ft}
+
 # Logging and runtime knobs
 export TLLM_LOG_LEVEL=${TLLM_LOG_LEVEL:-INFO}
 
