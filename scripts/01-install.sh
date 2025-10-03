@@ -32,7 +32,16 @@ fi
 
 $PY_EXE -m venv "${VENV_DIR}"
 source "${VENV_DIR}/bin/activate"
-python -m pip install --upgrade pip wheel setuptools
+
+# Robust pip bootstrap inside venv (handles broken pip vendor deps)
+python -m ensurepip --upgrade || true
+if ! python -m pip --version >/dev/null 2>&1; then
+  python -m ensurepip --upgrade || true
+fi
+python -m pip install --upgrade --no-cache-dir pip setuptools wheel || {
+  python -m ensurepip --upgrade || true
+  python -m pip install --upgrade --no-cache-dir pip setuptools wheel
+}
 
 # Pick the right PyTorch CUDA wheel channel
 if [ -z "${CUDA_VER:-}" ]; then
