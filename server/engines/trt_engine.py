@@ -7,8 +7,7 @@ MODEL_ID = os.getenv("MODEL_ID", "canopylabs/orpheus-3b-0.1-ft")
 class OrpheusTRTEngine:
     def __init__(self) -> None:
         engine_dir = os.getenv("TRTLLM_ENGINE_DIR", "").strip()
-        dtype = os.getenv("TRTLLM_DTYPE", "float16")
-        from tensorrt_llm import LLM  # type: ignore
+        from tensorrt_llm._tensorrt_engine import LLM  # type: ignore
 
         # Require a valid TRT-LLM engine directory
         if not engine_dir or not os.path.isdir(engine_dir):
@@ -16,11 +15,10 @@ class OrpheusTRTEngine:
                 "TRTLLM_ENGINE_DIR must point to a valid TensorRT-LLM engine directory (e.g., contains rank0.engine)."
             )
 
-        # Load a prebuilt TensorRT-LLM engine by directory
+        # Load a prebuilt TensorRT-LLM engine by directory (auto-detected format)
         kwargs = {
-            "engine_dir": engine_dir,
+            "model": engine_dir,
             "tokenizer": MODEL_ID,
-            "dtype": dtype,
         }
 
         # Optional KV cache runtime tuning (memory/behavior, not precision)

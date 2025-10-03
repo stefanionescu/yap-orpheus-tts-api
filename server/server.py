@@ -28,7 +28,7 @@ else:
     from .streaming.vllm_streaming import aiter_pcm_from_custom_tokens
     from vllm import SamplingParams
 
-app = FastAPI(title="Orpheus 3B TTS (Runpod / vLLM+SNAC / TRT-LLM)")
+app = FastAPI(title="Orpheus 3B TTS API for Yap")
 
 engine: _Engine | None = None
 
