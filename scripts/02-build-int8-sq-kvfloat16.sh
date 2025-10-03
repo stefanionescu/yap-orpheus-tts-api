@@ -6,15 +6,15 @@ load_env_if_present
 
 : "${VENV_DIR:=$PWD/.venv}"
 : "${MODEL_ID:=canopylabs/orpheus-3b-0.1-ft}"
-: "${QUANTIZED_DIR:=$PWD/models/orpheus-int8sq-kvint8}"
-: "${TRTLLM_ENGINE_DIR:=$PWD/models/orpheus-trt-int8sq}"
+: "${QUANTIZED_DIR:=$PWD/models/orpheus-int8sq-kvfp16}"
+: "${TRTLLM_ENGINE_DIR:=$PWD/models/orpheus-trt-int8sq-kvfp16}"
 : "${TRTLLM_DTYPE:=float16}"
 : "${TRTLLM_MAX_INPUT_LEN:=128}"
-: "${TRTLLM_MAX_OUTPUT_LEN:=2048}"
-: "${TRTLLM_MAX_BATCH_SIZE:=1}"
+: "${TRTLLM_MAX_OUTPUT_LEN:=1024}"
+: "${TRTLLM_MAX_BATCH_SIZE:=16}"
 : "${QUANTIZE_DTYPE:=float16}"
 : "${CALIB_SIZE:=512}"
-: "${CALIB_BATCH_SIZE:=8}"
+: "${CALIB_BATCH_SIZE:=16}"
 : "${CALIB_MAX_SEQ_LENGTH:=128}"
 : "${PYTHON_EXEC:=python}"
 : "${TRTLLM_REPO_DIR:=$PWD/.trtllm-repo}"
@@ -23,8 +23,8 @@ usage() {
   cat <<USAGE
 Usage: $0 [--model ID_OR_PATH] [--quantized-dir DIR] [--engine-dir DIR] [--dtype float16|bfloat16] [--max-input-len N] [--max-output-len N] [--max-batch-size N] [--calib-size N] [--force]
 
-End-to-end INT8 SmoothQuant + INT8 KV build:
-  HF checkpoint → W8A8 + INT8 KV quantized checkpoint → TRT engine
+End-to-end INT8 SmoothQuant + unquantized KV build:
+  HF checkpoint → W8A8 + FP16 KV checkpoint → TRT engine
 
 Defaults:
   --model              ${MODEL_ID}
@@ -110,7 +110,7 @@ if [ ! -f "${TRTLLM_REPO_DIR}/examples/quantization/quantize.py" ]; then
 fi
 
 echo "[build-int8sq] ============================================"
-echo "[build-int8sq] Step 1/2: Quantize to INT8 SQ + FP16 KV"
+echo "[build-int8sq] Step 1/2: Quantize to INT8 SQ + unquantized KV (FP16)"
 echo "[build-int8sq] ============================================"
 
 # Enable fast HF downloads
@@ -129,7 +129,7 @@ else
     --output_dir "${QUANTIZED_DIR}"
     --dtype "${QUANTIZE_DTYPE}"
     --qformat int8_sq
-    --kv_cache_dtype float16
+    --kv_cache_dtype None
     --calib_size "${CALIB_SIZE}"
     --batch_size "${CALIB_BATCH_SIZE}"
     --calib_max_seq_length "${CALIB_MAX_SEQ_LENGTH}"

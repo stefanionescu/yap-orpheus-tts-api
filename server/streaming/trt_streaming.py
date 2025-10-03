@@ -33,7 +33,7 @@ async def aiter_pcm_from_custom_tokens(engine, prompt: str, voice: str, sp) -> b
         temperature=float(getattr(sp, "temperature", 0.6)) if hasattr(sp, "temperature") else 0.6,
         top_p=float(getattr(sp, "top_p", 0.8)) if hasattr(sp, "top_p") else 0.8,
         repetition_penalty=float(getattr(sp, "repetition_penalty", 1.1)) if hasattr(sp, "repetition_penalty") else 1.1,
-        max_tokens=int(getattr(sp, "max_tokens", 2048)) if hasattr(sp, "max_tokens") else 2048,
+        max_tokens=int(getattr(sp, "max_tokens", 1024)) if hasattr(sp, "max_tokens") else 1024,
         # Important bits for Orpheus:
         stop_token_ids=[128258, 128262, 128009],  # EOS(speech), EOA, EOT
         detokenize=False,              # <- we don't want LLM-side detok; we read token_ids

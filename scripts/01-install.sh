@@ -46,20 +46,7 @@ pip install --index-url "${TORCH_IDX}" torch --only-binary=:all:
 echo "[install] Requirements (base + backend)"
 pip install -r requirements-base.txt
 
-# Backend-specific Python deps
-case "${BACKEND:-vllm}" in
-  vllm)
-    echo "[install] Installing vLLM backend requirements"
-    pip install vllm==0.7.3
-    ;;
-  trtllm)
-    echo "[install] Skipping vLLM; TRT backend will be installed in 01-install-trt.sh"
-    ;;
-  *)
-    echo "[install] Unknown BACKEND='${BACKEND:-}', defaulting to vLLM"
-    pip install vllm==0.7.3
-    ;;
-esac
+echo "[install] TRT setup. Install TRT backend via scripts/01-install-trt.sh"
 
 # Login to HF (non-interactive)
 python - <<'PY'

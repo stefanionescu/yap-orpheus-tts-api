@@ -1,3 +1,3 @@
-# Streaming adapters (vLLM and TensorRT-LLM)
+# Streaming adapters (TensorRT-LLM)
 
 

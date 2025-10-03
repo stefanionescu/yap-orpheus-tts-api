@@ -7,8 +7,8 @@ set -euo pipefail
 #  --clean-trt      Remove TensorRT-LLM build artefacts (engines, quantized checkpoints, repo clone, caches)
 
 # Default paths - must match build scripts
-: "${TRTLLM_ENGINE_DIR:=$PWD/models/orpheus-trt-int8sq}"
-: "${QUANTIZED_DIR:=$PWD/models/orpheus-int8sq-kvint8}"
+: "${TRTLLM_ENGINE_DIR:=$PWD/models/orpheus-trt-int8sq-kvfp16}"
+: "${QUANTIZED_DIR:=$PWD/models/orpheus-int8sq-kvfp16}"
 : "${TRTLLM_REPO_DIR:=$PWD/.trtllm-repo}"
 : "${FP16_MODEL_DIR:=$PWD/models/orpheus-fp16}"
 : "${HF_SNAPSHOT_DIR:=$PWD/.hf}"
@@ -149,7 +149,6 @@ if [ "$CLEAN_INSTALL" = "1" ]; then
   rm -rf ~/.cache/pip || true
   rm -rf ~/.cache/hf_transfer || true
   rm -rf ~/.cache/clip || true
-  rm -rf ~/.cache/vllm || true
   rm -rf ~/.cache/triton || true
   # TensorRT-LLM and NVIDIA caches
   rm -rf ~/.cache/tensorrt_llm || true
@@ -163,10 +162,8 @@ if [ "$CLEAN_INSTALL" = "1" ]; then
   rm -rf ~/.cache/nvidia_modelopt || true
 
   # Temp files that may accumulate
-  rm -rf /tmp/vllm* 2>/dev/null || true
   rm -rf /tmp/huggingface* 2>/dev/null || true
   rm -rf /tmp/torch* 2>/dev/null || true
-  rm -rf /dev/shm/vllm* 2>/dev/null || true
   rm -rf /tmp/trt* 2>/dev/null || true
   rm -rf /tmp/tensorrt* 2>/dev/null || true
   rm -rf /dev/shm/trt* 2>/dev/null || true

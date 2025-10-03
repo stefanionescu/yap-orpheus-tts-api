@@ -16,17 +16,10 @@ HOST = os.getenv("HOST", "0.0.0.0")
 PORT = int(os.getenv("PORT", "8000"))
 SAMPLE_RATE = 24000
 
-# Backend selection: "vllm" (default) or "trtllm"
-BACKEND = os.getenv("BACKEND", "vllm").strip().lower()
-if BACKEND == "trtllm":
-    # Import TRT backend lazily to avoid requiring TRT deps when not in use
-    from .engines.trt_engine import OrpheusTRTEngine as _Engine
-    from .streaming.trt_streaming import aiter_pcm_from_custom_tokens
-    from tensorrt_llm import SamplingParams  # type: ignore
-else:
-    from .engines.vllm_engine import OrpheusVLLMEngine as _Engine
-    from .streaming.vllm_streaming import aiter_pcm_from_custom_tokens
-    from vllm import SamplingParams
+# TRT-LLM only backend
+from .engines.trt_engine import OrpheusTRTEngine as _Engine
+from .streaming.trt_streaming import aiter_pcm_from_custom_tokens
+from tensorrt_llm import SamplingParams  # type: ignore
 
 app = FastAPI(title="Orpheus 3B TTS API for Yap")
 
@@ -54,7 +47,7 @@ async def _startup():
                 stop_token_ids=[128258, 128009],
             )
             async def _prime(voice: str):
-                # Consume to completion (no early break) so vLLM finishes without aborting
+                # Consume to completion (no early break)
                 async for _ in aiter_pcm_from_custom_tokens(engine.engine, "hello", voice, sp):
                     pass
             await asyncio.gather(_prime("tara"), _prime("zac"))
@@ -177,21 +170,15 @@ async def tts_ws(ws: WebSocket):
                             pass
                         break
 
-                    # Build sampling params; add vLLM-only flags when using vLLM backend
+                    # Build sampling params
                     sp_kwargs = dict(
                         temperature=float(temperature if (temperature is not None) else 0.6),
                         top_p=float(top_p if (top_p is not None) else 0.8),
                         repetition_penalty=float(repetition_penalty if (repetition_penalty is not None) else 1.1),
-                        max_tokens=int(num_predict if (num_predict is not None) else int(os.getenv("ORPHEUS_MAX_TOKENS", "2048"))),
+                        max_tokens=int(num_predict if (num_predict is not None) else int(os.getenv("ORPHEUS_MAX_TOKENS", "1024"))),
                         # EOS + end-of-turn; never include audio start
                         stop_token_ids=[128009, 128260],
                     )
-                    if BACKEND == "vllm":
-                        sp_kwargs.update(dict(
-                            detokenize=True,
-                            skip_special_tokens=False,
-                            ignore_eos=False,
-                        ))
                     sp = SamplingParams(**sp_kwargs)
 
                     v = resolve_voice(voice) or "tara"

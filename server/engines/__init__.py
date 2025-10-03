@@ -1,3 +1,3 @@
-# Engines package (vLLM and TensorRT-LLM backends)
+# Engines package (TensorRT-LLM backend)
 
 

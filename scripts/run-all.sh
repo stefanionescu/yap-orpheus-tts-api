@@ -15,14 +15,12 @@ CMD='\
   bash scripts/00-bootstrap.sh && \
   echo "[run-all] 2/3 install" && \
   bash scripts/01-install.sh && \
-  if [ "${BACKEND:-vllm}" = "trtllm" ]; then \
-    echo "[run-all] Installing TRT-LLM backend" && \
-    bash scripts/01-install-trt.sh && \
-    echo "[run-all] Building TRT-LLM engine (INT8 SQ + KV FP16)" && \
-    bash scripts/02-build-int8-sq-kvfloat16.sh && \
-    : "${TRTLLM_ENGINE_DIR:=$PWD/models/orpheus-trt-int8sq}" && \
-    export TRTLLM_ENGINE_DIR; \
-  fi && \
+  echo "[run-all] Installing TRT-LLM backend" && \
+  bash scripts/01-install-trt.sh && \
+  echo "[run-all] Building TRT-LLM engine (INT8 SQ + KV FP16)" && \
+  bash scripts/02-build-int8-sq-kvfloat16.sh && \
+  : "${TRTLLM_ENGINE_DIR:=$PWD/models/orpheus-trt-int8sq-kvfp16}" && \
+  export TRTLLM_ENGINE_DIR && \
   echo "[run-all] 3/3 start server" && \
   bash scripts/04-run-server.sh'
 
