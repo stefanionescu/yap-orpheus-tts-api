@@ -61,7 +61,7 @@ bash scripts/01-install.sh
 bash scripts/01-install-trt.sh
 
 # 3) Build engine directory (installs TRT-LLM if missing)
-bash scripts/02-build-int8-sq-kvfloat16.sh
+bash scripts/02-build.sh
 
 # 4) Run server
 export TRTLLM_ENGINE_DIR=/models/orpheus-trt-int8sq-kvfp16

@@ -18,7 +18,7 @@ CMD='\
   echo "[run-all] Installing TRT-LLM backend" && \
   bash scripts/01-install-trt.sh && \
   echo "[run-all] Building TRT-LLM engine (INT8 SQ + KV FP16)" && \
-  bash scripts/02-build-int8-sq-kvfloat16.sh && \
+  bash scripts/02-build.sh && \
   : "${TRTLLM_ENGINE_DIR:=$PWD/models/orpheus-trt-int8sq-kvfp16}" && \
   export TRTLLM_ENGINE_DIR && \
   echo "[run-all] 3/3 start server" && \
