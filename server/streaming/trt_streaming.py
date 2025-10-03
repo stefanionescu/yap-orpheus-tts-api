@@ -80,36 +80,18 @@ async def aiter_pcm_from_custom_tokens(engine, prompt: str, voice: str, sp) -> b
         nonlocal frames_emitted, total_samples
         if len(codes_buf) < WINDOW:
             return None
-
-        frames_in_window = WINDOW // FRAME
-        if frames_in_window == 0:
+        if frames_ready <= frames_emitted:
             return None
 
-        # Decode the most recent window
+        # Decode the most recent full window and emit it entirely (constant-size chunk)
         window_codes = codes_buf[-WINDOW:]
         pcm = await _decode_window(window_codes)
         if pcm.size == 0:
             frames_emitted = frames_ready
             return None
 
-        samples_total = pcm.size
-        samples_per_frame = samples_total // frames_in_window
-        if samples_per_frame == 0:
-            frames_emitted = frames_ready
-            return None
-
-        new_frames = frames_ready - frames_emitted
-        if new_frames <= 0:
-            return None
-
-        emit_samples = new_frames * samples_per_frame
-        if emit_samples > samples_total:
-            emit_samples = samples_total
-
-        emit_pcm = pcm[-emit_samples:]
-        if emit_pcm.size == 0:
-            frames_emitted = frames_ready
-            return None
+        emit_pcm = pcm
+        emit_samples = emit_pcm.size
 
         if _MAX_SAMPLES:
             remaining = _MAX_SAMPLES - total_samples
@@ -161,6 +143,23 @@ async def aiter_pcm_from_custom_tokens(engine, prompt: str, voice: str, sp) -> b
     # natural termination on EOS / EOA / EOT
     frames_ready = audio_tok_idx // FRAME
     if frames_ready > frames_emitted:
-        chunk_bytes = await _emit_window(frames_ready)
-        if chunk_bytes:
-            yield chunk_bytes
+        # Emit a final window sized to the remaining frames (may be < WINDOW)
+        leftover_frames = frames_ready - frames_emitted
+        window_frames = min(frames_ready, WINDOW // FRAME)
+        window_tokens = window_frames * FRAME
+        if window_tokens <= len(codes_buf):
+            window_codes = codes_buf[-window_tokens:]
+            pcm = await _decode_window(window_codes)
+            if pcm.size > 0:
+                emit_pcm = pcm
+                emit_samples = emit_pcm.size
+                if _MAX_SAMPLES:
+                    remaining = _MAX_SAMPLES - total_samples
+                    if remaining > 0 and emit_samples > remaining:
+                        emit_pcm = emit_pcm[-remaining:]
+                        emit_samples = emit_pcm.size
+                if emit_samples > 0:
+                    total_samples += emit_samples
+                    frames_emitted = frames_ready
+                    await asyncio.sleep(0)
+                    yield emit_pcm.tobytes()
