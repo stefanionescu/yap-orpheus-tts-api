@@ -22,7 +22,7 @@ if BACKEND == "trtllm":
     # Import TRT backend lazily to avoid requiring TRT deps when not in use
     from .engines.trt_engine import OrpheusTRTEngine as _Engine
     from .streaming.trt_streaming import aiter_pcm_from_custom_tokens
-    from tensorrt_llm._tensorrt_engine import SamplingParams  # type: ignore
+    from tensorrt_llm import SamplingParams  # type: ignore
 else:
     from .engines.vllm_engine import OrpheusVLLMEngine as _Engine
     from .streaming.vllm_streaming import aiter_pcm_from_custom_tokens
@@ -51,9 +51,6 @@ async def _startup():
                 repetition_penalty=1.1,
                 # Keep warmup short and let it complete naturally to avoid 'Aborted request' logs
                 max_tokens=56,
-                detokenize=True,
-                skip_special_tokens=False,
-                ignore_eos=False,
                 stop_token_ids=[128258, 128009],
             )
             async def _prime(voice: str):
