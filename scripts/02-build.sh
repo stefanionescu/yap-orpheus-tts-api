@@ -161,7 +161,6 @@ snapshot_download(
     --dtype "${TRTLLM_DTYPE}"
     --qformat int4_awq
     --awq_block_size "${AWQ_BLOCK_SIZE}"
-    --kv_cache_dtype int8
     --calib_size "${CALIB_SIZE}"
   )
   echo "[build-awq] Running: ${QUANT_CMD[*]}"
@@ -207,10 +206,8 @@ fi
 echo ""
 echo "[build-awq] ============================================"
 echo "[build-awq] Done. Engine: ${TRTLLM_ENGINE_DIR}"
-echo "[build-awq] Configuration: INT4-AWQ weights + INT8 KV cache"
-echo "[build-awq] Model weights: 6GB → 1.5GB (4x smaller)"
-echo "[build-awq] KV cache per user: 220MB → 110MB (2x smaller)"
-echo "[build-awq] Expected: 12 → 26-30 concurrent users"
+echo "[build-awq] Configuration: INT4-AWQ weight-only"
+echo "[build-awq] Model weights: 6GB → ~1.5GB (≈4x smaller)"
 echo "[build-awq] To run server:"
 echo "  export TRTLLM_ENGINE_DIR=\"${TRTLLM_ENGINE_DIR}\""
 echo "  bash scripts/04-run-server.sh"

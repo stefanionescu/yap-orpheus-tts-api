@@ -135,16 +135,7 @@ bash scripts/02-build.sh --force
 bash scripts/02-build.sh --max-batch-size 32 --force
 ```
 
-## Performance
-
-### Specifications (Single A100 GPU)
-
-| Configuration | Concurrent Users | Model Size | KV Cache/User | Quality vs FP16 |
-|--------------|------------------|------------|---------------|-----------------|
-| **INT4-AWQ + INT8 KV** (default) | 17-20 | 1.5GB | 110MB | ~97.5% |
-| FP16 baseline | 12 | 6GB | 220MB | 100% |
-
-### Benchmarking
+## Benchmarking
 
 ```bash
 # Activate venv
