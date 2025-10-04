@@ -50,7 +50,7 @@ curl -s http://127.0.0.1:8000/healthz
 - `FIRST_CHUNK_WORDS`: 40 words
 - `NEXT_CHUNK_WORDS`: 140 words
 - `MIN_TAIL_WORDS`: 12 words
-- `SNAC_MAX_BATCH`: 128 (SNAC decoder batching)
+- `SNAC_MAX_BATCH`: 64 (SNAC decoder batching)
 - `SNAC_BATCH_TIMEOUT_MS`: 5ms
 
 ## Installation & Deployment
@@ -164,8 +164,8 @@ This reduces KV cache memory usage by 50%, allowing more concurrent requests.
 
 **Optional Tuning**:
 ```bash
-# Adjust CUDA concurrency (default is 4)
-export CUDA_DEVICE_MAX_CONNECTIONS=8  # Allow more concurrent kernel launches
+# Adjust CUDA concurrency (default is 2)
+export CUDA_DEVICE_MAX_CONNECTIONS=4  # Allow more concurrent kernel launches
 
 # Monitor KV cache utilization
 export TLLM_LOG_LEVEL=DEBUG

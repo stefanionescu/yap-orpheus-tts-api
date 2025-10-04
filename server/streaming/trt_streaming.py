@@ -10,7 +10,7 @@ from ..core.snac_batcher import get_snac_batched, SNAC_DEVICE
 _CODE_OFFSET = 128266   # first audio code id
 _CODE_SIZE = 4096       # codes per sub-stream
 _FRAME = 7              # sub-streams per frame
-_WINDOW_TOKENS_RAW = max(int(os.getenv("TTS_DECODE_WINDOW", "56")), 56)
+_WINDOW_TOKENS_RAW = max(int(os.getenv("TTS_DECODE_WINDOW", "28")), 28)
 _WINDOW_TOKENS_ADJ = _WINDOW_TOKENS_RAW - (_WINDOW_TOKENS_RAW % _FRAME)
 if _WINDOW_TOKENS_ADJ < (_FRAME * 4):
     _WINDOW_TOKENS_ADJ = _FRAME * 4
@@ -63,6 +63,10 @@ async def aiter_pcm_from_custom_tokens(engine, prompt: str, voice: str, sp) -> b
     # Optional smaller first window to lower TTFB (in frames). Defaults to 2 frames (14 tokens).
     _FIRST_WINDOW_FRAMES = max(int(os.getenv("TTS_FIRST_WINDOW_FRAMES", "2")), 1)
     FIRST_WINDOW_TOKENS = min(_FIRST_WINDOW_FRAMES * FRAME, WINDOW)
+    # Number of initial small windows (14 tokens) before switching to steady-state (28 tokens)
+    small_windows = max(min(int(os.getenv("TTS_FIRST_SMALL_WINDOWS", "2")), 2), 1)
+    # Count how many windows we've emitted so far
+    windows_emitted = 0
     prev_len = 0  # previous length of token_ids
 
     async def _decode_window(window_codes: list[int]) -> np.ndarray:
@@ -80,8 +84,10 @@ async def aiter_pcm_from_custom_tokens(engine, prompt: str, voice: str, sp) -> b
         return wav.reshape(-1)
 
     async def _emit_window(frames_ready: int) -> bytes | None:
-        nonlocal frames_emitted, total_samples
-        want_tokens = WINDOW if frames_emitted > 0 else FIRST_WINDOW_TOKENS
+        nonlocal frames_emitted, total_samples, windows_emitted
+        # Use small window (14 tokens) for the first N windows, then steady-state (28 tokens)
+        use_small = windows_emitted < small_windows
+        want_tokens = FIRST_WINDOW_TOKENS if use_small else WINDOW
         if len(codes_buf) < want_tokens:
             return None
         if frames_ready <= frames_emitted:
@@ -107,6 +113,7 @@ async def aiter_pcm_from_custom_tokens(engine, prompt: str, voice: str, sp) -> b
 
         total_samples += emit_samples
         frames_emitted = frames_ready
+        windows_emitted += 1
 
         await asyncio.sleep(0)
         return emit_pcm.tobytes()
