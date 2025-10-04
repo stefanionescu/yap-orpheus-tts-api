@@ -1,25 +1,72 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Common helpers and env
+source "scripts/lib/common.sh"
+load_env_if_present
+
+# Defaults
+: "${PYTHON_VERSION:=3.10}"
 : "${VENV_DIR:=$PWD/.venv}"
 : "${TRTLLM_WHEEL_URL:=https://pypi.nvidia.com/tensorrt-llm/tensorrt_llm-1.0.0-cp310-cp310-linux_x86_64.whl}"
 
+# Required
+require_env HF_TOKEN
+
 if [ "$(uname -s)" != "Linux" ]; then
-  echo "[install-trt] TensorRT-LLM requires Linux with NVIDIA GPUs. Skipping."
+  echo "[install] TensorRT-LLM requires Linux with NVIDIA GPUs. Skipping."
   exit 0
 fi
 
 if ! command -v nvidia-smi >/dev/null 2>&1; then
-  echo "[install-trt] NVIDIA driver / nvidia-smi not detected. Ensure GPU drivers are installed."
+  echo "[install] NVIDIA driver / nvidia-smi not detected. Ensure GPU drivers are installed."
 fi
 
-[ -d "${VENV_DIR}" ] || { echo "[install-trt] venv missing. Run scripts/01-install.sh first."; exit 1; }
+echo "[install] Creating venv at ${VENV_DIR}"
+
+# Resolve Python executable
+PY_EXE=$(choose_python_exe) || { echo "[install] ERROR: Python not found. Please install Python ${PYTHON_VERSION}." >&2; exit 1; }
+
+PY_MAJMIN=$($PY_EXE -c 'import sys;print(f"{sys.version_info.major}.{sys.version_info.minor}")')
+
+# Ensure venv module is available (Ubuntu often needs pythonX.Y-venv)
+if ! $PY_EXE -m ensurepip --version >/dev/null 2>&1; then
+  if command -v apt-get >/dev/null 2>&1; then
+    echo "[install] Installing python venv support via apt-get"
+    apt-get update -y || true
+    DEBIAN_FRONTEND=noninteractive apt-get install -y python${PY_MAJMIN}-venv || \
+    DEBIAN_FRONTEND=noninteractive apt-get install -y python3-venv || true
+  else
+    echo "[install] WARNING: ensurepip missing and apt-get unavailable. venv creation may fail." >&2
+  fi
+fi
+
+$PY_EXE -m venv "${VENV_DIR}"
 source "${VENV_DIR}/bin/activate"
 
-echo "[install-trt] Installing mpi4py (MPI Python bindings)"
-pip install "mpi4py>=3.1"
+# Robust pip bootstrap inside venv (handles broken pip vendor deps)
+python -m ensurepip --upgrade || true
+if ! python -m pip --version >/dev/null 2>&1; then
+  python -m ensurepip --upgrade || true
+fi
+python -m pip install --upgrade --no-cache-dir pip setuptools wheel || {
+  python -m ensurepip --upgrade || true
+  python -m pip install --upgrade --no-cache-dir pip setuptools wheel
+}
 
-echo "[install-trt] Checking Python shared library (libpython)"
+# Pick the right PyTorch CUDA wheel channel
+if [ -z "${CUDA_VER:-}" ]; then
+  CUDA_VER=$(detect_cuda_version)
+fi
+TORCH_IDX=$(map_torch_index_url "${CUDA_VER:-}")
+
+echo "[install] Installing Torch from ${TORCH_IDX}"
+pip install --index-url "${TORCH_IDX}" torch --only-binary=:all:
+
+echo "[install] Installing all dependencies"
+pip install -r requirements.txt
+
+echo "[install] Checking Python shared library (libpython)"
 if ! python - <<'PY'
 import ctypes
 import ctypes.util
@@ -80,20 +127,11 @@ else
   echo "[install-trt] Skipping MPI check (NEED_MPI=0)"
 fi
 
-echo "[install-trt] Installing base deps (ensures FastAPI==0.115.4)"
-pip install -r requirements-base.txt
-
-echo "[install-trt] Installing TensorRT-LLM + libs"
+echo "[install] Installing TensorRT-LLM + libs"
 pip install --upgrade --extra-index-url https://pypi.nvidia.com \
   "${TRTLLM_WHEEL_URL:-tensorrt-llm==1.0.0}" \
   "tensorrt-cu12-bindings" \
   "tensorrt-cu12-libs"
-
-echo "[install-trt] Installing TRT extras"
-pip install -r requirements-trt.txt
-
-echo "[install-trt] Ensuring cuda-python is installed"
-pip install --upgrade "cuda-python>=12.6,<13"
 
 if command -v ldconfig >/dev/null 2>&1; then
   CUDA_LIB_DIR=$(ldconfig -p 2>/dev/null | awk '/libcuda\\.so/{print $NF; exit}' | xargs dirname 2>/dev/null || true)
@@ -151,7 +189,17 @@ if ! printf '%s' "$CUDA_CHECK_OUTPUT" | grep -q '^OK$'; then
   exit 1
 fi
 
-echo "[install-trt] Verifying env"
-pip check || { echo "[install-trt] Dependency conflict detected"; exit 1; }
+# Login to HF (non-interactive)
+python - <<'PY'
+import os
+from huggingface_hub import login
+tok=os.environ.get("HF_TOKEN")
+assert tok, "HF_TOKEN missing"
+login(token=tok, add_to_git_credential=False)
+print("[install] HF login OK")
+PY
 
-echo "[install-trt] Done."
+echo "[install] Verifying env"
+pip check || { echo "[install] Dependency conflict detected"; exit 1; }
+
+echo "[install] Done."

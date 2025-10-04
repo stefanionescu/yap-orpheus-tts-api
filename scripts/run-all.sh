@@ -13,9 +13,7 @@ mkdir -p logs .run
 CMD='\
   echo "[run-all] 1/3 bootstrap" && \
   bash scripts/00-bootstrap.sh && \
-  echo "[run-all] 2/3 install" && \
-  bash scripts/01-install.sh && \
-  echo "[run-all] Installing TRT-LLM backend" && \
+  echo "[run-all] 2/3 install TRT-LLM" && \
   bash scripts/01-install-trt.sh && \
   echo "[run-all] Building TRT-LLM engine (FP16)" && \
   bash scripts/02-build.sh && \
