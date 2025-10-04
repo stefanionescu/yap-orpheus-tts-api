@@ -44,6 +44,7 @@ curl -s http://127.0.0.1:8000/healthz
 - `TRTLLM_MAX_INPUT_LEN`: 48 tokens (optimized for sentences)
 - `TRTLLM_MAX_OUTPUT_LEN`: 1024 tokens
 - `TRTLLM_MAX_BATCH_SIZE`: 20 concurrent users
+- `TRTLLM_MAX_NUM_TOKENS`: 12288 (scheduler: max tokens in-flight across all requests)
 - `KV_FREE_GPU_FRAC`: 0.92 (use 92% of free GPU memory for KV cache)
 
 ### TTS Settings (`scripts/env/tts.sh`)
@@ -79,7 +80,7 @@ bash scripts/01-install-trt.sh
 bash scripts/02-build.sh
 
 # 4) Run server
-bash scripts/04-run-server.sh
+bash scripts/03-run-server.sh
 ```
 
 ### Start/Stop Server Manually (no rebuild)
@@ -111,7 +112,7 @@ export TRTLLM_ENGINE_DIR="$(pwd)/models/orpheus-trt-int4-awq"
 4) Start the server:
 
 ```bash
-bash scripts/04-run-server.sh
+bash scripts/03-run-server.sh
 ```
 
 5) Health check:
@@ -148,6 +149,61 @@ python tests/warmup.py
 python tests/bench.py --n 8 --concurrency 8
 ```
 
+## Performance Tuning
+
+### High Concurrency RTF Optimization
+
+If you experience RTF degradation at high concurrency (16-20+ users), follow these steps:
+
+**1. Rebuild with INT8 KV Cache** (most impactful):
+```bash
+# INT8 KV cache is now enabled by default in the build script
+bash scripts/02-build.sh --force
+```
+
+**2. Tune Scheduler `max_num_tokens`**:
+The scheduler's `TRTLLM_MAX_NUM_TOKENS` controls how many tokens can be **actively in-flight** across all requests at any moment (not max capacity).
+
+**Important**: For streaming workloads, use **average in-flight tokens** (40-60% of max), not max output length. Why? Requests start/finish at different times - they're not all at 1024 tokens simultaneously.
+
+Calculate optimal value:
+```
+max_num_tokens = MAX_BATCH_SIZE × (MAX_INPUT_LEN + avg_inflight_output_tokens)
+```
+
+**Recommended values** for 20 concurrent users:
+```bash
+# Balanced (default, streaming workload)
+export TRTLLM_MAX_NUM_TOKENS=12288  # 20 * (48 + 512) ≈ 11,200
+
+# Conservative (if requests often hit max 1024 tokens)
+export TRTLLM_MAX_NUM_TOKENS=16384  # 20 * (48 + 768) ≈ 16,320
+
+# Maximum (all requests at full 1024 tokens - usually overkill)
+export TRTLLM_MAX_NUM_TOKENS=21440  # 20 * (48 + 1024) = 21,440
+```
+
+**When to adjust**:
+- See "out of tokens" errors → increase
+- Requests seem to wait unnecessarily → increase
+- Want to reduce memory usage → decrease (but not below 10240 for n=20)
+
+**3. Adjust CUDA Concurrency** (experimental):
+```bash
+# Default is 4 (good for most cases)
+export CUDA_DEVICE_MAX_CONNECTIONS=8  # Allow more concurrent kernel launches
+
+# If you see CUDA errors, reduce to 2
+export CUDA_DEVICE_MAX_CONNECTIONS=2
+```
+
+**4. Monitor KV Cache Utilization**:
+```bash
+# Check if you're running out of KV cache blocks
+export TLLM_LOG_LEVEL=DEBUG  # Enable detailed logging
+# Look for "waiting for free blocks" in logs → increase KV_FREE_GPU_FRAC
+```
+
 ## Recommended Container Images
 
 - `nvidia/cuda:12.2.0-devel-ubuntu22.04` (build + runtime)
@@ -174,13 +230,15 @@ bash scripts/stop.sh --clean-install --clean-trt --clean-system
 
 ### Quantization Strategy
 - **Weights**: INT4-AWQ (4x compression, ~2% quality loss)
-- **KV Cache**: INT8 (2x compression, ~0.5% quality loss)
+- **KV Cache**: INT8 (2x compression, ~0.5% quality loss, **critical for high concurrency**)
 - **Activations**: FP16 (no quantization - preserves quality)
 
 ### Why This Works for TTS
-TTS models generate discrete audio codes where activation precision is critical. Weight-only quantization (INT4-AWQ) compresses the model without degrading the forward pass quality, while INT8 KV cache reduces memory footprint for concurrent users.
+TTS models generate discrete audio codes where activation precision is critical. Weight-only quantization (INT4-AWQ) compresses the model without degrading the forward pass quality, while **INT8 KV cache is essential for high-concurrency performance** - it doubles the number of concurrent users the GPU can handle by reducing KV cache memory from 16-bit to 8-bit.
 
-**Avoid**: Full quantization (W8A8 SmoothQuant) destroys TTS quality by quantizing activations.
+**Avoid**: 
+- Full quantization (W8A8 SmoothQuant) destroys TTS quality by quantizing activations
+- FP8 quantization (A100 doesn't support FP8 instructions)
 
 ## Client Usage
 

@@ -20,7 +20,7 @@ CMD='\
   : "${TRTLLM_ENGINE_DIR:=$PWD/models/orpheus-trt-int4-awq}" && \
   export TRTLLM_ENGINE_DIR && \
   echo "[run-all] 3/3 start server" && \
-  bash scripts/04-run-server.sh'
+  bash scripts/03-run-server.sh'
 
 setsid nohup bash -lc "$CMD" </dev/null > logs/run-all.log 2>&1 &
 bg_pid=$!
