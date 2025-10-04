@@ -22,7 +22,7 @@ class SnacBatched:
         self.stream = torch.cuda.Stream(device=torch.device(SNAC_DEVICE)) if torch.cuda.is_available() else None
 
         # Dynamic batching controls
-        self.max_batch = int(os.getenv("SNAC_MAX_BATCH", "64"))
+        self.max_batch = int(os.getenv("SNAC_MAX_BATCH", "128"))
         self.batch_timeout_ms = int(os.getenv("SNAC_BATCH_TIMEOUT_MS", "2"))
         self._req_q: Optional[asyncio.Queue] = None
         self._worker_started = False

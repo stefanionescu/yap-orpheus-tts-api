@@ -11,7 +11,7 @@ load_env_if_present
 : "${TRTLLM_DTYPE:=float16}"
 : "${TRTLLM_MAX_INPUT_LEN:=48}" # Optimized for sentence-by-sentence TTS
 : "${TRTLLM_MAX_OUTPUT_LEN:=1024}"
-: "${TRTLLM_MAX_BATCH_SIZE:=24}"
+: "${TRTLLM_MAX_BATCH_SIZE:=20}"
 : "${PYTHON_EXEC:=python}"
 : "${TRTLLM_REPO_DIR:=$PWD/.trtllm-repo}"
 : "${AWQ_BLOCK_SIZE:=128}" # 128 is optimal for quality

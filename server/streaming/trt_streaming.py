@@ -10,7 +10,7 @@ from ..core.snac_batcher import get_snac_batched, SNAC_DEVICE
 _CODE_OFFSET = 128266   # first audio code id
 _CODE_SIZE = 4096       # codes per sub-stream
 _FRAME = 7              # sub-streams per frame
-_WINDOW_TOKENS_RAW = max(int(os.getenv("TTS_DECODE_WINDOW", "28")), 28)
+_WINDOW_TOKENS_RAW = max(int(os.getenv("TTS_DECODE_WINDOW", "56")), 56)
 _WINDOW_TOKENS_ADJ = _WINDOW_TOKENS_RAW - (_WINDOW_TOKENS_RAW % _FRAME)
 if _WINDOW_TOKENS_ADJ < (_FRAME * 4):
     _WINDOW_TOKENS_ADJ = _FRAME * 4

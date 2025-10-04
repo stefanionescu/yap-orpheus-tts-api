@@ -43,14 +43,14 @@ curl -s http://127.0.0.1:8000/healthz
 - `TRTLLM_ENGINE_DIR`: Path to built engine (default: `models/orpheus-trt-int4-awq`)
 - `TRTLLM_MAX_INPUT_LEN`: 48 tokens (optimized for sentences)
 - `TRTLLM_MAX_OUTPUT_LEN`: 1024 tokens
-- `TRTLLM_MAX_BATCH_SIZE`: 24 concurrent users
-- `KV_FREE_GPU_FRAC`: 0.94 (use 94% of free GPU memory for KV cache)
+- `TRTLLM_MAX_BATCH_SIZE`: 20 concurrent users
+- `KV_FREE_GPU_FRAC`: 0.92 (use 92% of free GPU memory for KV cache)
 
 ### TTS Settings (`scripts/env/tts.sh`)
 - `FIRST_CHUNK_WORDS`: 40 words
 - `NEXT_CHUNK_WORDS`: 140 words
 - `MIN_TAIL_WORDS`: 12 words
-- `SNAC_MAX_BATCH`: 96 (SNAC decoder batching)
+- `SNAC_MAX_BATCH`: 128 (SNAC decoder batching)
 - `SNAC_BATCH_TIMEOUT_MS`: 5ms
 
 ## Installation & Deployment
