@@ -9,13 +9,13 @@ load_env_if_present
 : "${CHECKPOINT_DIR:=$PWD/models/orpheus-trtllm-ckpt-int4-awq}"
 : "${TRTLLM_ENGINE_DIR:=$PWD/models/orpheus-trt-int4-awq}"
 : "${TRTLLM_DTYPE:=float16}"
-: "${TRTLLM_MAX_INPUT_LEN:=64}"   # Optimized for sentence-by-sentence TTS
+: "${TRTLLM_MAX_INPUT_LEN:=48}" # Optimized for sentence-by-sentence TTS
 : "${TRTLLM_MAX_OUTPUT_LEN:=1024}"
-: "${TRTLLM_MAX_BATCH_SIZE:=24}"  # Increased from 16
+: "${TRTLLM_MAX_BATCH_SIZE:=24}"
 : "${PYTHON_EXEC:=python}"
 : "${TRTLLM_REPO_DIR:=$PWD/.trtllm-repo}"
-: "${AWQ_BLOCK_SIZE:=128}"  # 128 is optimal for quality
-: "${CALIB_SIZE:=256}"  # Sufficient for AWQ
+: "${AWQ_BLOCK_SIZE:=128}" # 128 is optimal for quality
+: "${CALIB_SIZE:=256}" # Sufficient for AWQ
 
 usage() {
   cat <<USAGE
@@ -161,6 +161,7 @@ snapshot_download(
     --dtype "${TRTLLM_DTYPE}"
     --qformat int4_awq
     --awq_block_size "${AWQ_BLOCK_SIZE}"
+    --kv_cache_dtype int8
     --calib_size "${CALIB_SIZE}"
   )
   echo "[build-awq] Running: ${QUANT_CMD[*]}"
@@ -206,9 +207,10 @@ fi
 echo ""
 echo "[build-awq] ============================================"
 echo "[build-awq] Done. Engine: ${TRTLLM_ENGINE_DIR}"
-echo "[build-awq] Model weights: 6GB → 1.5GB (4x smaller, INT4)"
-echo "[build-awq] Total memory: ~10GB → ~5.5GB (45% reduction)"
-echo "[build-awq] Expected: 12 → 24+ concurrent users"
+echo "[build-awq] Configuration: INT4-AWQ weights + INT8 KV cache"
+echo "[build-awq] Model weights: 6GB → 1.5GB (4x smaller)"
+echo "[build-awq] KV cache per user: 220MB → 110MB (2x smaller)"
+echo "[build-awq] Expected: 12 → 26-30 concurrent users"
 echo "[build-awq] To run server:"
 echo "  export TRTLLM_ENGINE_DIR=\"${TRTLLM_ENGINE_DIR}\""
 echo "  bash scripts/04-run-server.sh"
