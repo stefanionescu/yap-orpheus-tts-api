@@ -6,21 +6,23 @@ load_env_if_present
 
 : "${VENV_DIR:=$PWD/.venv}"
 : "${MODEL_ID:=canopylabs/orpheus-3b-0.1-ft}"
-: "${CHECKPOINT_DIR:=$PWD/models/orpheus-trtllm-ckpt-fp16}"
-: "${TRTLLM_ENGINE_DIR:=$PWD/models/orpheus-trt-fp16}"
+: "${CHECKPOINT_DIR:=$PWD/models/orpheus-trtllm-ckpt-int4-awq}"
+: "${TRTLLM_ENGINE_DIR:=$PWD/models/orpheus-trt-int4-awq}"
 : "${TRTLLM_DTYPE:=float16}"
-: "${TRTLLM_MAX_INPUT_LEN:=128}"
+: "${TRTLLM_MAX_INPUT_LEN:=64}"   # Optimized for sentence-by-sentence TTS
 : "${TRTLLM_MAX_OUTPUT_LEN:=1024}"
-: "${TRTLLM_MAX_BATCH_SIZE:=16}"
+: "${TRTLLM_MAX_BATCH_SIZE:=24}"  # Increased from 16
 : "${PYTHON_EXEC:=python}"
 : "${TRTLLM_REPO_DIR:=$PWD/.trtllm-repo}"
+: "${AWQ_BLOCK_SIZE:=128}"  # 128 is optimal for quality
+: "${CALIB_SIZE:=256}"  # Sufficient for AWQ
 
 usage() {
   cat <<USAGE
 Usage: $0 [--model ID_OR_PATH] [--checkpoint-dir DIR] [--engine-dir DIR] [--dtype float16|bfloat16] [--max-input-len N] [--max-output-len N] [--max-batch-size N] [--force]
 
-End-to-end FP16 build (no quantization):
-  HF checkpoint → TRT-LLM checkpoint → TRT engine
+End-to-end INT4-AWQ build (weight-only quantization):
+  HF checkpoint → Quantized checkpoint → TRT engine
 
 Defaults:
   --model              ${MODEL_ID}
@@ -30,6 +32,8 @@ Defaults:
   --max-input-len      ${TRTLLM_MAX_INPUT_LEN}
   --max-output-len     ${TRTLLM_MAX_OUTPUT_LEN}
   --max-batch-size     ${TRTLLM_MAX_BATCH_SIZE}
+  --awq-block-size     ${AWQ_BLOCK_SIZE}
+  --calib-size         ${CALIB_SIZE}
 USAGE
 }
 
@@ -44,6 +48,8 @@ while [[ $# -gt 0 ]]; do
     --max-input-len) TRTLLM_MAX_INPUT_LEN="$2"; shift 2 ;;
     --max-output-len) TRTLLM_MAX_OUTPUT_LEN="$2"; shift 2 ;;
     --max-batch-size) TRTLLM_MAX_BATCH_SIZE="$2"; shift 2 ;;
+    --awq-block-size) AWQ_BLOCK_SIZE="$2"; shift 2 ;;
+    --calib-size) CALIB_SIZE="$2"; shift 2 ;;
     --force) FORCE=true; shift ;;
     -h|--help) usage; exit 0 ;;
     *) ARGS+=("$1"); shift ;;
@@ -51,16 +57,16 @@ while [[ $# -gt 0 ]]; do
 done
 set -- "${ARGS[@]:-}"
 
-[ -d "${VENV_DIR}" ] || { echo "[build] venv missing. Run scripts/01-install.sh first." >&2; exit 1; }
+[ -d "${VENV_DIR}" ] || { echo "[build-awq] venv missing. Run scripts/01-install-trt.sh first." >&2; exit 1; }
 source "${VENV_DIR}/bin/activate"
 
 if [ "$(uname -s)" != "Linux" ]; then
-  echo "[build] ERROR: TensorRT-LLM builds require Linux with NVIDIA GPUs." >&2
+  echo "[build-awq] ERROR: TensorRT-LLM builds require Linux with NVIDIA GPUs." >&2
   exit 1
 fi
 
 if ! command -v nvidia-smi >/dev/null 2>&1; then
-  echo "[build] ERROR: nvidia-smi not detected. Ensure the GPU is visible." >&2
+  echo "[build-awq] ERROR: nvidia-smi not detected. Ensure the GPU is visible." >&2
   exit 1
 fi
 
@@ -70,57 +76,55 @@ if [ -n "${HF_TOKEN:-}" ]; then
   export HF_HUB_TOKEN="${HF_HUB_TOKEN:-$HF_TOKEN}"
 fi
 
-# Ensure TensorRT-LLM repo is available for conversion scripts
+# Ensure TensorRT-LLM repo is available for quantization scripts
 if [ ! -d "${TRTLLM_REPO_DIR}" ]; then
-  echo "[build] Cloning TensorRT-LLM repo for conversion scripts..."
+  echo "[build-awq] Cloning TensorRT-LLM repo for quantization scripts..."
   git clone https://github.com/NVIDIA/TensorRT-LLM.git "${TRTLLM_REPO_DIR}"
 fi
 
-# Pin repo tag to installed wheel version (critical for compatibility)
-echo "[build] Syncing repo version with installed wheel..."
-# Extract version number, filtering out TRT-LLM log messages
+# Pin repo tag to installed wheel version
+echo "[build-awq] Syncing repo version with installed wheel..."
 TRTLLM_VER="$(${PYTHON_EXEC} -c 'import tensorrt_llm as t; print(t.__version__)' 2>/dev/null | tail -1 | tr -d '[:space:]')"
-echo "[build] Detected TensorRT-LLM version: ${TRTLLM_VER}"
+echo "[build-awq] Detected TensorRT-LLM version: ${TRTLLM_VER}"
 git -C "${TRTLLM_REPO_DIR}" fetch --tags
 
-# Try tag first, fallback to known commit for v1.0.0
 if ! git -C "${TRTLLM_REPO_DIR}" checkout "v${TRTLLM_VER}" 2>/dev/null; then
   if [[ "${TRTLLM_VER}" == "1.0.0" ]]; then
-    echo "[build] Tag v1.0.0 not found, using known commit ae8270b713446948246f16fadf4e2a32e35d0f62"
+    echo "[build-awq] Tag v1.0.0 not found, using known commit ae8270b713446948246f16fadf4e2a32e35d0f62"
     git -C "${TRTLLM_REPO_DIR}" checkout ae8270b713446948246f16fadf4e2a32e35d0f62
   else
-    echo "[build] ERROR: Could not checkout version ${TRTLLM_VER}" >&2
+    echo "[build-awq] ERROR: Could not checkout version ${TRTLLM_VER}" >&2
     exit 1
   fi
 fi
 
-echo "[build] ============================================"
-echo "[build] Step 1/2: Convert HF checkpoint to TRT-LLM format (FP16)"
-echo "[build] ============================================"
+echo "[build-awq] ============================================"
+echo "[build-awq] Step 1/2: Quantize to INT4-AWQ (weight-only)"
+echo "[build-awq] ============================================"
 
-# Install conversion dependencies
-LLAMA_REQUIREMENTS="${TRTLLM_REPO_DIR}/examples/models/core/llama/requirements.txt"
-if [ -f "${LLAMA_REQUIREMENTS}" ]; then
-  echo "[build] Installing Llama conversion requirements..."
-  pip install -r "${LLAMA_REQUIREMENTS}"
+# Install quantization dependencies
+QUANT_REQUIREMENTS="${TRTLLM_REPO_DIR}/examples/quantization/requirements.txt"
+if [ -f "${QUANT_REQUIREMENTS}" ]; then
+  echo "[build-awq] Installing quantization requirements..."
+  pip install -r "${QUANT_REQUIREMENTS}"
 else
-  echo "[build] WARNING: requirements.txt not found at ${LLAMA_REQUIREMENTS}, skipping..."
+  echo "[build-awq] WARNING: quantization requirements.txt not found, skipping..."
 fi
 
 # Enable fast HF downloads
 export HF_HUB_ENABLE_HF_TRANSFER=1
 
-# Skip conversion if directory exists and not forcing
+# Skip quantization if directory exists and not forcing
 if [[ -d "${CHECKPOINT_DIR}" && "${FORCE}" != true ]]; then
-  echo "[build] Reusing existing TRT-LLM checkpoint at ${CHECKPOINT_DIR}"
+  echo "[build-awq] Reusing existing quantized checkpoint at ${CHECKPOINT_DIR}"
 else
-  echo "[build] Converting HF checkpoint to TRT-LLM format..."
+  echo "[build-awq] Quantizing to INT4-AWQ..."
   rm -rf "${CHECKPOINT_DIR}"
   mkdir -p "${CHECKPOINT_DIR}"
   
   # Download model from HF if it's a model ID (not a local path)
   if [[ ! -d "${MODEL_ID}" ]]; then
-    echo "[build] Downloading model from HuggingFace: ${MODEL_ID}"
+    echo "[build-awq] Downloading model from HuggingFace: ${MODEL_ID}"
     LOCAL_MODEL_DIR="${PWD}/models/$(basename ${MODEL_ID})-hf"
     
     if [[ ! -d "${LOCAL_MODEL_DIR}" ]]; then
@@ -134,49 +138,57 @@ snapshot_download(
 )
 "
     else
-      echo "[build] Using cached HF model at ${LOCAL_MODEL_DIR}"
+      echo "[build-awq] Using cached HF model at ${LOCAL_MODEL_DIR}"
     fi
-    MODEL_DIR_FOR_CONVERT="${LOCAL_MODEL_DIR}"
+    MODEL_DIR_FOR_QUANT="${LOCAL_MODEL_DIR}"
   else
-    echo "[build] Using local model directory: ${MODEL_ID}"
-    MODEL_DIR_FOR_CONVERT="${MODEL_ID}"
+    echo "[build-awq] Using local model directory: ${MODEL_ID}"
+    MODEL_DIR_FOR_QUANT="${MODEL_ID}"
   fi
   
-  # Find the appropriate convert_checkpoint.py script
-  # Orpheus is based on Llama architecture
-  CONVERT_SCRIPT="${TRTLLM_REPO_DIR}/examples/models/core/llama/convert_checkpoint.py"
+  # Quantize using ModelOpt
+  QUANT_SCRIPT="${TRTLLM_REPO_DIR}/examples/quantization/quantize.py"
   
-  if [ ! -f "${CONVERT_SCRIPT}" ]; then
-    echo "[build] ERROR: convert_checkpoint.py not found at ${CONVERT_SCRIPT}" >&2
+  if [ ! -f "${QUANT_SCRIPT}" ]; then
+    echo "[build-awq] ERROR: quantize.py not found at ${QUANT_SCRIPT}" >&2
     exit 1
   fi
   
-  CONVERT_CMD=(
-    "${PYTHON_EXEC}" "${CONVERT_SCRIPT}"
-    --model_dir "${MODEL_DIR_FOR_CONVERT}"
+  QUANT_CMD=(
+    "${PYTHON_EXEC}" "${QUANT_SCRIPT}"
+    --model_dir "${MODEL_DIR_FOR_QUANT}"
     --output_dir "${CHECKPOINT_DIR}"
     --dtype "${TRTLLM_DTYPE}"
+    --qformat int4_awq
+    --awq_block_size "${AWQ_BLOCK_SIZE}"
+    --calib_size "${CALIB_SIZE}"
   )
-  echo "[build] Running: ${CONVERT_CMD[*]}"
-  "${CONVERT_CMD[@]}"
+  echo "[build-awq] Running: ${QUANT_CMD[*]}"
+  "${QUANT_CMD[@]}"
 fi
 
+# Sanity check the quantized checkpoint before building
+echo "[build-awq] Validating quantized checkpoint..."
+test -f "${CHECKPOINT_DIR}/config.json" || { echo "[build-awq] ERROR: No config.json found in ${CHECKPOINT_DIR}"; exit 1; }
+ls "${CHECKPOINT_DIR}"/rank*.safetensors >/dev/null 2>&1 || { echo "[build-awq] ERROR: No rank*.safetensors found in ${CHECKPOINT_DIR}"; exit 1; }
+echo "[build-awq] Quantized checkpoint validation passed."
+
 echo ""
-echo "[build] ============================================"
-echo "[build] Step 2/2: Build TensorRT-LLM engine"
-echo "[build] ============================================"
+echo "[build-awq] ============================================"
+echo "[build-awq] Step 2/2: Build TensorRT-LLM engine"
+echo "[build-awq] ============================================"
 
 # Skip engine build if directory exists and not forcing
 if [[ -d "${TRTLLM_ENGINE_DIR}" && "${FORCE}" != true ]]; then
-  echo "[build] Reusing existing engine at ${TRTLLM_ENGINE_DIR}"
+  echo "[build-awq] Reusing existing engine at ${TRTLLM_ENGINE_DIR}"
 else
-  echo "[build] Building TensorRT FP16 engine..."
+  echo "[build-awq] Building TensorRT INT4-AWQ engine..."
   
   BUILD_CMD=(
     trtllm-build
     --checkpoint_dir "${CHECKPOINT_DIR}"
     --output_dir "${TRTLLM_ENGINE_DIR}"
-    --gemm_plugin float16
+    --gemm_plugin auto
     --gpt_attention_plugin float16
     --context_fmha enable
     --paged_kv_cache enable
@@ -187,14 +199,18 @@ else
     --log_level info
     --workers "$(nproc --all)"
   )
-  echo "[build] Running: ${BUILD_CMD[*]}"
+  echo "[build-awq] Running: ${BUILD_CMD[*]}"
   "${BUILD_CMD[@]}"
 fi
 
 echo ""
-echo "[build] ============================================"
-echo "[build] Done. Engine: ${TRTLLM_ENGINE_DIR}"
-echo "[build] To run server:"
+echo "[build-awq] ============================================"
+echo "[build-awq] Done. Engine: ${TRTLLM_ENGINE_DIR}"
+echo "[build-awq] Model weights: 6GB → 1.5GB (4x smaller, INT4)"
+echo "[build-awq] Total memory: ~10GB → ~5.5GB (45% reduction)"
+echo "[build-awq] Expected: 12 → 24+ concurrent users"
+echo "[build-awq] To run server:"
 echo "  export TRTLLM_ENGINE_DIR=\"${TRTLLM_ENGINE_DIR}\""
 echo "  bash scripts/04-run-server.sh"
-echo "[build] ============================================"
+echo "[build-awq] ============================================"
+

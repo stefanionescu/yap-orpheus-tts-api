@@ -15,9 +15,9 @@ CMD='\
   bash scripts/00-bootstrap.sh && \
   echo "[run-all] 2/3 install TRT-LLM" && \
   bash scripts/01-install-trt.sh && \
-  echo "[run-all] Building TRT-LLM engine (FP16)" && \
+  echo "[run-all] Building TRT-LLM engine (INT4-AWQ)" && \
   bash scripts/02-build.sh && \
-  : "${TRTLLM_ENGINE_DIR:=$PWD/models/orpheus-trt-fp16}" && \
+  : "${TRTLLM_ENGINE_DIR:=$PWD/models/orpheus-trt-int4-awq}" && \
   export TRTLLM_ENGINE_DIR && \
   echo "[run-all] 3/3 start server" && \
   bash scripts/04-run-server.sh'
