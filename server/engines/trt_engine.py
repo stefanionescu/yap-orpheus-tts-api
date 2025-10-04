@@ -37,4 +37,3 @@ class OrpheusTRTEngine:
             kwargs["kv_cache_config"] = kv_cfg
 
         self.engine = LLM(**kwargs)
-

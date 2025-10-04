@@ -20,8 +20,6 @@ class SnacBatched:
             m.quantizer = torch.compile(m.quantizer, dynamic=True)
         self.m = m
         self.stream = torch.cuda.Stream(device=torch.device(SNAC_DEVICE)) if torch.cuda.is_available() else None
-        # Match legacy pacing: optionally force global CUDA sync after decode
-        self.global_sync = bool(int(os.getenv("SNAC_GLOBAL_SYNC", "1")))
 
         # Dynamic batching controls
         self.max_batch = int(os.getenv("SNAC_MAX_BATCH", "64"))
@@ -72,14 +70,7 @@ class SnacBatched:
                                 for c0, c1, c2 in codes_list:
                                     z_q = self.m.quantizer.from_codes([c0, c1, c2])
                                     outs.append(self.m.decoder(z_q.to(self.dtype_decoder))[:, :, 2048:4096])
-                            # Synchronization strategy:
-                            # - Legacy (default): global synchronize to pace GPU like old code
-                            # - Alternative: synchronize only the dedicated stream to reduce stalls
-                            if torch.cuda.is_available():
-                                if self.global_sync:
-                                    torch.cuda.synchronize()
-                                elif self.stream is not None:
-                                    self.stream.synchronize()
+                            torch.cuda.synchronize()
                     else:
                         shapes = [(c[0].shape, c[1].shape, c[2].shape) for c in codes_list]
                         can_cat = len(set(shapes)) == 1
@@ -120,4 +111,3 @@ def get_snac_batched() -> SnacBatched:
     if _BATCHER is None:
         _BATCHER = SnacBatched()
     return _BATCHER
-

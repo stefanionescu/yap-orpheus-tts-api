@@ -60,13 +60,6 @@ async def aiter_pcm_from_custom_tokens(engine, prompt: str, voice: str, sp) -> b
 
     WINDOW = max(WINDOW_TOKENS, _FRAME * 4)
     FRAME = _FRAME
-    # Optional smaller first window to lower TTFB (in frames). Defaults to 2 frames (14 tokens).
-    _FIRST_WINDOW_FRAMES = max(int(os.getenv("TTS_FIRST_WINDOW_FRAMES", "2")), 1)
-    FIRST_WINDOW_TOKENS = min(_FIRST_WINDOW_FRAMES * FRAME, WINDOW)
-    # Number of initial small windows (14 tokens) before switching to steady-state (28 tokens)
-    small_windows = max(min(int(os.getenv("TTS_FIRST_SMALL_WINDOWS", "2")), 2), 1)
-    # Count how many windows we've emitted so far
-    windows_emitted = 0
     prev_len = 0  # previous length of token_ids
 
     async def _decode_window(window_codes: list[int]) -> np.ndarray:
@@ -84,17 +77,14 @@ async def aiter_pcm_from_custom_tokens(engine, prompt: str, voice: str, sp) -> b
         return wav.reshape(-1)
 
     async def _emit_window(frames_ready: int) -> bytes | None:
-        nonlocal frames_emitted, total_samples, windows_emitted
-        # Use small window (14 tokens) for the first N windows, then steady-state (28 tokens)
-        use_small = windows_emitted < small_windows
-        want_tokens = FIRST_WINDOW_TOKENS if use_small else WINDOW
-        if len(codes_buf) < want_tokens:
+        nonlocal frames_emitted, total_samples
+        if len(codes_buf) < WINDOW:
             return None
         if frames_ready <= frames_emitted:
             return None
 
-        # Decode the most recent window (first window may be smaller)
-        window_codes = codes_buf[-want_tokens:]
+        # Decode the most recent full window and emit it entirely (constant-size chunk)
+        window_codes = codes_buf[-WINDOW:]
         pcm = await _decode_window(window_codes)
         if pcm.size == 0:
             frames_emitted = frames_ready
@@ -113,7 +103,6 @@ async def aiter_pcm_from_custom_tokens(engine, prompt: str, voice: str, sp) -> b
 
         total_samples += emit_samples
         frames_emitted = frames_ready
-        windows_emitted += 1
 
         await asyncio.sleep(0)
         return emit_pcm.tobytes()
