@@ -47,9 +47,6 @@ curl -s http://127.0.0.1:8000/healthz
 - `KV_FREE_GPU_FRAC`: 0.92 (use 92% of free GPU memory for KV cache)
 
 ### TTS Settings (`scripts/env/tts.sh`)
-- `FIRST_CHUNK_WORDS`: 40 words
-- `NEXT_CHUNK_WORDS`: 140 words
-- `MIN_TAIL_WORDS`: 12 words
 - `SNAC_MAX_BATCH`: 64 (SNAC decoder batching)
 - `SNAC_BATCH_TIMEOUT_MS`: 5ms
 
