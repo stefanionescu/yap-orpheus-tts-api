@@ -97,8 +97,6 @@ def main() -> None:
 
             await ws.send("__END__")
             await recv_task
-                    else:
-                        print(f"Received unknown message type {type(msg)}: {msg}")
 
     asyncio.run(run())
 

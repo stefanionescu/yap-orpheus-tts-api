@@ -82,6 +82,49 @@ bash scripts/02-build.sh
 bash scripts/04-run-server.sh
 ```
 
+### Start/Stop Server Manually (no rebuild)
+
+Use this when you already have a built TensorRT-LLM engine and just want to restart the API server.
+
+1) Stop any running server (no flags):
+
+```bash
+bash scripts/stop.sh
+```
+
+2) Ensure your Hugging Face token is exported for runtime:
+
+```bash
+export HF_TOKEN="hf_xxx"
+```
+
+3) Set the TensorRT-LLM engine directory (must contain rank0.engine):
+
+```bash
+# If you used the provided build scripts, this is typically:
+export TRTLLM_ENGINE_DIR="$(pwd)/models/orpheus-trt-int4-awq"
+
+# Optional: verify the engine exists
+[ -f "$TRTLLM_ENGINE_DIR/rank0.engine" ] && echo "Engine OK" || echo "Missing rank0.engine"
+```
+
+4) Start the server:
+
+```bash
+bash scripts/04-run-server.sh
+```
+
+5) Health check:
+
+```bash
+curl -s http://127.0.0.1:8000/healthz
+```
+
+Note on HF token precedence:
+- If you see a warning like:
+  "Note: Environment variable `HF_TOKEN` is set and is the current active token independently from the token you've just configured."
+  it just means the `HF_TOKEN` environment variable overrides any saved login. To switch tokens, update `HF_TOKEN` accordingly.
+
 ### Rebuild Engine Only
 
 ```bash
