@@ -10,11 +10,6 @@ from ..core.snac_batcher import get_snac_batched, SNAC_DEVICE
 _CODE_OFFSET = 128266   # first audio code id
 _CODE_SIZE = 4096       # codes per sub-stream
 _FRAME = 7              # sub-streams per frame
-_WINDOW_TOKENS_RAW = max(int(os.getenv("TTS_DECODE_WINDOW", "21")), 21)
-_WINDOW_TOKENS_ADJ = _WINDOW_TOKENS_RAW - (_WINDOW_TOKENS_RAW % _FRAME)
-if _WINDOW_TOKENS_ADJ < (_FRAME * 4):
-    _WINDOW_TOKENS_ADJ = _FRAME * 4
-WINDOW_TOKENS = _WINDOW_TOKENS_ADJ
 _SAMPLE_RATE = int(os.getenv("SNAC_SR", "24000"))
 _MAX_SEC = float(os.getenv("TTS_MAX_SEC", "0"))
 # Optional wall-clock guard; zero disables the cap.
@@ -58,7 +53,6 @@ async def aiter_pcm_from_custom_tokens(engine, prompt: str, voice: str, sp) -> b
     frames_emitted = 0
     total_samples = 0
 
-    WINDOW = max(WINDOW_TOKENS, _FRAME * 4)
     FRAME = _FRAME
     prev_len = 0  # previous length of token_ids
 
@@ -76,16 +70,17 @@ async def aiter_pcm_from_custom_tokens(engine, prompt: str, voice: str, sp) -> b
         wav = (np.clip(audio, -1.0, 1.0) * 32767.0).astype(np.int16)
         return wav.reshape(-1)
 
-    async def _emit_window(frames_ready: int) -> bytes | None:
+    async def _emit_hop(frames_ready: int) -> bytes | None:
         nonlocal frames_emitted, total_samples
-        if len(codes_buf) < WINDOW:
+        # Emit exactly one hop (one frame worth of codes → ~2048 samples)
+        if len(codes_buf) < FRAME:
             return None
         if frames_ready <= frames_emitted:
             return None
 
-        # Decode the most recent full window and emit it entirely (constant-size chunk)
-        window_codes = codes_buf[-WINDOW:]
-        pcm = await _decode_window(window_codes)
+        # Decode only the new frame (last 7 codes)
+        hop_codes = codes_buf[-FRAME:]
+        pcm = await _decode_window(hop_codes)
         if pcm.size == 0:
             frames_emitted = frames_ready
             return None
@@ -134,32 +129,11 @@ async def aiter_pcm_from_custom_tokens(engine, prompt: str, voice: str, sp) -> b
 
                 if (audio_tok_idx % FRAME) == 0:
                     frames_ready = audio_tok_idx // FRAME
-                    chunk_bytes = await _emit_window(frames_ready)
+                    chunk_bytes = await _emit_hop(frames_ready)
                     if chunk_bytes:
                         yield chunk_bytes
             else:
                 continue
 
-    # natural termination on EOS / EOA / EOT
-    frames_ready = audio_tok_idx // FRAME
-    if frames_ready > frames_emitted:
-        # Emit a final window sized to the remaining frames (may be < WINDOW)
-        leftover_frames = frames_ready - frames_emitted
-        window_frames = min(frames_ready, WINDOW // FRAME)
-        window_tokens = window_frames * FRAME
-        if window_tokens <= len(codes_buf):
-            window_codes = codes_buf[-window_tokens:]
-            pcm = await _decode_window(window_codes)
-            if pcm.size > 0:
-                emit_pcm = pcm
-                emit_samples = emit_pcm.size
-                if _MAX_SAMPLES:
-                    remaining = _MAX_SAMPLES - total_samples
-                    if remaining > 0 and emit_samples > remaining:
-                        emit_pcm = emit_pcm[-remaining:]
-                        emit_samples = emit_pcm.size
-                if emit_samples > 0:
-                    total_samples += emit_samples
-                    frames_emitted = frames_ready
-                    await asyncio.sleep(0)
-                    yield emit_pcm.tobytes()
+    # natural termination on EOS / EOA / EOT (nothing left to emit beyond last hop)
+    return

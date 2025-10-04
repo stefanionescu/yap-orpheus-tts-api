@@ -12,9 +12,14 @@ SNAC_DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
 class SnacBatched:
     def __init__(self) -> None:
-        self.dtype_decoder = torch.float32
+        # Prefer FP16 on CUDA for decoder math; keep FP32 on CPU
+        self.dtype_decoder = torch.float16 if (SNAC_DEVICE == "cuda") else torch.float32
         m = SNAC.from_pretrained("hubertsiuzdak/snac_24khz").eval().to(SNAC_DEVICE)
-        m.decoder = m.decoder.to(self.dtype_decoder)
+        # Channels-last is beneficial for conv-heavy decoders on CUDA
+        if SNAC_DEVICE == "cuda":
+            m.decoder = m.decoder.to(self.dtype_decoder).to(memory_format=torch.channels_last)
+        else:
+            m.decoder = m.decoder.to(self.dtype_decoder)
         if bool(int(os.getenv("SNAC_TORCH_COMPILE", "0"))):
             m.decoder = torch.compile(m.decoder, dynamic=True)
             m.quantizer = torch.compile(m.quantizer, dynamic=True)
@@ -23,7 +28,8 @@ class SnacBatched:
 
         # Dynamic batching controls
         self.max_batch = int(os.getenv("SNAC_MAX_BATCH", "64"))
-        self.batch_timeout_ms = int(os.getenv("SNAC_BATCH_TIMEOUT_MS", "2"))
+        # Keep default batch timeout low for streaming hops
+        self.batch_timeout_ms = int(os.getenv("SNAC_BATCH_TIMEOUT_MS", "1"))
         self._req_q: Optional[asyncio.Queue] = None
         self._worker_started = False
 

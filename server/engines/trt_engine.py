@@ -31,6 +31,10 @@ class OrpheusTRTEngine:
                 pass
         if os.getenv("KV_ENABLE_BLOCK_REUSE", "0") == "1":
             kv_cfg["enable_block_reuse"] = True
+        # Allow optional cache salt for safe cross-request prefix reuse (e.g., per-voice)
+        cache_salt = os.getenv("KV_CACHE_SALT", "").strip()
+        if cache_salt:
+            kv_cfg["cache_salt"] = cache_salt
 
         # Only pass kv_cache_config when we actually have values
         if kv_cfg:
