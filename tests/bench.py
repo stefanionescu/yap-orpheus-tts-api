@@ -69,28 +69,35 @@ async def _tts_one_ws(
     total_bytes = 0
     sr = 24000
 
-    # Sentence-by-sentence: open a WS session per sentence
+    # Sticky WS: open once, send meta, all sentences, then __END__
     sentences = [s for s in chunk_by_sentences(text) if s and s.strip()]
-    for sentence in sentences:
-        async with websockets.connect(url, max_size=None) as ws:
-            payload = {"voice": voice, "text": sentence.strip()}
-            if num_predict is not None:
-                payload["max_tokens"] = num_predict
-            await ws.send(json.dumps(payload))
+    async with websockets.connect(url, max_size=None) as ws:
+        meta = {"voice": voice}
+        if num_predict is not None:
+            meta["max_tokens"] = num_predict
+        await ws.send(json.dumps(meta))
 
+        async def _recv_loop():
+            nonlocal first_chunk_at, total_bytes
             while True:
                 try:
-                    msg = await asyncio.wait_for(ws.recv(), timeout=2.0)
+                    msg = await asyncio.wait_for(ws.recv(), timeout=5.0)
                 except asyncio.TimeoutError:
-                    # No more data for a bit → assume done
-                    break
+                    # Idle for a bit; continue loop until server closes on __END__
+                    continue
                 except ConnectionClosed:
-                    # Server closed after sending final frames
                     break
                 if isinstance(msg, (bytes, bytearray)):
                     if first_chunk_at is None:
                         first_chunk_at = time.perf_counter()
                     total_bytes += len(msg)
+        recv_task = asyncio.create_task(_recv_loop())
+
+        for sentence in sentences:
+            await ws.send(json.dumps({"text": sentence.strip()}))
+
+        await ws.send("__END__")
+        await recv_task
 
     wall_s = time.perf_counter() - t0_e2e
     ttfb_e2e_s = (first_chunk_at - t0_e2e) if first_chunk_at else 0.0

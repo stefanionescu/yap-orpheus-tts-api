@@ -111,7 +111,7 @@ source .venv/bin/activate
 python tests/warmup.py
 
 # Benchmark concurrent streams
-python tests/bench.py --n 24 --concurrency 24
+python tests/bench.py --n 8 --concurrency 8
 ```
 
 ## Recommended Container Images

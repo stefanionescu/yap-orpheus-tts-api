@@ -63,36 +63,40 @@ def main() -> None:
     async def run():
         nonlocal first_chunk_at, total_bytes
         sentences = [s for s in chunk_by_sentences(str(args.text)) if s and s.strip()]
-        for sentence in sentences:
-            async with websockets.connect(url, max_size=None) as ws:
-                payload = {"voice": args.voice, "text": sentence.strip()}
-                if args.num_predict is not None:
-                    payload["max_tokens"] = args.num_predict
-                await ws.send(json.dumps(payload))
+        async with websockets.connect(url, max_size=None) as ws:
+            # Send metadata first
+            payload = {"voice": args.voice}
+            if args.num_predict is not None:
+                payload["max_tokens"] = args.num_predict
+            await ws.send(json.dumps(payload))
 
-                # Receive PCM until server closes or idle timeout
+            # Start a background receive loop
+            async def _recv_loop():
+                nonlocal first_chunk_at, total_bytes
                 last_bytes_at = None
                 while True:
                     try:
                         msg = await asyncio.wait_for(ws.recv(), timeout=IDLE_TIMEOUT_S)
                     except asyncio.TimeoutError:
-                        # No data for a while -> assume done
-                        print("Timeout: No data received for 15 seconds, ending...")
                         break
                     except ConnectionClosed:
-                        print("Connection closed by server")
                         break
-                    
-                    # Print everything we receive from the server
                     if isinstance(msg, (bytes, bytearray)):
-                        print(f"Received binary data: {len(msg)} bytes")
                         now = time.perf_counter()
                         if first_chunk_at is None:
                             first_chunk_at = now
                         last_bytes_at = now
                         total_bytes += len(msg)
                     elif isinstance(msg, str):
-                        print(f"Received text message: {msg}")
+                        pass
+
+            recv_task = asyncio.create_task(_recv_loop())
+
+            for sentence in sentences:
+                await ws.send(json.dumps({"text": sentence.strip()}))
+
+            await ws.send("__END__")
+            await recv_task
                     else:
                         print(f"Received unknown message type {type(msg)}: {msg}")
 

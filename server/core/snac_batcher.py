@@ -70,7 +70,9 @@ class SnacBatched:
                                 for c0, c1, c2 in codes_list:
                                     z_q = self.m.quantizer.from_codes([c0, c1, c2])
                                     outs.append(self.m.decoder(z_q.to(self.dtype_decoder))[:, :, 2048:4096])
-                            torch.cuda.synchronize()
+                            # Synchronize only the dedicated stream to reduce global stalls
+                            if self.stream is not None:
+                                self.stream.synchronize()
                     else:
                         shapes = [(c[0].shape, c[1].shape, c[2].shape) for c in codes_list]
                         can_cat = len(set(shapes)) == 1

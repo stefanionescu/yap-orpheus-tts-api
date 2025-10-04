@@ -170,45 +170,57 @@ async def tts_client(
     pcm_chunks: List[bytes] = []
     sample_rate = 24000
 
-    # Sentence-by-sentence: open a WS session per sentence
+    # Sticky WS: open once, send all sentences, then send __END__ sentinel
     full_text = " ".join(texts).strip()
     sentences = [s for s in chunk_by_sentences(full_text) if s and s.strip()]
     connect_ms = 0.0
-    for sentence in sentences:
-        connect_start = time.perf_counter()
-        async with websockets.connect(url, **ws_options) as ws:
-            connect_ms += (time.perf_counter() - connect_start) * 1000.0
+    connect_start = time.perf_counter()
+    async with websockets.connect(url, **ws_options) as ws:
+        connect_ms += (time.perf_counter() - connect_start) * 1000.0
 
-            payload = {"voice": voice, "text": sentence.strip()}
-            if max_tokens is not None:
-                payload["max_tokens"] = max_tokens
-            await ws.send(json.dumps(payload))
+        # Send optional meta first (voice and max_tokens)
+        meta = {"voice": voice}
+        if max_tokens is not None:
+            meta["max_tokens"] = max_tokens
+        await ws.send(json.dumps(meta))
 
-            # Start server TTFB timer after payload sent (first sentence only)
-            t0_server = time.perf_counter()
+        # Start server TTFB timer when we send the first text
+        t0_server = None
 
-            # Receive PCM until server closes
+        # Task to receive and buffer audio until server closes
+        async def _recv_loop():
+            nonlocal time_to_first_audio_e2e, time_to_first_audio_server
             while True:
                 try:
-                    msg = await asyncio.wait_for(ws.recv(), timeout=15.0)
+                    msg = await asyncio.wait_for(ws.recv(), timeout=30.0)
                 except asyncio.TimeoutError:
-                    print("Timeout: No data received for 15 seconds, ending...")
+                    print("Timeout: No data received for 30 seconds, ending...")
                     break
                 except ConnectionClosed:
-                    print("Connection closed by server")
                     break
-
                 if isinstance(msg, (bytes, bytearray)):
-                    # First audio chunk - record TTFB (across all sentences)
                     if time_to_first_audio_e2e is None:
                         time_to_first_audio_e2e = time.perf_counter() - t0_e2e
-                    if time_to_first_audio_server is None:
+                    if (t0_server is not None) and (time_to_first_audio_server is None):
                         time_to_first_audio_server = time.perf_counter() - t0_server
                     pcm_chunks.append(msg)
                 elif isinstance(msg, str):
-                    print(f"Received text message: {msg}")
+                    # Optional textual messages
+                    pass
 
-        final_time = time.perf_counter()
+        recv_task = asyncio.create_task(_recv_loop())
+
+        for idx, sentence in enumerate(sentences):
+            payload = {"text": sentence.strip()}
+            await ws.send(json.dumps(payload))
+            if t0_server is None:
+                t0_server = time.perf_counter()
+
+        # Signal end of stream
+        await ws.send("__END__")
+        await recv_task
+
+    final_time = time.perf_counter()
 
     wall_s = final_time - t0_e2e if final_time else time.perf_counter() - t0_e2e
 

@@ -31,30 +31,6 @@ async def _startup():
     global engine
     ensure_hf_login()
     engine = _Engine()
-    # Background warmup to reduce first-request TTFB (compile kernels, allocate KV cache)
-    async def _warmup():
-        try:
-            # Preload SNAC model to avoid first-request latency
-            from .core.snac_batcher import get_snac_batched
-            _ = get_snac_batched()
-            # Small prompts per voice to prime model + SNAC path using tokens→PCM
-            sp = SamplingParams(
-                temperature=0.6,
-                top_p=0.8,
-                repetition_penalty=1.1,
-                # Keep warmup short and let it complete naturally to avoid 'Aborted request' logs
-                max_tokens=56,
-                stop_token_ids=[128258, 128009],
-            )
-            async def _prime(voice: str):
-                # Consume to completion (no early break)
-                async for _ in aiter_pcm_from_custom_tokens(engine.engine, "hello", voice, sp):
-                    pass
-            await asyncio.gather(_prime("tara"), _prime("zac"))
-        except Exception:
-            # Do not fail startup if warmup errors
-            pass
-    asyncio.create_task(_warmup())
 
 @app.get("/healthz")
 async def healthz():
@@ -125,7 +101,7 @@ async def tts_ws(ws: WebSocket):
             while True:
                 item = await q.get()
                 if item is None:
-                    # If no text was ever provided, just close
+                    # End-of-connection sentinel: close and exit
                     try:
                         await ws.close()
                     except Exception:
@@ -231,11 +207,8 @@ async def tts_ws(ws: WebSocket):
                             queued_q = next_q if next_q is not None else asyncio.Queue()
                             queued_task = next_task
 
-                    try:
-                        await ws.close()
-                    except Exception:
-                        pass
-                    break
+                    # Finished one text; continue to wait for more messages on this connection
+                    continue
         except Exception as e:
             try:
                 await ws.close(code=1011)

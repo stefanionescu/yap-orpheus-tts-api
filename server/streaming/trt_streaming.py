@@ -60,6 +60,9 @@ async def aiter_pcm_from_custom_tokens(engine, prompt: str, voice: str, sp) -> b
 
     WINDOW = max(WINDOW_TOKENS, _FRAME * 4)
     FRAME = _FRAME
+    # Optional smaller first window to lower TTFB (in frames). Defaults to 2 frames (14 tokens).
+    _FIRST_WINDOW_FRAMES = max(int(os.getenv("TTS_FIRST_WINDOW_FRAMES", "2")), 1)
+    FIRST_WINDOW_TOKENS = min(_FIRST_WINDOW_FRAMES * FRAME, WINDOW)
     prev_len = 0  # previous length of token_ids
 
     async def _decode_window(window_codes: list[int]) -> np.ndarray:
@@ -78,13 +81,14 @@ async def aiter_pcm_from_custom_tokens(engine, prompt: str, voice: str, sp) -> b
 
     async def _emit_window(frames_ready: int) -> bytes | None:
         nonlocal frames_emitted, total_samples
-        if len(codes_buf) < WINDOW:
+        want_tokens = WINDOW if frames_emitted > 0 else FIRST_WINDOW_TOKENS
+        if len(codes_buf) < want_tokens:
             return None
         if frames_ready <= frames_emitted:
             return None
 
-        # Decode the most recent full window and emit it entirely (constant-size chunk)
-        window_codes = codes_buf[-WINDOW:]
+        # Decode the most recent window (first window may be smaller)
+        window_codes = codes_buf[-want_tokens:]
         pcm = await _decode_window(window_codes)
         if pcm.size == 0:
             frames_emitted = frames_ready
