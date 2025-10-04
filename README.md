@@ -11,7 +11,7 @@ Run Orpheus 3B TTS behind a FastAPI server using TensorRT-LLM backend with INT4-
 - **INT4-AWQ weight quantization** + **INT8 KV cache** for 3x memory efficiency vs FP16
 - **Optimized for streaming TTS**: 48-token input, 1024-token output
 - **Low TTFB**: Sentence-by-sentence chunking with dynamic SNAC batching
-- **High throughput**: 17-20 concurrent real-time users on single A100
+- **High throughput**: 16-18 concurrent real-time users on single A100
 
 ## Prerequisites
 
@@ -44,7 +44,6 @@ curl -s http://127.0.0.1:8000/healthz
 - `TRTLLM_MAX_INPUT_LEN`: 48 tokens (optimized for sentences)
 - `TRTLLM_MAX_OUTPUT_LEN`: 1024 tokens
 - `TRTLLM_MAX_BATCH_SIZE`: 20 concurrent users
-- `TRTLLM_MAX_NUM_TOKENS`: 12288 (scheduler: max tokens in-flight across all requests)
 - `KV_FREE_GPU_FRAC`: 0.92 (use 92% of free GPU memory for KV cache)
 
 ### TTS Settings (`scripts/env/tts.sh`)
@@ -153,54 +152,23 @@ python tests/bench.py --n 8 --concurrency 8
 
 ### High Concurrency RTF Optimization
 
-If you experience RTF degradation at high concurrency (16-20+ users), follow these steps:
+If you experience RTF degradation at high concurrency (16-20+ users):
 
-**1. Rebuild with INT8 KV Cache** (most impactful):
+**Rebuild with INT8 KV Cache** (primary fix):
 ```bash
 # INT8 KV cache is now enabled by default in the build script
 bash scripts/02-build.sh --force
 ```
 
-**2. Tune Scheduler `max_num_tokens`**:
-The scheduler's `TRTLLM_MAX_NUM_TOKENS` controls how many tokens can be **actively in-flight** across all requests at any moment (not max capacity).
+This reduces KV cache memory usage by 50%, allowing more concurrent requests.
 
-**Important**: For streaming workloads, use **average in-flight tokens** (40-60% of max), not max output length. Why? Requests start/finish at different times - they're not all at 1024 tokens simultaneously.
-
-Calculate optimal value:
-```
-max_num_tokens = MAX_BATCH_SIZE × (MAX_INPUT_LEN + avg_inflight_output_tokens)
-```
-
-**Recommended values** for 20 concurrent users:
+**Optional Tuning**:
 ```bash
-# Balanced (default, streaming workload)
-export TRTLLM_MAX_NUM_TOKENS=12288  # 20 * (48 + 512) ≈ 11,200
-
-# Conservative (if requests often hit max 1024 tokens)
-export TRTLLM_MAX_NUM_TOKENS=16384  # 20 * (48 + 768) ≈ 16,320
-
-# Maximum (all requests at full 1024 tokens - usually overkill)
-export TRTLLM_MAX_NUM_TOKENS=21440  # 20 * (48 + 1024) = 21,440
-```
-
-**When to adjust**:
-- See "out of tokens" errors → increase
-- Requests seem to wait unnecessarily → increase
-- Want to reduce memory usage → decrease (but not below 10240 for n=20)
-
-**3. Adjust CUDA Concurrency** (experimental):
-```bash
-# Default is 4 (good for most cases)
+# Adjust CUDA concurrency (default is 4)
 export CUDA_DEVICE_MAX_CONNECTIONS=8  # Allow more concurrent kernel launches
 
-# If you see CUDA errors, reduce to 2
-export CUDA_DEVICE_MAX_CONNECTIONS=2
-```
-
-**4. Monitor KV Cache Utilization**:
-```bash
-# Check if you're running out of KV cache blocks
-export TLLM_LOG_LEVEL=DEBUG  # Enable detailed logging
+# Monitor KV cache utilization
+export TLLM_LOG_LEVEL=DEBUG
 # Look for "waiting for free blocks" in logs → increase KV_FREE_GPU_FRAC
 ```
 
