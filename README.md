@@ -104,6 +104,9 @@ bash scripts/02-build.sh --max-batch-size 32 --force
 ### Benchmarking
 
 ```bash
+# Activate venv
+source .venv/bin/activate
+
 # Warmup (single request)
 python tests/warmup.py
 

@@ -7,13 +7,22 @@ from __future__ import annotations
 
 import argparse
 import os
+import sys
 import time
+from pathlib import Path
 from typing import Optional
 
 import asyncio
 import json
 import websockets
 from websockets.exceptions import ConnectionClosed
+
+# Ensure repository root is on sys.path so `server` package is importable
+_THIS_DIR = Path(__file__).resolve().parent
+_ROOT_DIR = _THIS_DIR.parent
+if str(_ROOT_DIR) not in sys.path:
+    sys.path.insert(0, str(_ROOT_DIR))
+
 from server.core.chunking import chunk_by_sentences
 
 

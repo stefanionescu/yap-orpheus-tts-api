@@ -13,6 +13,7 @@ import contextlib
 import json
 import os
 import statistics as stats
+import sys
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -21,6 +22,13 @@ from typing import Dict, List, Tuple, Optional
 import asyncio
 import websockets
 from websockets.exceptions import ConnectionClosed
+
+# Ensure repository root is on sys.path so `server` package is importable
+_THIS_DIR = Path(__file__).resolve().parent
+_ROOT_DIR = _THIS_DIR.parent
+if str(_ROOT_DIR) not in sys.path:
+    sys.path.insert(0, str(_ROOT_DIR))
+
 from server.core.chunking import chunk_by_sentences
 
 

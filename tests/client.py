@@ -16,6 +16,7 @@ import argparse
 import asyncio
 import json
 import os
+import sys
 import time
 import wave
 from pathlib import Path
@@ -24,6 +25,13 @@ from typing import List, Optional
 import websockets
 from websockets.exceptions import ConnectionClosed
 from dotenv import load_dotenv
+
+# Ensure repository root is on sys.path so `server` package is importable
+_THIS_DIR = Path(__file__).resolve().parent
+_ROOT_DIR = _THIS_DIR.parent
+if str(_ROOT_DIR) not in sys.path:
+    sys.path.insert(0, str(_ROOT_DIR))
+
 from server.core.chunking import chunk_by_sentences
 
 
