@@ -24,6 +24,7 @@ from typing import List, Optional
 import websockets
 from websockets.exceptions import ConnectionClosed
 from dotenv import load_dotenv
+from server.core.chunking import chunk_by_sentences
 
 
 ROOT_DIR = Path(__file__).resolve().parent.parent
@@ -153,8 +154,7 @@ async def tts_client(
     }
 
     # Metrics
-    connect_start = time.perf_counter()
-    t0_e2e = connect_start
+    t0_e2e = time.perf_counter()
     time_to_first_audio_e2e: Optional[float] = None
     time_to_first_audio_server: Optional[float] = None
     final_time: Optional[float] = None
@@ -162,38 +162,43 @@ async def tts_client(
     pcm_chunks: List[bytes] = []
     sample_rate = 24000
 
-    async with websockets.connect(url, **ws_options) as ws:
-        connect_ms = (time.perf_counter() - connect_start) * 1000.0
+    # Sentence-by-sentence: open a WS session per sentence
+    full_text = " ".join(texts).strip()
+    sentences = [s for s in chunk_by_sentences(full_text) if s and s.strip()]
+    connect_ms = 0.0
+    for sentence in sentences:
+        connect_start = time.perf_counter()
+        async with websockets.connect(url, **ws_options) as ws:
+            connect_ms += (time.perf_counter() - connect_start) * 1000.0
 
-        # Send single JSON payload with full text (server will chunk internally)
-        payload = {"voice": voice, "text": " ".join(texts).strip()}
-        if max_tokens is not None:
-            payload["max_tokens"] = max_tokens
-        await ws.send(json.dumps(payload))
+            payload = {"voice": voice, "text": sentence.strip()}
+            if max_tokens is not None:
+                payload["max_tokens"] = max_tokens
+            await ws.send(json.dumps(payload))
 
-        # Start server TTFB timer after payload sent
-        t0_server = time.perf_counter()
+            # Start server TTFB timer after payload sent (first sentence only)
+            t0_server = time.perf_counter()
 
-        # Receive PCM until server closes
-        while True:
-            try:
-                msg = await asyncio.wait_for(ws.recv(), timeout=15.0)
-            except asyncio.TimeoutError:
-                print("Timeout: No data received for 15 seconds, ending...")
-                break
-            except ConnectionClosed:
-                print("Connection closed by server")
-                break
+            # Receive PCM until server closes
+            while True:
+                try:
+                    msg = await asyncio.wait_for(ws.recv(), timeout=15.0)
+                except asyncio.TimeoutError:
+                    print("Timeout: No data received for 15 seconds, ending...")
+                    break
+                except ConnectionClosed:
+                    print("Connection closed by server")
+                    break
 
-            if isinstance(msg, (bytes, bytearray)):
-                # First audio chunk - record TTFB
-                if time_to_first_audio_e2e is None:
-                    time_to_first_audio_e2e = time.perf_counter() - t0_e2e
-                if time_to_first_audio_server is None:
-                    time_to_first_audio_server = time.perf_counter() - t0_server
-                pcm_chunks.append(msg)
-            elif isinstance(msg, str):
-                print(f"Received text message: {msg}")
+                if isinstance(msg, (bytes, bytearray)):
+                    # First audio chunk - record TTFB (across all sentences)
+                    if time_to_first_audio_e2e is None:
+                        time_to_first_audio_e2e = time.perf_counter() - t0_e2e
+                    if time_to_first_audio_server is None:
+                        time_to_first_audio_server = time.perf_counter() - t0_server
+                    pcm_chunks.append(msg)
+                elif isinstance(msg, str):
+                    print(f"Received text message: {msg}")
 
         final_time = time.perf_counter()
 

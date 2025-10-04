@@ -7,7 +7,7 @@ from dotenv import load_dotenv
 
 from .core.utils import ensure_hf_login
 
-from .core.chunking import chunk_by_words, FIRST_CHUNK_WORDS, NEXT_CHUNK_WORDS, MIN_TAIL_WORDS
+from .core.chunking import chunk_by_sentences
 from .prompts import resolve_voice
 
 load_dotenv(".env")
@@ -63,11 +63,10 @@ async def healthz():
 @app.websocket("/ws/tts")
 async def tts_ws(ws: WebSocket):
     """
-    Baseten-parity WS (best-performance):
-      - Client sends a single JSON with {"text": "...full text...", "voice": "..."}.
-      - Server splits text into sentence-safe, word-based chunks (FIRST_CHUNK_WORDS then NEXT_CHUNK_WORDS)
-        before formatting the prompt.
-      - For each chunk, runs one generation and streams audio hops from last 28 custom tokens.
+    Sentence-by-sentence WS:
+      - Client sends {"text": "...sentence or full text...", "voice": "..."}.
+      - Server splits text into sentences only (no word-based chunking).
+      - For each sentence, runs one generation and streams audio hops.
       - Strict in-order emission; no timers, no word buffering.
     """
     await ws.accept()
@@ -182,12 +181,7 @@ async def tts_ws(ws: WebSocket):
                     sp = SamplingParams(**sp_kwargs)
 
                     v = resolve_voice(voice) or "tara"
-                    chunks = chunk_by_words(
-                        full_text,
-                        first_chunk_words=FIRST_CHUNK_WORDS,
-                        next_chunk_words=NEXT_CHUNK_WORDS,
-                        min_tail_words=MIN_TAIL_WORDS,
-                    )
+                    chunks = chunk_by_sentences(full_text)
                     if not chunks:
                         try:
                             await ws.close()

@@ -21,6 +21,7 @@ from typing import Dict, List, Tuple, Optional
 import asyncio
 import websockets
 from websockets.exceptions import ConnectionClosed
+from server.core.chunking import chunk_by_sentences
 
 
 ROOT_DIR = Path(__file__).resolve().parent.parent
@@ -60,26 +61,28 @@ async def _tts_one_ws(
     total_bytes = 0
     sr = 24000
 
-    async with websockets.connect(url, max_size=None) as ws:
-        # Baseten-parity Mode A: send a single JSON with full text
-        payload = {"voice": voice, "text": text.strip()}
-        if num_predict is not None:
-            payload["max_tokens"] = num_predict
-        await ws.send(json.dumps(payload))
+    # Sentence-by-sentence: open a WS session per sentence
+    sentences = [s for s in chunk_by_sentences(text) if s and s.strip()]
+    for sentence in sentences:
+        async with websockets.connect(url, max_size=None) as ws:
+            payload = {"voice": voice, "text": sentence.strip()}
+            if num_predict is not None:
+                payload["max_tokens"] = num_predict
+            await ws.send(json.dumps(payload))
 
-        while True:
-            try:
-                msg = await asyncio.wait_for(ws.recv(), timeout=2.0)
-            except asyncio.TimeoutError:
-                # No more data for a bit → assume done
-                break
-            except ConnectionClosed:
-                # Server closed after sending final frames
-                break
-            if isinstance(msg, (bytes, bytearray)):
-                if first_chunk_at is None:
-                    first_chunk_at = time.perf_counter()
-                total_bytes += len(msg)
+            while True:
+                try:
+                    msg = await asyncio.wait_for(ws.recv(), timeout=2.0)
+                except asyncio.TimeoutError:
+                    # No more data for a bit → assume done
+                    break
+                except ConnectionClosed:
+                    # Server closed after sending final frames
+                    break
+                if isinstance(msg, (bytes, bytearray)):
+                    if first_chunk_at is None:
+                        first_chunk_at = time.perf_counter()
+                    total_bytes += len(msg)
 
     wall_s = time.perf_counter() - t0_e2e
     ttfb_e2e_s = (first_chunk_at - t0_e2e) if first_chunk_at else 0.0
