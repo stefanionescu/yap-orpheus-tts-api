@@ -23,6 +23,26 @@ load_environment
 echo "=== System Bootstrap ==="
 
 # =============================================================================
+# Helper Functions
+# =============================================================================
+
+_check_system_libraries() {
+    echo "[bootstrap] Verifying system libraries..."
+    
+    # Check OpenMPI
+    if ! ldconfig -p 2>/dev/null | grep -q "libmpi.so"; then
+        echo "WARNING: libmpi.so not found in library path" >&2
+        echo "  Add /usr/lib/x86_64-linux-gnu to LD_LIBRARY_PATH if needed" >&2
+    fi
+    
+    # Check Python shared library
+    if ! ldconfig -p 2>/dev/null | grep -q "libpython${PYTHON_VERSION}.so"; then
+        echo "WARNING: libpython${PYTHON_VERSION}.so not found in library path" >&2
+        echo "  Install python3-dev or add library path to LD_LIBRARY_PATH" >&2
+    fi
+}
+
+# =============================================================================
 # CUDA Environment Check
 # =============================================================================
 
@@ -93,23 +113,3 @@ echo "[bootstrap] Validating environment..."
 require_env HF_TOKEN
 
 echo "[bootstrap] ✓ System bootstrap completed successfully"
-
-# =============================================================================
-# Helper Functions
-# =============================================================================
-
-_check_system_libraries() {
-    echo "[bootstrap] Verifying system libraries..."
-    
-    # Check OpenMPI
-    if ! ldconfig -p 2>/dev/null | grep -q "libmpi.so"; then
-        echo "WARNING: libmpi.so not found in library path" >&2
-        echo "  Add /usr/lib/x86_64-linux-gnu to LD_LIBRARY_PATH if needed" >&2
-    fi
-    
-    # Check Python shared library
-    if ! ldconfig -p 2>/dev/null | grep -q "libpython${PYTHON_VERSION}.so"; then
-        echo "WARNING: libpython${PYTHON_VERSION}.so not found in library path" >&2
-        echo "  Install python3-dev or add library path to LD_LIBRARY_PATH" >&2
-    fi
-}
