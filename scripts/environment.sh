@@ -28,6 +28,9 @@ export BACKEND=${BACKEND:-trtllm}
 export TRTLLM_ENGINE_DIR=${TRTLLM_ENGINE_DIR:-}  # Required: Path to built engine
 export TLLM_LOG_LEVEL=${TLLM_LOG_LEVEL:-INFO}
 
+# TensorRT-LLM repository (using Yap-With-AI fork)
+export TRTLLM_REPO_URL=${TRTLLM_REPO_URL:-https://github.com/Yap-With-AI/TensorRT-LLM.git}
+
 # Engine build parameters - optimized for TTS workload
 export TRTLLM_DTYPE=${TRTLLM_DTYPE:-float16}
 export TRTLLM_MAX_INPUT_LEN=${TRTLLM_MAX_INPUT_LEN:-48}      # Sentence-by-sentence TTS

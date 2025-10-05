@@ -108,9 +108,9 @@ RUN python -c "from huggingface_hub import login; login(token='${HF_TOKEN}', add
 # TensorRT-LLM Engine Build
 # =============================================================================
 
-# Clone TensorRT-LLM repository for build tools
+# Clone TensorRT-LLM repository for build tools (using Yap-With-AI fork)
 RUN git clone --depth 1 --branch v1.0.0 \
-    https://github.com/NVIDIA/TensorRT-LLM.git /tmp/tensorrt-llm
+    https://github.com/Yap-With-AI/TensorRT-LLM.git /tmp/tensorrt-llm
 
 # Set build environment variables (from our environment.sh)
 ENV TRTLLM_ENGINE_DIR=/app/models/orpheus-trt-int4-awq
