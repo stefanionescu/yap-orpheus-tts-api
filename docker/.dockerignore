@@ -1,0 +1,74 @@
+# =============================================================================
+# Docker Ignore File - Exclude unnecessary files from build context
+# =============================================================================
+
+# Build artifacts and caches
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Runtime files
+.run/
+logs/
+*.log
+*.pid
+
+# Model artifacts (will be built inside container)
+models/
+.trtllm-repo/
+
+# Development files
+.git/
+.gitignore
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Environment files (secrets handled via build args)
+.env
+.env.local
+.env.*.local
+
+# Documentation (not needed in runtime)
+README.md
+docs/
+
+# Test files
+tests/
+audio/*.wav
+
+# Temporary files
+tmp/
+temp/
+*.tmp

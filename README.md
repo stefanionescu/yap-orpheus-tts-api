@@ -23,12 +23,23 @@ Run Orpheus 3B TTS behind a FastAPI server using TensorRT-LLM backend with INT4-
 
 ### Quickstart
 
+#### Option 1: Docker (2-5 minutes)
 ```bash
-# 1) Set required token (deployment step)
+# Pull and run pre-built image
+docker pull your_username/orpheus-3b-tts:latest
+docker run --gpus all -p 8000:8000 --name orpheus-tts your_username/orpheus-3b-tts:latest
+
+# Health check
+curl -s http://127.0.0.1:8000/healthz
+```
+
+#### Option 2: Scripts (45 minutes)
+```bash
+# 1) Set required token
 export HF_TOKEN="hf_xxx"
 
 # 2) Bootstrap → install → run (tails logs)
-bash scripts/run-all.sh
+bash scripts/main.sh
 
 # 3) Health check
 curl -s http://127.0.0.1:8000/healthz
@@ -52,13 +63,47 @@ See `scripts/environment.sh` for all available options and detailed documentatio
 
 ## Installation & Deployment
 
-### One-Command Deploy (Recommended)
+### Docker Deployment (Recommended - 2-5 minutes)
+
+For rapid deployment using pre-built image:
+
+```bash
+# Simple deployment
+docker pull your_username/orpheus-3b-tts:latest
+docker run --gpus all -p 8000:8000 --name orpheus-tts your_username/orpheus-3b-tts:latest
+```
+
+### Scripts Deployment (45 minutes)
 
 Runs bootstrap → install → build INT4-AWQ engine → start server:
 
 ```bash
 export HF_TOKEN="hf_xxx"
-bash scripts/run-all.sh
+bash scripts/main.sh
+```
+
+### Building Docker Image
+
+To build your own Docker image with pre-built TensorRT engine:
+
+```bash
+# Set credentials
+export HF_TOKEN="hf_your_token"
+export DOCKER_USERNAME="your_dockerhub_username"
+export DOCKER_PASSWORD="your_dockerhub_password"
+
+# Login to Docker Hub
+echo $DOCKER_PASSWORD | docker login --username $DOCKER_USERNAME --password-stdin
+
+# Build and push (takes ~45 minutes)
+docker build \
+  --build-arg HF_TOKEN="$HF_TOKEN" \
+  --build-arg DOCKER_USERNAME="$DOCKER_USERNAME" \
+  --build-arg DOCKER_PASSWORD="$DOCKER_PASSWORD" \
+  -t $DOCKER_USERNAME/orpheus-3b-tts:latest \
+  -f docker/Dockerfile .
+
+docker push $DOCKER_USERNAME/orpheus-3b-tts:latest
 ```
 
 ### Manual Steps

@@ -1,0 +1,170 @@
+# Docker Deployment for Orpheus 3B TTS
+
+This directory contains Docker configuration for building and deploying the Orpheus 3B TTS server with pre-built TensorRT engines for rapid deployment.
+
+## Quick Start (2-5 minutes)
+
+For instant deployment on any GPU-enabled machine:
+
+```bash
+# Set your Docker image name
+export DOCKER_IMAGE="your_username/orpheus-3b-tts:latest"
+
+# Pull and run pre-built image
+docker pull $DOCKER_IMAGE
+docker run --gpus all -p 8000:8000 --name orpheus-tts $DOCKER_IMAGE
+```
+
+## Pre-built Image Usage
+
+If you have access to the pre-built Docker image:
+
+```bash
+# Simple deployment
+docker pull your_username/orpheus-3b-tts:latest
+docker run --gpus all -p 8000:8000 your_username/orpheus-3b-tts:latest
+```
+
+## Building Your Own Image
+
+To build the Docker image with pre-built TensorRT engine (45 minutes):
+
+### Prerequisites
+
+1. GPU-enabled machine with NVIDIA drivers
+2. Docker with GPU support (nvidia-container-toolkit)
+
+### Build Steps
+
+```bash
+# 1. Set required environment variables
+export HF_TOKEN="hf_your_token_here"
+export DOCKER_USERNAME="your_dockerhub_username"
+export DOCKER_PASSWORD="your_dockerhub_password"
+
+# 2. Login to Docker Hub
+echo $DOCKER_PASSWORD | docker login --username $DOCKER_USERNAME --password-stdin
+
+# 3. Build image (takes ~45 minutes)
+docker build \
+  --build-arg HF_TOKEN="$HF_TOKEN" \
+  --build-arg DOCKER_USERNAME="$DOCKER_USERNAME" \
+  --build-arg DOCKER_PASSWORD="$DOCKER_PASSWORD" \
+  -t $DOCKER_USERNAME/orpheus-3b-tts:latest \
+  -f docker/Dockerfile .
+
+# 4. Push to Docker Hub
+docker push $DOCKER_USERNAME/orpheus-3b-tts:latest
+```
+
+This will:
+- Build Docker image with all dependencies
+- Install TensorRT-LLM and PyTorch
+- Build optimized INT4-AWQ + INT8 KV cache engine
+- Push complete image to Docker Hub
+- Enable 2-5 minute deployments anywhere
+
+## Cloud Deployment (Runpod, etc.)
+
+### Method 1: Direct Docker Commands
+
+```bash
+# Set your image name
+export DOCKER_IMAGE="your_username/orpheus-3b-tts:latest"
+
+# Pull and run
+docker pull $DOCKER_IMAGE
+docker run -d \
+  --name orpheus-tts \
+  --gpus all \
+  --restart unless-stopped \
+  -p 8000:8000 \
+  --shm-size=2g \
+  $DOCKER_IMAGE
+
+# Check status
+docker logs -f orpheus-tts
+curl http://localhost:8000/healthz
+```
+
+### Method 2: One-liner for Cloud
+
+```bash
+# Replace YOUR_USERNAME with your Docker Hub username
+docker run -d --name orpheus-tts --gpus all --restart unless-stopped -p 8000:8000 --shm-size=2g your_username/orpheus-3b-tts:latest
+```
+
+## Configuration
+
+### Environment Variables
+
+**Build-time (required for building):**
+- HF_TOKEN - HuggingFace token for model access
+- DOCKER_USERNAME - Docker Hub username  
+- DOCKER_PASSWORD - Docker Hub password
+
+**Runtime (optional):**
+- HOST_PORT - Host port mapping (default: 8000)
+
+### Image Configuration
+
+The Docker image includes:
+- Base: NVIDIA TensorRT 23.12 container (includes CUDA, cuDNN, TensorRT)
+- Python: 3.10 with optimized virtual environment
+- PyTorch: CUDA 12.1 support
+- TensorRT-LLM: Version 1.0.0 with INT4-AWQ + INT8 KV cache
+- Pre-built Engine: Optimized for 16 concurrent users on A100
+
+## Performance Comparison
+
+| Method | Setup Time | Use Case |
+|--------|------------|----------|
+| Docker (pre-built) | 2-5 minutes | Production, cloud deployment |
+| Scripts (from scratch) | 45 minutes | Development, customization |
+
+## Troubleshooting
+
+### GPU Support Issues
+```bash
+# Check GPU availability
+nvidia-smi
+
+# Test Docker GPU support
+docker run --rm --gpus all nvidia/cuda:12.1-base-ubuntu20.04 nvidia-smi
+```
+
+### Container Issues
+```bash
+# View container logs
+docker logs -f orpheus-tts
+
+# Check container status
+docker ps -a
+
+# Restart container
+docker restart orpheus-tts
+```
+
+### Image Issues
+```bash
+# Verify image contents
+docker run --rm your_username/orpheus-3b-tts:latest ls -la /app/models/
+
+# Check image size
+docker image inspect your_username/orpheus-3b-tts:latest --format='{{.Size}}' | numfmt --to=iec
+```
+
+## Security Notes
+
+- Container runs as non-root user (tts)
+- No sensitive data in image layers
+- Build-time secrets via build args (not stored in image)
+- Health checks enabled for monitoring
+
+## Optimization
+
+The Docker image is optimized for:
+- Fast startup: Pre-built TensorRT engine
+- Memory efficiency: INT4-AWQ weights + INT8 KV cache
+- High concurrency: 16 concurrent users on A100
+- Small size: Multi-stage build with cleanup
