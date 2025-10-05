@@ -49,19 +49,36 @@ _should_skip_build() {
 _prepare_tensorrt_repo() {
     echo "[build] Preparing TensorRT-LLM repository..."
     
-    if [ ! -d "$TRTLLM_REPO_DIR" ]; then
-        echo "[build] Cloning TensorRT-LLM repository..."
-        git clone --depth 1 --branch v1.0.0 \
-            https://github.com/NVIDIA/TensorRT-LLM.git "$TRTLLM_REPO_DIR"
-    else
-        echo "[build] Using existing TensorRT-LLM repository"
+    # Remove existing repo if it exists (ensure clean state)
+    if [ -d "$TRTLLM_REPO_DIR" ]; then
+        echo "[build] Removing existing TensorRT-LLM repository for clean clone..."
+        rm -rf "$TRTLLM_REPO_DIR"
     fi
     
-    # Ensure examples directory exists
-    if [ ! -d "$TRTLLM_REPO_DIR/examples/llama" ]; then
-        echo "ERROR: TensorRT-LLM examples not found in $TRTLLM_REPO_DIR" >&2
+    echo "[build] Cloning TensorRT-LLM repository..."
+    git clone --depth 1 --branch v1.0.0 \
+        https://github.com/NVIDIA/TensorRT-LLM.git "$TRTLLM_REPO_DIR"
+    
+    # Check for examples directory with fallback locations
+    local examples_dir=""
+    if [ -d "$TRTLLM_REPO_DIR/examples/llama" ]; then
+        examples_dir="$TRTLLM_REPO_DIR/examples/llama"
+    elif [ -d "$TRTLLM_REPO_DIR/examples/llama2" ]; then
+        examples_dir="$TRTLLM_REPO_DIR/examples/llama2"
+    elif [ -d "$TRTLLM_REPO_DIR/examples" ]; then
+        echo "[build] Available examples:"
+        ls -la "$TRTLLM_REPO_DIR/examples/"
+        echo "ERROR: llama examples not found. Available examples listed above." >&2
+        exit 1
+    else
+        echo "ERROR: No examples directory found in TensorRT-LLM repository" >&2
+        echo "Repository contents:" >&2
+        ls -la "$TRTLLM_REPO_DIR/" >&2
         exit 1
     fi
+    
+    echo "[build] Using examples directory: $examples_dir"
+    export TRTLLM_EXAMPLES_DIR="$examples_dir"
 }
 
 _build_optimized_engine() {
@@ -85,7 +102,7 @@ _build_optimized_engine() {
     echo "  Quantization: INT4-AWQ weights, INT8 KV cache"
     
     # Change to TensorRT-LLM examples directory
-    cd "$TRTLLM_REPO_DIR/examples/llama"
+    cd "$TRTLLM_EXAMPLES_DIR"
     
     # Build engine with optimized settings for TTS
     python build.py \
