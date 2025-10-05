@@ -1,3 +1,0 @@
-# Streaming adapters (TensorRT-LLM)
-
-

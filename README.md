@@ -1,6 +1,6 @@
 # Yap Orpheus TTS API
 
-Run Orpheus 3B TTS behind a FastAPI server using TensorRT-LLM backend with INT4-AWQ quantization. Optimized for A100 GPUs to support **17-20 concurrent users** with minimal quality loss.
+Run Orpheus 3B TTS behind a FastAPI server using TensorRT-LLM backend with INT4-AWQ quantization. Optimized for A100 GPUs to support **16 concurrent users** with minimal to no quality loss.
 
 - **Server**: `server/`
 - **Scripts**: `scripts/`
@@ -11,7 +11,7 @@ Run Orpheus 3B TTS behind a FastAPI server using TensorRT-LLM backend with INT4-
 - **INT4-AWQ weight quantization** + **INT8 KV cache** for 3x memory efficiency vs FP16
 - **Optimized for streaming TTS**: 48-token input, 1024-token output
 - **Low TTFB**: Sentence-by-sentence chunking with dynamic SNAC batching
-- **High throughput**: 16-18 concurrent real-time users on single A100
+- **High throughput**: 16 concurrent real-time users on single A100
 
 ## Prerequisites
 
@@ -43,7 +43,7 @@ curl -s http://127.0.0.1:8000/healthz
 - `TRTLLM_ENGINE_DIR`: Path to built engine (default: `models/orpheus-trt-int4-awq`)
 - `TRTLLM_MAX_INPUT_LEN`: 48 tokens (optimized for sentences)
 - `TRTLLM_MAX_OUTPUT_LEN`: 1024 tokens
-- `TRTLLM_MAX_BATCH_SIZE`: 20 concurrent users
+- `TRTLLM_MAX_BATCH_SIZE`: 16 concurrent users
 - `KV_FREE_GPU_FRAC`: 0.92 (use 92% of free GPU memory for KV cache)
 
 ### TTS Settings (`scripts/env/tts.sh`)

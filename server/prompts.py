@@ -1,12 +1,12 @@
-import os
 from transformers import AutoTokenizer
+from .config import settings
 
 ALIASES = {
     "female": "tara",
     "male": "zac",
 }
 
-MODEL_ID = os.getenv("MODEL_ID", "canopylabs/orpheus-3b-0.1-ft")
+MODEL_ID = settings.model_id
 
 # Cache tokenizer at import time
 _tok = AutoTokenizer.from_pretrained(MODEL_ID)

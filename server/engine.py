@@ -1,12 +1,13 @@
 import os
+from ..config import settings
 
 
-MODEL_ID = os.getenv("MODEL_ID", "canopylabs/orpheus-3b-0.1-ft")
+MODEL_ID = settings.model_id
 
 
 class OrpheusTRTEngine:
     def __init__(self) -> None:
-        engine_dir = os.getenv("TRTLLM_ENGINE_DIR", "").strip()
+        engine_dir = settings.trtllm_engine_dir
         from tensorrt_llm._tensorrt_engine import LLM  # type: ignore
 
         # Require a valid TRT-LLM engine directory
@@ -23,13 +24,13 @@ class OrpheusTRTEngine:
 
         # Optional KV cache runtime tuning (memory/behavior, not precision)
         kv_cfg: dict = {}
-        free_frac = os.getenv("KV_FREE_GPU_FRAC")
+        free_frac = settings.kv_free_gpu_frac
         if free_frac:
             try:
                 kv_cfg["free_gpu_memory_fraction"] = float(free_frac)
             except ValueError:
                 pass
-        if os.getenv("KV_ENABLE_BLOCK_REUSE", "0") == "1":
+        if settings.kv_enable_block_reuse:
             kv_cfg["enable_block_reuse"] = True
 
         # Only pass kv_cache_config when we actually have values
