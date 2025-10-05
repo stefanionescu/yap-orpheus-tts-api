@@ -45,9 +45,8 @@ async def aiter_pcm_from_custom_tokens(engine, prompt: str, voice: str, sp) -> b
 
     # Rolling buffer of raw per-frame code values (0..4095)
     codes_buf: list[int] = []
-    # Assemble frames by channel derived from token id (robust to phase)
-    frame_slots: list[int | None] = [None] * _FRAME
-    slots_filled = 0
+    # Track audio token position to assign sub-stream by modulo 7 (Orpheus convention)
+    audio_tok_idx = 0
 
     # Track emitted frames and samples
     frames_emitted = 0
@@ -55,8 +54,8 @@ async def aiter_pcm_from_custom_tokens(engine, prompt: str, voice: str, sp) -> b
 
     FRAME = _FRAME
     prev_len = 0  # previous length of token_ids
-    # Small left context to stabilize decoder boundary (5 frames works well)
-    HOP_LEFT_FRAMES = 5
+    # Decode exactly the last 4 frames (28 tokens), per Orpheus reference
+    DECODE_FRAMES = 4
 
     async def _decode_window(window_codes: list[int]) -> np.ndarray:
         arr = np.asarray(window_codes, dtype=np.int32).reshape(-1, FRAME)
@@ -74,16 +73,16 @@ async def aiter_pcm_from_custom_tokens(engine, prompt: str, voice: str, sp) -> b
 
     async def _emit_hop(frames_ready: int) -> bytes | None:
         nonlocal frames_emitted, total_samples
-        # Emit exactly one hop (one frame worth of codes → ~2048 samples)
-        if len(codes_buf) < FRAME:
+        # Emit one hop when we have at least 4 frames (decoder context)
+        need_tokens = FRAME * DECODE_FRAMES
+        if len(codes_buf) < need_tokens:
             return None
         if frames_ready <= frames_emitted:
             return None
 
-        # Decode with a minimal left context (3 frames) and emit the hop
-        need_tokens = min(len(codes_buf), FRAME * HOP_LEFT_FRAMES)
-        hop_ctx_codes = codes_buf[-need_tokens:]
-        pcm = await _decode_window(hop_ctx_codes)
+        # Decode last 4 frames (28 tokens) and emit returned hop (SNAC batcher slices 2048:4096)
+        window_codes = codes_buf[-need_tokens:]
+        pcm = await _decode_window(window_codes)
         if pcm.size == 0:
             frames_emitted = frames_ready
             return None
@@ -123,27 +122,20 @@ async def aiter_pcm_from_custom_tokens(engine, prompt: str, voice: str, sp) -> b
         prev_len = len(tids)
 
         for tid in new:
-            raw = tid - _CODE_OFFSET
-            if (raw < 0) or (raw >= (_FRAME * _CODE_SIZE)):
-                # Not an audio code token
+            chan = audio_tok_idx % FRAME
+            code = tid - _CODE_OFFSET - (chan * _CODE_SIZE)
+
+            if 0 <= code < _CODE_SIZE:
+                codes_buf.append(int(code))
+                audio_tok_idx += 1
+
+                if (audio_tok_idx % FRAME) == 0:
+                    frames_ready = audio_tok_idx // FRAME
+                    chunk_bytes = await _emit_hop(frames_ready)
+                    if chunk_bytes:
+                        yield chunk_bytes
+            else:
                 continue
-            chan = int(raw // _CODE_SIZE)
-            code = int(raw % _CODE_SIZE)
-
-            if (0 <= chan < FRAME) and (frame_slots[chan] is None):
-                frame_slots[chan] = code
-                slots_filled += 1
-
-            if slots_filled == FRAME:
-                # Flush one full frame in canonical order 0..6
-                codes_buf.extend([int(frame_slots[i]) for i in range(FRAME)])
-                frame_slots = [None] * FRAME
-                slots_filled = 0
-
-                frames_ready = len(codes_buf) // FRAME
-                chunk_bytes = await _emit_hop(frames_ready)
-                if chunk_bytes:
-                    yield chunk_bytes
 
     # natural termination on EOS / EOA / EOT (nothing left to emit beyond last hop)
     return
