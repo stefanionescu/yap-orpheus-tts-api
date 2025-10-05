@@ -43,7 +43,7 @@ curl -s http://127.0.0.1:8000/healthz
 - `TRTLLM_ENGINE_DIR`: Path to built engine (default: `models/orpheus-trt-int4-awq`)
 - `TRTLLM_MAX_INPUT_LEN`: 48 tokens (optimized for sentences)
 - `TRTLLM_MAX_OUTPUT_LEN`: 1024 tokens
-- `TRTLLM_MAX_BATCH_SIZE`: 32 (supports ≥24 concurrent users)
+- `TRTLLM_MAX_BATCH_SIZE`: 24 (supports 20-24 concurrent users)
 - `KV_FREE_GPU_FRAC`: 0.92 (use 92% of free GPU memory for KV cache)
  - `KV_ENABLE_BLOCK_REUSE`: 1 (enable KV block reuse across requests)
 

@@ -54,6 +54,9 @@ async def aiter_pcm_from_custom_tokens(engine, prompt: str, voice: str, sp) -> b
     total_samples = 0
 
     FRAME = _FRAME
+    # Minimal left context frames to stabilize hop (decoder receptive field)
+    # 2 frames works well for SNAC 24k; configurable via env
+    HOP_DECODE_FRAMES = max(1, int(os.getenv("TTS_HOP_DECODE_FRAMES", "2")))
     prev_len = 0  # previous length of token_ids
 
     async def _decode_window(window_codes: list[int]) -> np.ndarray:
@@ -78,9 +81,11 @@ async def aiter_pcm_from_custom_tokens(engine, prompt: str, voice: str, sp) -> b
         if frames_ready <= frames_emitted:
             return None
 
-        # Decode only the new frame (last 7 codes)
-        hop_codes = codes_buf[-FRAME:]
-        pcm = await _decode_window(hop_codes)
+        # Decode with small left context to stabilize boundary; emit last 2048
+        need_tokens = HOP_DECODE_FRAMES * FRAME
+        start = -need_tokens if len(codes_buf) >= need_tokens else -len(codes_buf)
+        hop_ctx_codes = codes_buf[start:]
+        pcm = await _decode_window(hop_ctx_codes)
         if pcm.size == 0:
             frames_emitted = frames_ready
             return None
