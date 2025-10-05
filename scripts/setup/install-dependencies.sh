@@ -22,88 +22,6 @@ load_environment
 echo "=== Python Dependencies Installation ==="
 
 # =============================================================================
-# Configuration
-# =============================================================================
-
-PYTHON_VERSION="${PYTHON_VERSION:-3.10}"
-VENV_DIR="${VENV_DIR:-$PWD/.venv}"
-TRTLLM_WHEEL_URL="${TRTLLM_WHEEL_URL:-https://pypi.nvidia.com/tensorrt-llm/tensorrt_llm-1.0.0-cp310-cp310-linux_x86_64.whl}"
-
-# Validate environment
-require_env HF_TOKEN
-
-# =============================================================================
-# Platform Check
-# =============================================================================
-
-if [ "$(uname -s)" != "Linux" ]; then
-    echo "[install] TensorRT-LLM requires Linux with NVIDIA GPUs. Skipping installation."
-    exit 0
-fi
-
-if ! command -v nvidia-smi >/dev/null 2>&1; then
-    echo "WARNING: nvidia-smi not detected. GPU functionality may not work." >&2
-fi
-
-# =============================================================================
-# Python Virtual Environment Setup
-# =============================================================================
-
-echo "[install] Setting up Python virtual environment..."
-
-# Find Python executable
-PY_EXE=$(choose_python_exe) || {
-    echo "ERROR: Python ${PYTHON_VERSION} not found. Please install it first." >&2
-    exit 1
-}
-
-echo "[install] Using Python: $PY_EXE"
-PY_MAJMIN=$($PY_EXE -c 'import sys;print(f"{sys.version_info.major}.{sys.version_info.minor}")')
-echo "[install] Python version: $PY_MAJMIN"
-
-# Ensure venv module is available
-_ensure_venv_support "$PY_EXE" "$PY_MAJMIN"
-
-# Create virtual environment
-echo "[install] Creating virtual environment at: $VENV_DIR"
-$PY_EXE -m venv "$VENV_DIR"
-source "$VENV_DIR/bin/activate"
-
-# =============================================================================
-# Python Package Installation
-# =============================================================================
-
-echo "[install] Upgrading pip and core tools..."
-_bootstrap_pip
-
-echo "[install] Installing PyTorch with CUDA support..."
-_install_pytorch
-
-echo "[install] Installing application dependencies..."
-pip install -r requirements.txt
-
-echo "[install] Installing TensorRT-LLM..."
-_install_tensorrt_llm
-
-# =============================================================================
-# Runtime Validation
-# =============================================================================
-
-echo "[install] Validating installation..."
-_validate_python_libraries
-_validate_cuda_runtime
-_validate_mpi_runtime
-_validate_huggingface_auth
-
-echo "[install] Running dependency check..."
-pip check || {
-    echo "ERROR: Dependency conflicts detected" >&2
-    exit 1
-}
-
-echo "[install] ✓ All dependencies installed successfully"
-
-# =============================================================================
 # Helper Functions
 # =============================================================================
 
@@ -270,3 +188,85 @@ login(token=token, add_to_git_credential=False)
 print("✓ HuggingFace authentication OK")
 EOF
 }
+
+# =============================================================================
+# Configuration
+# =============================================================================
+
+PYTHON_VERSION="${PYTHON_VERSION:-3.10}"
+VENV_DIR="${VENV_DIR:-$PWD/.venv}"
+TRTLLM_WHEEL_URL="${TRTLLM_WHEEL_URL:-https://pypi.nvidia.com/tensorrt-llm/tensorrt_llm-1.0.0-cp310-cp310-linux_x86_64.whl}"
+
+# Validate environment
+require_env HF_TOKEN
+
+# =============================================================================
+# Platform Check
+# =============================================================================
+
+if [ "$(uname -s)" != "Linux" ]; then
+    echo "[install] TensorRT-LLM requires Linux with NVIDIA GPUs. Skipping installation."
+    exit 0
+fi
+
+if ! command -v nvidia-smi >/dev/null 2>&1; then
+    echo "WARNING: nvidia-smi not detected. GPU functionality may not work." >&2
+fi
+
+# =============================================================================
+# Python Virtual Environment Setup
+# =============================================================================
+
+echo "[install] Setting up Python virtual environment..."
+
+# Find Python executable
+PY_EXE=$(choose_python_exe) || {
+    echo "ERROR: Python ${PYTHON_VERSION} not found. Please install it first." >&2
+    exit 1
+}
+
+echo "[install] Using Python: $PY_EXE"
+PY_MAJMIN=$($PY_EXE -c 'import sys;print(f"{sys.version_info.major}.{sys.version_info.minor}")')
+echo "[install] Python version: $PY_MAJMIN"
+
+# Ensure venv module is available
+_ensure_venv_support "$PY_EXE" "$PY_MAJMIN"
+
+# Create virtual environment
+echo "[install] Creating virtual environment at: $VENV_DIR"
+$PY_EXE -m venv "$VENV_DIR"
+source "$VENV_DIR/bin/activate"
+
+# =============================================================================
+# Python Package Installation
+# =============================================================================
+
+echo "[install] Upgrading pip and core tools..."
+_bootstrap_pip
+
+echo "[install] Installing PyTorch with CUDA support..."
+_install_pytorch
+
+echo "[install] Installing application dependencies..."
+pip install -r requirements.txt
+
+echo "[install] Installing TensorRT-LLM..."
+_install_tensorrt_llm
+
+# =============================================================================
+# Runtime Validation
+# =============================================================================
+
+echo "[install] Validating installation..."
+_validate_python_libraries
+_validate_cuda_runtime
+_validate_mpi_runtime
+_validate_huggingface_auth
+
+echo "[install] Running dependency check..."
+pip check || {
+    echo "ERROR: Dependency conflicts detected" >&2
+    exit 1
+}
+
+echo "[install] ✓ All dependencies installed successfully"

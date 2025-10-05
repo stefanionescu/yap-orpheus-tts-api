@@ -185,9 +185,10 @@ USER tts
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
     CMD curl -f http://localhost:8000/healthz || exit 1
 
-# Copy startup script for Runpod usage
+# Copy startup and stop scripts for Runpod usage
 COPY docker/start-server.sh /app/start-server.sh
-RUN chmod +x /app/start-server.sh
+COPY docker/stop-server.sh /app/stop-server.sh
+RUN chmod +x /app/start-server.sh /app/stop-server.sh
 
 # Default command (can be overridden)
 # For Runpod: the container starts but doesn't auto-run the server

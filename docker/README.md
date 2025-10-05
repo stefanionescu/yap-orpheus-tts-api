@@ -38,8 +38,11 @@ curl http://localhost:8000/healthz
 # View logs (if running in background)
 tail -f /tmp/tts-server.log
 
-# Stop server
-pkill -f "uvicorn server.server:app"
+# Stop server (clean shutdown)
+bash /app/stop-server.sh
+
+# Restart server
+bash /app/stop-server.sh && bash /app/start-server.sh --background
 ```
 
 4. **Access via Runpod's public URL** (check pod interface for the URL)
@@ -206,7 +209,7 @@ curl http://localhost:8000/healthz
 tail -f /tmp/tts-server.log
 
 # Stop server
-pkill -f "uvicorn server.server:app"
+bash /app/stop-server.sh
 ```
 
 4. **Access via the pod's public URL/IP** (check service interface)
