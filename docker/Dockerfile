@@ -123,7 +123,7 @@ ENV TRTLLM_DTYPE=float16
 RUN mkdir -p ${TRTLLM_ENGINE_DIR} /app/audio
 
 # Build optimized TensorRT-LLM engine with INT4-AWQ + INT8 KV cache
-WORKDIR /tmp/tensorrt-llm/examples/llama
+WORKDIR /tmp/tensorrt-llm/examples/quantization
 RUN python build.py \
     --model_dir ${MODEL_ID} \
     --output_dir ${TRTLLM_ENGINE_DIR} \

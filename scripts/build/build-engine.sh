@@ -59,16 +59,14 @@ _prepare_tensorrt_repo() {
     git clone --depth 1 --branch v1.0.0 \
         https://github.com/NVIDIA/TensorRT-LLM.git "$TRTLLM_REPO_DIR"
     
-    # Check for examples directory with fallback locations
+    # Check for quantization examples directory
     local examples_dir=""
-    if [ -d "$TRTLLM_REPO_DIR/examples/llama" ]; then
-        examples_dir="$TRTLLM_REPO_DIR/examples/llama"
-    elif [ -d "$TRTLLM_REPO_DIR/examples/llama2" ]; then
-        examples_dir="$TRTLLM_REPO_DIR/examples/llama2"
+    if [ -d "$TRTLLM_REPO_DIR/examples/quantization" ]; then
+        examples_dir="$TRTLLM_REPO_DIR/examples/quantization"
     elif [ -d "$TRTLLM_REPO_DIR/examples" ]; then
         echo "[build] Available examples:"
         ls -la "$TRTLLM_REPO_DIR/examples/"
-        echo "ERROR: llama examples not found. Available examples listed above." >&2
+        echo "ERROR: quantization examples not found. Available examples listed above." >&2
         exit 1
     else
         echo "ERROR: No examples directory found in TensorRT-LLM repository" >&2
@@ -77,7 +75,7 @@ _prepare_tensorrt_repo() {
         exit 1
     fi
     
-    echo "[build] Using examples directory: $examples_dir"
+    echo "[build] Using quantization examples directory: $examples_dir"
     export TRTLLM_EXAMPLES_DIR="$examples_dir"
 }
 
