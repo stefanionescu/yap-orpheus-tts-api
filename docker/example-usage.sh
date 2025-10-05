@@ -33,7 +33,7 @@ echo "✓ Environment configured"
 
 echo ""
 echo "Step 2: Building Docker image with pre-built TensorRT engine..."
-echo "This step takes ~45 minutes but only needs to be done once."
+echo "This step takes a while but only needs to be done once."
 
 read -p "Do you want to build and push the image? (y/N): " -n 1 -r
 echo

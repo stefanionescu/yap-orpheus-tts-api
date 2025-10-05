@@ -126,7 +126,7 @@ export DOCKER_PASSWORD="your_dockerhub_password"
 # Login to Docker Hub
 echo $DOCKER_PASSWORD | docker login --username $DOCKER_USERNAME --password-stdin
 
-# Build and push (takes ~45 minutes)
+# Build and push
 docker build \
   --build-arg HF_TOKEN="$HF_TOKEN" \
   --build-arg DOCKER_USERNAME="$DOCKER_USERNAME" \
@@ -342,11 +342,11 @@ export TLLM_LOG_LEVEL=DEBUG
 bash scripts/utils/cleanup.sh
 # or: bash scripts/stop.sh  (compatibility wrapper)
 
-# Stop + remove build artifacts (~10-50GB)
+# Stop + remove build artifacts
 bash scripts/utils/cleanup.sh --clean-trt
 # or: bash scripts/stop.sh --clean-trt
 
-# Stop + remove venv and caches (~20-100GB)  
+# Stop + remove venv and caches  
 bash scripts/utils/cleanup.sh --clean-install
 # or: bash scripts/stop.sh --clean-install
 
@@ -361,8 +361,8 @@ bash scripts/utils/cleanup.sh --help
 ### Cleanup Options Explained
 
 - **No flags**: Stop processes, clean runtime files only
-- **`--clean-install`**: Remove Python venv, pip/torch/HF caches (~20-100GB)
-- **`--clean-trt`**: Remove TensorRT engines, model files, build artifacts (~10-50GB)  
+- **`--clean-install`**: Remove Python venv, pip/torch/HF caches
+- **`--clean-trt`**: Remove TensorRT engines, model files, build artifacts
 - **`--clean-system`**: Remove system package caches (apt, etc.)
 
 **Warning**: `--clean-trt` removes the built TensorRT engine. You'll need to rebuild it with `scripts/build/build-engine.sh` before running the server again.

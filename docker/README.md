@@ -143,7 +143,7 @@ export DOCKER_PASSWORD="your_dockerhub_password"
 # 2. Login to Docker Hub
 echo $DOCKER_PASSWORD | docker login --username $DOCKER_USERNAME --password-stdin
 
-# 3. Build image (takes ~45 minutes)
+# 3. Build image
 docker build \
   --build-arg HF_TOKEN="$HF_TOKEN" \
   --build-arg DOCKER_USERNAME="$DOCKER_USERNAME" \

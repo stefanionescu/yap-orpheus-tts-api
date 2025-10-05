@@ -21,91 +21,6 @@ load_environment
 echo "=== TensorRT-LLM Engine Build ==="
 
 # =============================================================================
-# Configuration and Argument Parsing
-# =============================================================================
-
-# Default paths and settings
-VENV_DIR="${VENV_DIR:-$PWD/.venv}"
-TRTLLM_REPO_DIR="${TRTLLM_REPO_DIR:-$PWD/.trtllm-repo}"
-MODELS_DIR="${MODELS_DIR:-$PWD/models}"
-ENGINE_OUTPUT_DIR="${TRTLLM_ENGINE_DIR:-$MODELS_DIR/orpheus-trt-int4-awq}"
-
-# Parse command line arguments
-FORCE_REBUILD=0
-CUSTOM_MAX_BATCH_SIZE=""
-
-for arg in "$@"; do
-    case "$arg" in
-        --force)
-            FORCE_REBUILD=1
-            ;;
-        --max-batch-size)
-            shift
-            CUSTOM_MAX_BATCH_SIZE="$1"
-            ;;
-        --max-batch-size=*)
-            CUSTOM_MAX_BATCH_SIZE="${arg#*=}"
-            ;;
-        *)
-            echo "Unknown argument: $arg" >&2
-            echo "Usage: $0 [--force] [--max-batch-size N]" >&2
-            exit 1
-            ;;
-    esac
-done
-
-# =============================================================================
-# Environment Validation
-# =============================================================================
-
-echo "[build] Validating build environment..."
-
-# Check virtual environment
-if [ ! -d "$VENV_DIR" ]; then
-    echo "ERROR: Virtual environment not found at $VENV_DIR" >&2
-    echo "Run scripts/setup/install-dependencies.sh first" >&2
-    exit 1
-fi
-
-# Check GPU availability
-if ! command -v nvidia-smi >/dev/null 2>&1; then
-    echo "ERROR: nvidia-smi not detected. GPU required for engine build." >&2
-    exit 1
-fi
-
-# Activate virtual environment
-source "$VENV_DIR/bin/activate"
-
-# Set up HuggingFace authentication
-_setup_huggingface_auth
-
-# =============================================================================
-# Engine Build Process
-# =============================================================================
-
-# Check if rebuild is needed
-if _should_skip_build; then
-    echo "[build] Engine already exists at: $ENGINE_OUTPUT_DIR"
-    echo "[build] Use --force to rebuild"
-    exit 0
-fi
-
-echo "[build] Building TensorRT-LLM engine..."
-echo "[build] Output directory: $ENGINE_OUTPUT_DIR"
-
-# Prepare TensorRT-LLM repository
-_prepare_tensorrt_repo
-
-# Build engine with optimized settings
-_build_optimized_engine
-
-# Validate built engine
-_validate_engine
-
-echo "[build] ✓ Engine build completed successfully"
-echo "[build] Engine location: $ENGINE_OUTPUT_DIR"
-
-# =============================================================================
 # Helper Functions
 # =============================================================================
 
@@ -225,3 +140,88 @@ _validate_engine() {
     
     echo "[build] ✓ Engine validation passed"
 }
+
+# =============================================================================
+# Configuration and Argument Parsing
+# =============================================================================
+
+# Default paths and settings
+VENV_DIR="${VENV_DIR:-$PWD/.venv}"
+TRTLLM_REPO_DIR="${TRTLLM_REPO_DIR:-$PWD/.trtllm-repo}"
+MODELS_DIR="${MODELS_DIR:-$PWD/models}"
+ENGINE_OUTPUT_DIR="${TRTLLM_ENGINE_DIR:-$MODELS_DIR/orpheus-trt-int4-awq}"
+
+# Parse command line arguments
+FORCE_REBUILD=0
+CUSTOM_MAX_BATCH_SIZE=""
+
+for arg in "$@"; do
+    case "$arg" in
+        --force)
+            FORCE_REBUILD=1
+            ;;
+        --max-batch-size)
+            shift
+            CUSTOM_MAX_BATCH_SIZE="$1"
+            ;;
+        --max-batch-size=*)
+            CUSTOM_MAX_BATCH_SIZE="${arg#*=}"
+            ;;
+        *)
+            echo "Unknown argument: $arg" >&2
+            echo "Usage: $0 [--force] [--max-batch-size N]" >&2
+            exit 1
+            ;;
+    esac
+done
+
+# =============================================================================
+# Environment Validation
+# =============================================================================
+
+echo "[build] Validating build environment..."
+
+# Check virtual environment
+if [ ! -d "$VENV_DIR" ]; then
+    echo "ERROR: Virtual environment not found at $VENV_DIR" >&2
+    echo "Run scripts/setup/install-dependencies.sh first" >&2
+    exit 1
+fi
+
+# Check GPU availability
+if ! command -v nvidia-smi >/dev/null 2>&1; then
+    echo "ERROR: nvidia-smi not detected. GPU required for engine build." >&2
+    exit 1
+fi
+
+# Activate virtual environment
+source "$VENV_DIR/bin/activate"
+
+# Set up HuggingFace authentication
+_setup_huggingface_auth
+
+# =============================================================================
+# Engine Build Process
+# =============================================================================
+
+# Check if rebuild is needed
+if _should_skip_build; then
+    echo "[build] Engine already exists at: $ENGINE_OUTPUT_DIR"
+    echo "[build] Use --force to rebuild"
+    exit 0
+fi
+
+echo "[build] Building TensorRT-LLM engine..."
+echo "[build] Output directory: $ENGINE_OUTPUT_DIR"
+
+# Prepare TensorRT-LLM repository
+_prepare_tensorrt_repo
+
+# Build engine with optimized settings
+_build_optimized_engine
+
+# Validate built engine
+_validate_engine
+
+echo "[build] ✓ Engine build completed successfully"
+echo "[build] Engine location: $ENGINE_OUTPUT_DIR"
