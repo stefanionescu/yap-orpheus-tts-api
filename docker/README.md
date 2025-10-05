@@ -4,6 +4,8 @@ This directory contains Docker configuration for building and deploying the Orph
 
 ## Quick Start (2-5 minutes)
 
+### Standard Docker Deployment
+
 For instant deployment on any GPU-enabled machine:
 
 ```bash
@@ -13,6 +15,99 @@ export DOCKER_IMAGE="your_username/orpheus-3b-tts:latest"
 # Pull and run pre-built image
 docker pull $DOCKER_IMAGE
 docker run --gpus all -p 8000:8000 --name orpheus-tts $DOCKER_IMAGE
+```
+
+### Runpod Deployment
+
+When using Runpod or similar cloud GPU services:
+
+1. **Create pod** using Docker image: `your_username/orpheus-3b-tts:latest`
+2. **Connect to pod** (SSH/Jupyter/Web terminal)  
+3. **Start server with simple command:**
+
+```bash
+# Easy startup (foreground)
+bash /app/start-server.sh
+
+# Or run in background
+bash /app/start-server.sh --background
+
+# Check if running
+curl http://localhost:8000/healthz
+
+# View logs (if running in background)
+tail -f /tmp/tts-server.log
+
+# Stop server
+pkill -f "uvicorn server.server:app"
+```
+
+4. **Access via Runpod's public URL** (check pod interface for the URL)
+
+## Testing and Benchmarking
+
+The Docker image includes test scripts for validating and benchmarking the TTS server:
+
+### Available Tests
+
+```bash
+# Navigate to app directory
+cd /app
+
+# Activate virtual environment
+source .venv/bin/activate
+
+# Quick warmup test (single request)
+python tests/warmup.py --host localhost --port 8000
+
+# Benchmark concurrent requests
+python tests/bench.py --host localhost --port 8000 --n 4 --concurrency 4
+
+# Custom text benchmark
+python tests/bench.py --host localhost --port 8000 --text "Your custom text here" --n 2
+```
+
+### Test Options
+
+**warmup.py** - Single request validation:
+```bash
+python tests/warmup.py [OPTIONS]
+  --host HOST          Server host (default: localhost)
+  --port PORT          Server port (default: 8000)  
+  --voice VOICE        Voice to use (default: female)
+  --text TEXT          Text to synthesize
+  --max-tokens N       Max tokens to generate
+```
+
+**bench.py** - Concurrent load testing:
+```bash
+python tests/bench.py [OPTIONS]
+  --host HOST          Server host (default: localhost)
+  --port PORT          Server port (default: 8000)
+  --n N                Number of requests per worker (default: 5)
+  --concurrency N      Number of concurrent workers (default: 2)
+  --voice VOICE        Voice to use (default: female)
+  --text TEXT          Text to synthesize
+  --max-tokens N       Max tokens to generate
+```
+
+### Example Testing Workflow
+
+```bash
+# 1. Start server in background
+bash /app/start-server.sh --background
+
+# 2. Wait for server to be ready
+sleep 10
+
+# 3. Quick validation
+python tests/warmup.py
+
+# 4. Benchmark performance
+python tests/bench.py --n 3 --concurrency 2
+
+# 5. View server logs
+tail -f /tmp/tts-server.log
 ```
 
 ## Pre-built Image Usage
@@ -64,9 +159,11 @@ This will:
 - Push complete image to Docker Hub
 - Enable 2-5 minute deployments anywhere
 
-## Cloud Deployment (Runpod, etc.)
+## Cloud Deployment
 
-### Method 1: Direct Docker Commands
+### Standard Cloud VM/Server
+
+For cloud VMs where you have Docker control:
 
 ```bash
 # Set your image name
@@ -87,12 +184,32 @@ docker logs -f orpheus-tts
 curl http://localhost:8000/healthz
 ```
 
-### Method 2: One-liner for Cloud
+### Runpod/Vast.ai/Similar Services
+
+For services where you start a pod with a Docker image:
+
+1. **Create pod/instance** with image: `your_username/orpheus-3b-tts:latest`
+2. **Connect via SSH/Jupyter/Terminal**
+3. **Start server with one command:**
 
 ```bash
-# Replace YOUR_USERNAME with your Docker Hub username
-docker run -d --name orpheus-tts --gpus all --restart unless-stopped -p 8000:8000 --shm-size=2g your_username/orpheus-3b-tts:latest
+# Simple startup (foreground - shows logs)
+bash /app/start-server.sh
+
+# Background startup (for production)
+bash /app/start-server.sh --background
+
+# Check status
+curl http://localhost:8000/healthz
+
+# View logs (background mode)
+tail -f /tmp/tts-server.log
+
+# Stop server
+pkill -f "uvicorn server.server:app"
 ```
+
+4. **Access via the pod's public URL/IP** (check service interface)
 
 ## Configuration
 

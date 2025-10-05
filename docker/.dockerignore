@@ -2,7 +2,7 @@
 # Docker Ignore File - Exclude unnecessary files from build context
 # =============================================================================
 
-# Build artifacts and caches
+# Build artifacts and caches (exclude existing builds)
 .venv/
 __pycache__/
 *.pyc
@@ -25,24 +25,29 @@ wheels/
 .installed.cfg
 *.egg
 
-# Runtime files
+# Runtime files (exclude existing runtime state)
 .run/
 logs/
 *.log
 *.pid
 
-# Model artifacts (will be built inside container)
+# Model artifacts (will be built fresh inside container)
 models/
 .trtllm-repo/
 
-# Development files
+# Development and version control
 .git/
 .gitignore
+
+# Testing and linting artifacts (but keep tests/ for benchmarking)
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
 .coverage
 htmlcov/
+
+# Exclude client.py since it's for external testing
+tests/client.py
 
 # IDE files
 .vscode/
@@ -60,15 +65,27 @@ Thumbs.db
 .env.local
 .env.*.local
 
-# Documentation (not needed in runtime)
-README.md
-docs/
+# Documentation (not needed for runtime, but keep main README for reference)
+docker/README.md
+docker/example-usage.sh
+docker/scripts/
 
-# Test files
-tests/
+# Audio test files
 audio/*.wav
 
 # Temporary files
 tmp/
 temp/
 *.tmp
+
+# Docker-specific excludes (don't include Docker files in Docker build)
+docker/.dockerignore
+docker/docker-compose.yml
+
+# Keep these files (needed for build):
+# - requirements.txt (Python dependencies)
+# - server/ (application code)
+# - scripts/environment.sh (configuration)
+# - scripts/lib/ (shared utilities)
+# - docker/Dockerfile (for COPY commands)
+# - docker/start-server.sh (startup script)

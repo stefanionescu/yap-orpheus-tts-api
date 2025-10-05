@@ -24,10 +24,18 @@ Run Orpheus 3B TTS behind a FastAPI server using TensorRT-LLM backend with INT4-
 ### Quickstart
 
 #### Option 1: Docker (2-5 minutes)
+
+**Local/Cloud VM:**
 ```bash
 # Pull and run pre-built image
 docker pull your_username/orpheus-3b-tts:latest
 docker run --gpus all -p 8000:8000 --name orpheus-tts your_username/orpheus-3b-tts:latest
+```
+
+**Runpod (inside running container):**
+```bash
+# Start TTS server (image already loaded)
+python -m uvicorn server.server:app --host 0.0.0.0 --port 8000 --timeout-keep-alive 75 --log-level info
 
 # Health check
 curl -s http://127.0.0.1:8000/healthz
@@ -65,6 +73,7 @@ See `scripts/environment.sh` for all available options and detailed documentatio
 
 ### Docker Deployment (Recommended - 2-5 minutes)
 
+#### Standard Docker Deployment
 For rapid deployment using pre-built image:
 
 ```bash
@@ -72,6 +81,28 @@ For rapid deployment using pre-built image:
 docker pull your_username/orpheus-3b-tts:latest
 docker run --gpus all -p 8000:8000 --name orpheus-tts your_username/orpheus-3b-tts:latest
 ```
+
+#### Runpod Deployment
+When using Runpod, you start a pod with your Docker image, then run the server inside:
+
+1. **Create Runpod instance** using your Docker image: `your_username/orpheus-3b-tts:latest`
+2. **Connect to the pod** (SSH/Jupyter/Web terminal)
+3. **Start the TTS server:**
+```bash
+# Navigate to app directory
+cd /app
+
+# Start server
+python -m uvicorn server.server:app --host 0.0.0.0 --port 8000 --timeout-keep-alive 75 --log-level info
+
+# Or run in background
+nohup python -m uvicorn server.server:app --host 0.0.0.0 --port 8000 --timeout-keep-alive 75 --log-level info > server.log 2>&1 &
+
+# Check logs
+tail -f server.log
+```
+
+4. **Access via Runpod's public URL** (usually shown in pod interface)
 
 ### Scripts Deployment (45 minutes)
 
@@ -219,7 +250,9 @@ bash scripts/build/build-engine.sh --max-batch-size 32 --force
 # or: bash scripts/02-build.sh --max-batch-size 32 --force
 ```
 
-## Benchmarking
+## Testing and Benchmarking
+
+### Local/Scripts Testing
 
 ```bash
 # Activate venv
@@ -230,6 +263,45 @@ python tests/warmup.py
 
 # Benchmark concurrent streams
 python tests/bench.py --n 8 --concurrency 8
+
+# Custom text and voice
+python tests/warmup.py --voice tara --text "Your custom text here"
+```
+
+### Docker/Runpod Testing
+
+When running inside a Docker container or Runpod:
+
+```bash
+# Navigate to app directory and activate environment
+cd /app && source .venv/bin/activate
+
+# Start server in background (if not already running)
+bash /app/start-server.sh --background
+
+# Wait for server startup
+sleep 10
+
+# Quick validation
+python tests/warmup.py --host localhost --port 8000
+
+# Performance benchmark
+python tests/bench.py --host localhost --port 8000 --n 4 --concurrency 4
+
+# View server logs
+tail -f /tmp/tts-server.log
+```
+
+### External Client Testing
+
+To test from outside the container/pod:
+
+```bash
+# Install websockets locally
+pip install websockets python-dotenv
+
+# Test against remote server (replace with your URL)
+python tests/client.py --server your-runpod-url.proxy.runpod.net:8000 --voice female
 ```
 
 ## Performance Tuning

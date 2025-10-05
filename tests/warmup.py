@@ -23,7 +23,7 @@ _ROOT_DIR = _THIS_DIR.parent
 if str(_ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(_ROOT_DIR))
 
-from server.core.chunking import chunk_by_sentences
+from server.text.chunking import chunk_by_sentences
 
 
 DEFAULT_TEXT = (

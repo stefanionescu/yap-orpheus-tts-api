@@ -119,8 +119,8 @@ ENV TRTLLM_MAX_INPUT_LEN=48
 ENV TRTLLM_MAX_OUTPUT_LEN=1024
 ENV TRTLLM_DTYPE=float16
 
-# Create models directory
-RUN mkdir -p ${TRTLLM_ENGINE_DIR}
+# Create models and audio directories
+RUN mkdir -p ${TRTLLM_ENGINE_DIR} /app/audio
 
 # Build optimized TensorRT-LLM engine with INT4-AWQ + INT8 KV cache
 WORKDIR /tmp/tensorrt-llm/examples/llama
@@ -185,5 +185,11 @@ USER tts
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
     CMD curl -f http://localhost:8000/healthz || exit 1
 
+# Copy startup script for Runpod usage
+COPY docker/start-server.sh /app/start-server.sh
+RUN chmod +x /app/start-server.sh
+
 # Default command (can be overridden)
-CMD ["python", "-m", "uvicorn", "server.server:app", "--host", "0.0.0.0", "--port", "8000", "--timeout-keep-alive", "75", "--log-level", "info"]
+# For Runpod: the container starts but doesn't auto-run the server
+# Users run: bash /app/start-server.sh inside the pod
+CMD ["bash", "-c", "echo 'TTS Server Ready. Run: bash /app/start-server.sh' && sleep infinity"]

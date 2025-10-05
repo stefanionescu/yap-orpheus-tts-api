@@ -30,6 +30,6 @@ Thumbs.db
 *.swp
 *.swo
 
-# Test files
+# Test output files (exclude root audio/ dir but keep server/audio/ code)
 *.wav
-audio/
+/audio/
