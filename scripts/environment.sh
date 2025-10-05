@@ -34,6 +34,10 @@ export TRTLLM_MAX_INPUT_LEN=${TRTLLM_MAX_INPUT_LEN:-48}      # Sentence-by-sente
 export TRTLLM_MAX_OUTPUT_LEN=${TRTLLM_MAX_OUTPUT_LEN:-1024}  # Audio token output
 export TRTLLM_MAX_BATCH_SIZE=${TRTLLM_MAX_BATCH_SIZE:-16}    # Concurrent users
 
+# Quantization parameters
+export AWQ_BLOCK_SIZE=${AWQ_BLOCK_SIZE:-128}                 # AWQ block size (128 optimal for quality)
+export CALIB_SIZE=${CALIB_SIZE:-256}                         # Calibration dataset size
+
 # KV cache memory management (critical for high concurrency)
 export KV_FREE_GPU_FRAC=${KV_FREE_GPU_FRAC:-0.92}           # Use 92% of free GPU memory
 export KV_ENABLE_BLOCK_REUSE=${KV_ENABLE_BLOCK_REUSE:-0}    # Enable KV cache block reuse

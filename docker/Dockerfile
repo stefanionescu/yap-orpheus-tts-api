@@ -122,29 +122,42 @@ ENV TRTLLM_DTYPE=float16
 # Create models and audio directories
 RUN mkdir -p ${TRTLLM_ENGINE_DIR} /app/audio
 
-# Build optimized TensorRT-LLM engine with INT4-AWQ + INT8 KV cache
+# Build optimized TensorRT-LLM engine with INT4-AWQ + INT8 KV cache (2-step process)
 WORKDIR /tmp/tensorrt-llm/examples/quantization
-RUN python build.py \
+
+# Install quantization requirements
+RUN pip install -r requirements.txt
+
+# Enable fast HF downloads
+ENV HF_HUB_ENABLE_HF_TRANSFER=1
+
+# Step 1: Quantize the model using quantize.py
+RUN python quantize.py \
     --model_dir ${MODEL_ID} \
-    --output_dir ${TRTLLM_ENGINE_DIR} \
+    --output_dir ${TRTLLM_ENGINE_DIR}_checkpoint \
     --dtype ${TRTLLM_DTYPE} \
-    --use_gpt_attention_plugin ${TRTLLM_DTYPE} \
-    --use_gemm_plugin ${TRTLLM_DTYPE} \
-    --use_weight_only \
-    --weight_only_precision int4_awq \
-    --per_group \
-    --enable_context_fmha \
-    --enable_context_fmha_fp32_acc \
-    --multi_block_mode \
-    --use_paged_context_fmha \
-    --use_fp8_context_fmha \
-    --kv_cache_type int8 \
-    --max_batch_size ${TRTLLM_MAX_BATCH_SIZE} \
+    --qformat int4_awq \
+    --awq_block_size 128 \
+    --calib_size 256 \
+    --kv_cache_dtype int8
+
+# Step 2: Build TensorRT engine from quantized checkpoint
+RUN trtllm-build \
+    --checkpoint_dir ${TRTLLM_ENGINE_DIR}_checkpoint \
+    --output_dir ${TRTLLM_ENGINE_DIR} \
+    --gemm_plugin auto \
+    --gpt_attention_plugin float16 \
+    --context_fmha enable \
+    --paged_kv_cache enable \
+    --remove_input_padding enable \
     --max_input_len ${TRTLLM_MAX_INPUT_LEN} \
     --max_seq_len $((TRTLLM_MAX_INPUT_LEN + TRTLLM_MAX_OUTPUT_LEN)) \
-    --max_num_tokens $((TRTLLM_MAX_BATCH_SIZE * TRTLLM_MAX_INPUT_LEN)) \
-    --builder_opt 4 \
-    --strongly_typed
+    --max_batch_size ${TRTLLM_MAX_BATCH_SIZE} \
+    --log_level info \
+    --workers 1
+
+# Clean up intermediate checkpoint to reduce image size
+RUN rm -rf ${TRTLLM_ENGINE_DIR}_checkpoint
 
 # Return to app directory
 WORKDIR /app

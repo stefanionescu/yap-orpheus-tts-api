@@ -80,16 +80,16 @@ _prepare_tensorrt_repo() {
 }
 
 _build_optimized_engine() {
-    echo "[build] Building INT4-AWQ + INT8 KV cache engine..."
-    
-    # Create output directory
-    mkdir -p "$ENGINE_OUTPUT_DIR"
+    echo "[build] Building INT4-AWQ + INT8 KV cache engine (2-step process)..."
     
     # Build configuration
     local max_batch_size="${CUSTOM_MAX_BATCH_SIZE:-${TRTLLM_MAX_BATCH_SIZE}}"
     local max_input_len="${TRTLLM_MAX_INPUT_LEN}"
     local max_output_len="${TRTLLM_MAX_OUTPUT_LEN}"
     local dtype="${TRTLLM_DTYPE}"
+    local checkpoint_dir="${ENGINE_OUTPUT_DIR}_checkpoint"
+    local awq_block_size="${AWQ_BLOCK_SIZE:-128}"
+    local calib_size="${CALIB_SIZE:-256}"
     
     echo "[build] Configuration:"
     echo "  Model: ${MODEL_ID}"
@@ -97,33 +97,95 @@ _build_optimized_engine() {
     echo "  Max input length: $max_input_len"
     echo "  Max output length: $max_output_len"
     echo "  Data type: $dtype"
+    echo "  AWQ block size: $awq_block_size"
+    echo "  Calibration size: $calib_size"
     echo "  Quantization: INT4-AWQ weights, INT8 KV cache"
     
-    # Change to TensorRT-LLM examples directory
+    # Create output directories
+    mkdir -p "$ENGINE_OUTPUT_DIR" "$checkpoint_dir"
+    
+    # Change to quantization examples directory
     cd "$TRTLLM_EXAMPLES_DIR"
     
-    # Build engine with optimized settings for TTS
-    python build.py \
-        --model_dir "${MODEL_ID}" \
-        --output_dir "$ENGINE_OUTPUT_DIR" \
-        --dtype "$dtype" \
-        --use_gpt_attention_plugin "$dtype" \
-        --use_gemm_plugin "$dtype" \
-        --use_weight_only \
-        --weight_only_precision int4_awq \
-        --per_group \
-        --enable_context_fmha \
-        --enable_context_fmha_fp32_acc \
-        --multi_block_mode \
-        --use_paged_context_fmha \
-        --use_fp8_context_fmha \
-        --kv_cache_type int8 \
-        --max_batch_size "$max_batch_size" \
-        --max_input_len "$max_input_len" \
+    # Install quantization requirements if available
+    if [ -f "requirements.txt" ]; then
+        echo "[build] Installing quantization requirements..."
+        pip install -r requirements.txt
+    fi
+    
+    # Enable fast HF downloads
+    export HF_HUB_ENABLE_HF_TRANSFER=1
+    
+    # Step 1: Quantize the model using quantize.py
+    echo "[build] Step 1/2: Quantizing model to INT4-AWQ..."
+    
+    # Download model from HF if it's a model ID (not a local path)
+    local model_dir_for_quant
+    if [[ ! -d "${MODEL_ID}" ]]; then
+        echo "[build] Downloading model from HuggingFace: ${MODEL_ID}"
+        local local_model_dir="${PWD}/models/$(basename ${MODEL_ID})-hf"
+        
+        if [[ ! -d "${local_model_dir}" ]]; then
+            mkdir -p "${local_model_dir}"
+            python -c "
+from huggingface_hub import snapshot_download
+snapshot_download(
+    repo_id='${MODEL_ID}',
+    local_dir='${local_model_dir}',
+    local_dir_use_symlinks=False
+)
+"
+        else
+            echo "[build] Using cached HF model at ${local_model_dir}"
+        fi
+        model_dir_for_quant="${local_model_dir}"
+    else
+        echo "[build] Using local model directory: ${MODEL_ID}"
+        model_dir_for_quant="${MODEL_ID}"
+    fi
+    
+    # Run quantization
+    python quantize.py \
+        --model_dir "${model_dir_for_quant}" \
+        --output_dir "${checkpoint_dir}" \
+        --dtype "${dtype}" \
+        --qformat int4_awq \
+        --awq_block_size "${awq_block_size}" \
+        --calib_size "${calib_size}" \
+        --kv_cache_dtype int8
+    
+    # Validate quantized checkpoint
+    echo "[build] Validating quantized checkpoint..."
+    if [ ! -f "${checkpoint_dir}/config.json" ]; then
+        echo "ERROR: No config.json found in ${checkpoint_dir}" >&2
+        exit 1
+    fi
+    if ! ls "${checkpoint_dir}"/rank*.safetensors >/dev/null 2>&1; then
+        echo "ERROR: No rank*.safetensors found in ${checkpoint_dir}" >&2
+        exit 1
+    fi
+    echo "[build] Quantized checkpoint validation passed"
+    
+    # Step 2: Build TensorRT engine from quantized checkpoint
+    echo "[build] Step 2/2: Building TensorRT engine from quantized checkpoint..."
+    
+    trtllm-build \
+        --checkpoint_dir "${checkpoint_dir}" \
+        --output_dir "${ENGINE_OUTPUT_DIR}" \
+        --gemm_plugin auto \
+        --gpt_attention_plugin float16 \
+        --context_fmha enable \
+        --paged_kv_cache enable \
+        --remove_input_padding enable \
+        --max_input_len "${max_input_len}" \
         --max_seq_len $((max_input_len + max_output_len)) \
-        --max_num_tokens $((max_batch_size * max_input_len)) \
-        --builder_opt 4 \
-        --strongly_typed
+        --max_batch_size "${max_batch_size}" \
+        --log_level info \
+        --workers "$(nproc --all)"
+    
+    # Clean up intermediate checkpoint to save space
+    echo "[build] Cleaning up intermediate checkpoint..."
+    rm -rf "${checkpoint_dir}"
     
     # Return to original directory
     cd - >/dev/null
