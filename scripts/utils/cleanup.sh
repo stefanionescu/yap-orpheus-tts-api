@@ -17,90 +17,6 @@ set -euo pipefail
 echo "=== System Cleanup ==="
 
 # =============================================================================
-# Configuration and Argument Parsing
-# =============================================================================
-
-# Default paths (must match build scripts)
-TRTLLM_REPO_DIR="${TRTLLM_REPO_DIR:-$PWD/.trtllm-repo}"
-MODELS_DIR="${MODELS_DIR:-$PWD/models}"
-
-# Parse cleanup options
-CLEAN_INSTALL=0
-CLEAN_SYSTEM=0
-CLEAN_TRT=0
-
-for arg in "$@"; do
-    case "$arg" in
-        --clean-install)
-            CLEAN_INSTALL=1
-            echo "[cleanup] Will remove Python environment and caches"
-            ;;
-        --clean-system)
-            CLEAN_SYSTEM=1
-            echo "[cleanup] Will remove system package caches"
-            ;;
-        --clean-trt)
-            CLEAN_TRT=1
-            echo "[cleanup] Will remove TensorRT-LLM build artifacts"
-            ;;
-        --help|-h)
-            echo "Usage: $0 [--clean-install] [--clean-system] [--clean-trt]"
-            echo ""
-            echo "Options:"
-            echo "  --clean-install  Remove Python venv and package caches"
-            echo "  --clean-system   Remove system package caches"
-            echo "  --clean-trt      Remove TensorRT-LLM build artifacts"
-            exit 0
-            ;;
-        *)
-            echo "Unknown option: $arg" >&2
-            echo "Use --help for usage information" >&2
-            exit 1
-            ;;
-    esac
-done
-
-# =============================================================================
-# Process Termination
-# =============================================================================
-
-echo "[cleanup] Stopping server processes..."
-_stop_server_processes
-
-echo "[cleanup] Stopping background processes..."
-_stop_background_processes
-
-echo "[cleanup] Cleaning GPU memory..."
-_cleanup_gpu_memory
-
-# =============================================================================
-# File System Cleanup
-# =============================================================================
-
-echo "[cleanup] Removing runtime files..."
-_cleanup_runtime_files
-
-if [ "$CLEAN_INSTALL" = "1" ]; then
-    echo "[cleanup] Removing Python environment and caches..."
-    _cleanup_python_environment
-fi
-
-if [ "$CLEAN_TRT" = "1" ]; then
-    echo "[cleanup] Removing TensorRT-LLM artifacts..."
-    _cleanup_tensorrt_artifacts
-fi
-
-if [ "$CLEAN_SYSTEM" = "1" ]; then
-    echo "[cleanup] Removing system caches..."
-    _cleanup_system_caches
-fi
-
-echo "[cleanup] Removing workspace temporary files..."
-_cleanup_workspace_files
-
-echo "[cleanup] ✓ Cleanup completed successfully"
-
-# =============================================================================
 # Helper Functions
 # =============================================================================
 
@@ -254,3 +170,87 @@ _cleanup_workspace_files() {
     # Remove workspace temporary files
     rm -rf audio/*.wav .pytest_cache .mypy_cache .ruff_cache *.egg-info 2>/dev/null || true
 }
+
+# =============================================================================
+# Configuration and Argument Parsing
+# =============================================================================
+
+# Default paths (must match build scripts)
+TRTLLM_REPO_DIR="${TRTLLM_REPO_DIR:-$PWD/.trtllm-repo}"
+MODELS_DIR="${MODELS_DIR:-$PWD/models}"
+
+# Parse cleanup options
+CLEAN_INSTALL=0
+CLEAN_SYSTEM=0
+CLEAN_TRT=0
+
+for arg in "$@"; do
+    case "$arg" in
+        --clean-install)
+            CLEAN_INSTALL=1
+            echo "[cleanup] Will remove Python environment and caches"
+            ;;
+        --clean-system)
+            CLEAN_SYSTEM=1
+            echo "[cleanup] Will remove system package caches"
+            ;;
+        --clean-trt)
+            CLEAN_TRT=1
+            echo "[cleanup] Will remove TensorRT-LLM build artifacts"
+            ;;
+        --help|-h)
+            echo "Usage: $0 [--clean-install] [--clean-system] [--clean-trt]"
+            echo ""
+            echo "Options:"
+            echo "  --clean-install  Remove Python venv and package caches"
+            echo "  --clean-system   Remove system package caches"
+            echo "  --clean-trt      Remove TensorRT-LLM build artifacts"
+            exit 0
+            ;;
+        *)
+            echo "Unknown option: $arg" >&2
+            echo "Use --help for usage information" >&2
+            exit 1
+            ;;
+    esac
+done
+
+# =============================================================================
+# Process Termination
+# =============================================================================
+
+echo "[cleanup] Stopping server processes..."
+_stop_server_processes
+
+echo "[cleanup] Stopping background processes..."
+_stop_background_processes
+
+echo "[cleanup] Cleaning GPU memory..."
+_cleanup_gpu_memory
+
+# =============================================================================
+# File System Cleanup
+# =============================================================================
+
+echo "[cleanup] Removing runtime files..."
+_cleanup_runtime_files
+
+if [ "$CLEAN_INSTALL" = "1" ]; then
+    echo "[cleanup] Removing Python environment and caches..."
+    _cleanup_python_environment
+fi
+
+if [ "$CLEAN_TRT" = "1" ]; then
+    echo "[cleanup] Removing TensorRT-LLM artifacts..."
+    _cleanup_tensorrt_artifacts
+fi
+
+if [ "$CLEAN_SYSTEM" = "1" ]; then
+    echo "[cleanup] Removing system caches..."
+    _cleanup_system_caches
+fi
+
+echo "[cleanup] Removing workspace temporary files..."
+_cleanup_workspace_files
+
+echo "[cleanup] ✓ Cleanup completed successfully"
