@@ -13,7 +13,7 @@ SNAC_DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 class SnacBatched:
     def __init__(self) -> None:
         # Prefer FP16 on CUDA for decoder math; allow opt-out via env; keep FP32 on CPU
-        use_fp16 = (SNAC_DEVICE == "cuda") and (os.getenv("SNAC_DECODER_FP16", "1") == "1")
+        use_fp16 = (SNAC_DEVICE == "cuda") and (os.getenv("SNAC_DECODER_FP16", "0") == "1")
         self.dtype_decoder = torch.float16 if use_fp16 else torch.float32
         m = SNAC.from_pretrained("hubertsiuzdak/snac_24khz").eval().to(SNAC_DEVICE)
         # Channels-last is beneficial for conv-heavy decoders on CUDA
