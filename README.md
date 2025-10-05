@@ -2,9 +2,9 @@
 
 Run Orpheus 3B TTS behind a FastAPI server using TensorRT-LLM backend with INT4-AWQ quantization. Optimized for A100 GPUs to support **16 concurrent users** with minimal to no quality loss.
 
-- **Server**: `server/`
-- **Scripts**: `scripts/`
-- **Tests**: `tests/`
+- **Server**: `server/` - Clean, modular FastAPI application
+- **Scripts**: `scripts/` - Organized setup, build, and runtime scripts  
+- **Tests**: `tests/` - Benchmarking and validation tools
 
 ## Key Features
 
@@ -17,8 +17,8 @@ Run Orpheus 3B TTS behind a FastAPI server using TensorRT-LLM backend with INT4-
 
 - NVIDIA GPU with CUDA 12.x drivers (A100 recommended)
 - Ubuntu-based image with `nvidia-smi`
-- OpenMPI runtime (installed automatically by `00-bootstrap.sh`)
-- Python 3.10 with shared libraries (installed automatically by `00-bootstrap.sh`)
+- OpenMPI runtime (installed automatically by bootstrap script)
+- Python 3.10 with shared libraries (installed automatically by bootstrap script)
 - Hugging Face token (`HF_TOKEN`) with access to `canopylabs/orpheus-3b-0.1-ft`
 
 ### Quickstart
@@ -36,19 +36,19 @@ curl -s http://127.0.0.1:8000/healthz
 
 ## Configuration
 
-### Required
+All configuration is centralized in `scripts/environment.sh` with comprehensive documentation.
+
+### Required Environment Variables
 - `HF_TOKEN`: Hugging Face token for model access
+- `TRTLLM_ENGINE_DIR`: Path to built engine (set automatically by build scripts)
 
-### TRT-LLM Settings (`scripts/env/trt.sh`)
-- `TRTLLM_ENGINE_DIR`: Path to built engine (default: `models/orpheus-trt-int4-awq`)
-- `TRTLLM_MAX_INPUT_LEN`: 48 tokens (optimized for sentences)
-- `TRTLLM_MAX_OUTPUT_LEN`: 1024 tokens
-- `TRTLLM_MAX_BATCH_SIZE`: 16 concurrent users
-- `KV_FREE_GPU_FRAC`: 0.92 (use 92% of free GPU memory for KV cache)
+### Key Configuration Settings
+- **Engine**: `TRTLLM_MAX_BATCH_SIZE=16` (concurrent users), `KV_FREE_GPU_FRAC=0.92` (GPU memory usage)
+- **TTS**: `SNAC_MAX_BATCH=64` (audio decoder batching), `ORPHEUS_MAX_TOKENS=1024` (output length)
+- **Server**: `HOST=0.0.0.0`, `PORT=8000`, `DEFAULT_VOICE=tara`
+- **Performance**: CUDA, PyTorch, and threading optimizations
 
-### TTS Settings (`scripts/env/tts.sh`)
-- `SNAC_MAX_BATCH`: 64 (SNAC decoder batching)
-- `SNAC_BATCH_TIMEOUT_MS`: 5ms
+See `scripts/environment.sh` for all available options and detailed documentation.
 
 ## Installation & Deployment
 
@@ -67,48 +67,65 @@ bash scripts/run-all.sh
 export HF_TOKEN="hf_xxx"
 
 # 1) Bootstrap system dependencies (OpenMPI, Python dev libs)
-bash scripts/00-bootstrap.sh
+bash scripts/setup/bootstrap.sh
+# or: bash scripts/00-bootstrap.sh  (compatibility wrapper)
 
-# 2) Install TensorRT-LLM + dependencies
-bash scripts/01-install-trt.sh
+# 2) Install Python environment and TensorRT-LLM
+bash scripts/setup/install-dependencies.sh
+# or: bash scripts/01-install-trt.sh  (compatibility wrapper)
 
 # 3) Build INT4-AWQ + INT8 KV cache engine
-bash scripts/02-build.sh
+bash scripts/build/build-engine.sh
+# or: bash scripts/02-build.sh  (compatibility wrapper)
 
-# 4) Run server
-bash scripts/03-run-server.sh
+# 4) Start TTS server
+bash scripts/runtime/start-server.sh
+# or: bash scripts/03-run-server.sh  (compatibility wrapper)
 ```
+
+### Script Organization
+
+The scripts are now organized into logical directories:
+- **`scripts/setup/`** - System bootstrap and dependency installation
+- **`scripts/build/`** - TensorRT-LLM engine building
+- **`scripts/runtime/`** - Server startup and management
+- **`scripts/utils/`** - Cleanup and maintenance utilities
+- **`scripts/lib/`** - Shared helper functions
+
+Old numbered script names (`00-bootstrap.sh`, etc.) are maintained as compatibility wrappers.
 
 ### Start/Stop Server Manually (no rebuild)
 
 Use this when you already have a built TensorRT-LLM engine and just want to restart the API server.
 
-1) Stop any running server (no flags):
+1) Stop any running server:
 
 ```bash
-bash scripts/stop.sh
+bash scripts/utils/cleanup.sh
+# or: bash scripts/stop.sh  (compatibility wrapper)
 ```
 
-2) Ensure your Hugging Face token is exported for runtime:
+2) Ensure your Hugging Face token is exported:
 
 ```bash
 export HF_TOKEN="hf_xxx"
 ```
 
-3) Set the TensorRT-LLM engine directory (must contain rank0.engine):
+3) Set the TensorRT-LLM engine directory (if not using default):
 
 ```bash
-# If you used the provided build scripts, this is typically:
+# Default location (set automatically by build scripts):
 export TRTLLM_ENGINE_DIR="$(pwd)/models/orpheus-trt-int4-awq"
 
-# Optional: verify the engine exists
+# Verify the engine exists:
 [ -f "$TRTLLM_ENGINE_DIR/rank0.engine" ] && echo "Engine OK" || echo "Missing rank0.engine"
 ```
 
 4) Start the server:
 
 ```bash
-bash scripts/03-run-server.sh
+bash scripts/runtime/start-server.sh
+# or: bash scripts/03-run-server.sh  (compatibility wrapper)
 ```
 
 5) Health check:
@@ -116,6 +133,29 @@ bash scripts/03-run-server.sh
 ```bash
 curl -s http://127.0.0.1:8000/healthz
 ```
+
+### Checking Server Logs
+
+After starting the server, logs are automatically tailed. If you need to check logs later:
+
+```bash
+# View current server logs (follows new output)
+tail -f logs/server.log
+
+# View all server logs from the beginning
+cat logs/server.log
+
+# View last 50 lines of server logs
+tail -n 50 logs/server.log
+
+# Search for errors in logs
+grep -i error logs/server.log
+
+# Check if server is running
+ps aux | grep "uvicorn server.server:app"
+```
+
+**Note**: If you run `cleanup.sh` and then restart the server with `03-run-server.sh`, the logs directory is recreated and new logs start fresh. Previous logs are removed during cleanup.
 
 Note on HF token precedence:
 - If you see a warning like:
@@ -126,10 +166,12 @@ Note on HF token precedence:
 
 ```bash
 # Force rebuild with new settings
-bash scripts/02-build.sh --force
+bash scripts/build/build-engine.sh --force
+# or: bash scripts/02-build.sh --force  (compatibility wrapper)
 
-# Custom settings
-bash scripts/02-build.sh --max-batch-size 32 --force
+# Custom batch size
+bash scripts/build/build-engine.sh --max-batch-size 32 --force
+# or: bash scripts/02-build.sh --max-batch-size 32 --force
 ```
 
 ## Benchmarking
@@ -154,7 +196,8 @@ If you experience RTF degradation at high concurrency (16-20+ users):
 **Rebuild with INT8 KV Cache** (primary fix):
 ```bash
 # INT8 KV cache is now enabled by default in the build script
-bash scripts/02-build.sh --force
+bash scripts/build/build-engine.sh --force
+# or: bash scripts/02-build.sh --force  (compatibility wrapper)
 ```
 
 This reduces KV cache memory usage by 50%, allowing more concurrent requests.
@@ -179,17 +222,33 @@ export TLLM_LOG_LEVEL=DEBUG
 
 ```bash
 # Stop server only
-bash scripts/stop.sh
+bash scripts/utils/cleanup.sh
+# or: bash scripts/stop.sh  (compatibility wrapper)
 
 # Stop + remove build artifacts (~10-50GB)
-bash scripts/stop.sh --clean-trt
+bash scripts/utils/cleanup.sh --clean-trt
+# or: bash scripts/stop.sh --clean-trt
 
-# Stop + remove venv and caches (~20-100GB)
-bash scripts/stop.sh --clean-install
+# Stop + remove venv and caches (~20-100GB)  
+bash scripts/utils/cleanup.sh --clean-install
+# or: bash scripts/stop.sh --clean-install
 
 # Nuclear option: remove everything
-bash scripts/stop.sh --clean-install --clean-trt --clean-system
+bash scripts/utils/cleanup.sh --clean-install --clean-trt --clean-system
+# or: bash scripts/stop.sh --clean-install --clean-trt --clean-system
+
+# Get help on cleanup options
+bash scripts/utils/cleanup.sh --help
 ```
+
+### Cleanup Options Explained
+
+- **No flags**: Stop processes, clean runtime files only
+- **`--clean-install`**: Remove Python venv, pip/torch/HF caches (~20-100GB)
+- **`--clean-trt`**: Remove TensorRT engines, model files, build artifacts (~10-50GB)  
+- **`--clean-system`**: Remove system package caches (apt, etc.)
+
+**Warning**: `--clean-trt` removes the built TensorRT engine. You'll need to rebuild it with `scripts/build/build-engine.sh` before running the server again.
 
 ## Architecture
 

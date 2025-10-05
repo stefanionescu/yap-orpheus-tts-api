@@ -1,0 +1,145 @@
+#!/usr/bin/env bash
+# =============================================================================
+# Centralized Environment Configuration for Yap Orpheus TTS API
+# =============================================================================
+# This file contains all environment variables and their defaults.
+# Source this file from scripts to ensure consistent configuration.
+
+# =============================================================================
+# SERVER CONFIGURATION
+# =============================================================================
+
+# FastAPI server settings
+export HOST=${HOST:-0.0.0.0}
+export PORT=${PORT:-8000}
+
+# Model and authentication
+export MODEL_ID=${MODEL_ID:-canopylabs/orpheus-3b-0.1-ft}
+export HF_TOKEN=${HF_TOKEN:-}  # Required: Set your Hugging Face token
+
+# =============================================================================
+# TENSORRT-LLM ENGINE CONFIGURATION
+# =============================================================================
+
+# Backend selection
+export BACKEND=${BACKEND:-trtllm}
+
+# Engine paths and runtime
+export TRTLLM_ENGINE_DIR=${TRTLLM_ENGINE_DIR:-}  # Required: Path to built engine
+export TLLM_LOG_LEVEL=${TLLM_LOG_LEVEL:-INFO}
+
+# Engine build parameters - optimized for TTS workload
+export TRTLLM_DTYPE=${TRTLLM_DTYPE:-float16}
+export TRTLLM_MAX_INPUT_LEN=${TRTLLM_MAX_INPUT_LEN:-48}      # Sentence-by-sentence TTS
+export TRTLLM_MAX_OUTPUT_LEN=${TRTLLM_MAX_OUTPUT_LEN:-1024}  # Audio token output
+export TRTLLM_MAX_BATCH_SIZE=${TRTLLM_MAX_BATCH_SIZE:-16}    # Concurrent users
+
+# KV cache memory management (critical for high concurrency)
+export KV_FREE_GPU_FRAC=${KV_FREE_GPU_FRAC:-0.92}           # Use 92% of free GPU memory
+export KV_ENABLE_BLOCK_REUSE=${KV_ENABLE_BLOCK_REUSE:-0}    # Enable KV cache block reuse
+
+# =============================================================================
+# TTS SYNTHESIS CONFIGURATION
+# =============================================================================
+
+# Sampling defaults
+export ORPHEUS_MAX_TOKENS=${ORPHEUS_MAX_TOKENS:-1024}
+export DEFAULT_TEMPERATURE=${DEFAULT_TEMPERATURE:-0.6}
+export DEFAULT_TOP_P=${DEFAULT_TOP_P:-0.8}
+export DEFAULT_REPETITION_PENALTY=${DEFAULT_REPETITION_PENALTY:-1.1}
+
+# Audio processing and streaming
+export SNAC_SR=${SNAC_SR:-24000}                            # Sample rate
+export TTS_DECODE_WINDOW=${TTS_DECODE_WINDOW:-28}           # Streaming window size
+export TTS_MAX_SEC=${TTS_MAX_SEC:-0}                        # Max audio length (0=unlimited)
+
+# SNAC decoder optimization
+export SNAC_TORCH_COMPILE=${SNAC_TORCH_COMPILE:-0}          # Enable torch.compile
+export SNAC_MAX_BATCH=${SNAC_MAX_BATCH:-64}                 # Batch size for SNAC decoding
+export SNAC_BATCH_TIMEOUT_MS=${SNAC_BATCH_TIMEOUT_MS:-2}    # Batching timeout
+export SNAC_GLOBAL_SYNC=${SNAC_GLOBAL_SYNC:-1}              # Global synchronization
+
+# WebSocket protocol
+export WS_END_SENTINEL=${WS_END_SENTINEL:-__END__}
+export WS_CLOSE_BUSY_CODE=${WS_CLOSE_BUSY_CODE:-1013}
+export WS_CLOSE_INTERNAL_CODE=${WS_CLOSE_INTERNAL_CODE:-1011}
+export WS_QUEUE_MAXSIZE=${WS_QUEUE_MAXSIZE:-128}
+export DEFAULT_VOICE=${DEFAULT_VOICE:-tara}
+
+# Event loop tuning
+export YIELD_SLEEP_SECONDS=${YIELD_SLEEP_SECONDS:-0}
+
+# =============================================================================
+# PERFORMANCE OPTIMIZATION
+# =============================================================================
+
+# CUDA runtime optimization
+export CUDA_DEVICE_MAX_CONNECTIONS=${CUDA_DEVICE_MAX_CONNECTIONS:-2}
+
+# PyTorch memory management
+export PYTORCH_CUDA_ALLOC_CONF=${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True,garbage_collection_threshold:0.9,max_split_size_mb:512}
+
+# CPU threading (limit to prevent oversubscription)
+export OMP_NUM_THREADS=${OMP_NUM_THREADS:-1}
+export MKL_NUM_THREADS=${MKL_NUM_THREADS:-1}
+export OPENBLAS_NUM_THREADS=${OPENBLAS_NUM_THREADS:-1}
+export NUMEXPR_NUM_THREADS=${NUMEXPR_NUM_THREADS:-1}
+
+# HuggingFace optimization
+export HF_TRANSFER=${HF_TRANSFER:-1}                        # Use hf_transfer for faster downloads
+
+# Development and debugging toggles
+export TORCH_COMPILE_DISABLE=${TORCH_COMPILE_DISABLE:-1}    # Disable torch.compile by default
+export TRITON_DISABLE_COMPILATION=${TRITON_DISABLE_COMPILATION:-0}
+
+# =============================================================================
+# STREAMING CONFIGURATION
+# =============================================================================
+
+# TRT-LLM streaming parameters
+export STREAMING_DEFAULT_MAX_TOKENS=${STREAMING_DEFAULT_MAX_TOKENS:-1024}
+
+# Audio token processing
+export CODE_OFFSET=${CODE_OFFSET:-128266}                   # First audio code ID
+export CODE_SIZE=${CODE_SIZE:-4096}                         # Codes per sub-stream
+export FRAME_SUBSTREAMS=${FRAME_SUBSTREAMS:-7}              # Sub-streams per frame
+export MIN_WINDOW_FRAMES=${MIN_WINDOW_FRAMES:-4}            # Minimum window size
+
+# =============================================================================
+# HELPER FUNCTIONS
+# =============================================================================
+
+# Function to validate required environment variables
+validate_required_env() {
+    local missing_vars=()
+    
+    if [[ -z "$HF_TOKEN" ]]; then
+        missing_vars+=("HF_TOKEN")
+    fi
+    
+    if [[ -z "$TRTLLM_ENGINE_DIR" ]]; then
+        missing_vars+=("TRTLLM_ENGINE_DIR")
+    fi
+    
+    if [[ ${#missing_vars[@]} -gt 0 ]]; then
+        echo "Error: Missing required environment variables:"
+        printf "  - %s\n" "${missing_vars[@]}"
+        echo ""
+        echo "Please set these variables before running the server."
+        return 1
+    fi
+    
+    return 0
+}
+
+# Function to display current configuration
+show_config() {
+    echo "=== Yap Orpheus TTS Configuration ==="
+    echo "Server: ${HOST}:${PORT}"
+    echo "Model: ${MODEL_ID}"
+    echo "Engine: ${TRTLLM_ENGINE_DIR}"
+    echo "Max Batch: ${TRTLLM_MAX_BATCH_SIZE}"
+    echo "KV Cache: ${KV_FREE_GPU_FRAC} of free GPU memory"
+    echo "SNAC Batch: ${SNAC_MAX_BATCH}"
+    echo "===================================="
+}

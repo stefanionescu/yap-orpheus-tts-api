@@ -86,12 +86,14 @@ start_background() {
   exec tail -n +1 -F "$log_file"
 }
 
-# Source all .sh files from a directory if it exists
-source_env_dir() {
-  local dir="$1"
-  if [ -d "$dir" ]; then
+# Load centralized environment configuration
+load_environment() {
+  local env_file="${1:-scripts/environment.sh}"
+  if [ -f "$env_file" ]; then
     # shellcheck disable=SC1090
-    for f in "$dir"/*.sh; do [ -e "$f" ] && source "$f"; done
+    source "$env_file"
+  else
+    echo "[common] WARNING: Environment file $env_file not found" >&2
   fi
 }
 
