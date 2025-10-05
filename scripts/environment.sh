@@ -30,6 +30,7 @@ export TLLM_LOG_LEVEL=${TLLM_LOG_LEVEL:-INFO}
 
 # TensorRT-LLM repository (using Yap-With-AI fork)
 export TRTLLM_REPO_URL=${TRTLLM_REPO_URL:-https://github.com/Yap-With-AI/TensorRT-LLM.git}
+export TRTLLM_COMMIT=${TRTLLM_COMMIT:-663ce3a4deef92ddc4178857011dfb5cc93ca842}
 
 # Engine build parameters - optimized for TTS workload
 export TRTLLM_DTYPE=${TRTLLM_DTYPE:-float16}

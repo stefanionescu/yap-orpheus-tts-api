@@ -61,21 +61,14 @@ _prepare_tensorrt_repo() {
         git clone "${TRTLLM_REPO_URL}" "${TRTLLM_REPO_DIR}"
     fi
     
-    # Pin repo tag to installed wheel version (matching original logic)
-    echo "[build] Syncing repo version with installed wheel..."
-    local trtllm_ver
-    trtllm_ver="$(${PYTHON_EXEC} -c 'import tensorrt_llm as t; print(t.__version__)' 2>/dev/null | tail -1 | tr -d '[:space:]')"
-    echo "[build] Detected TensorRT-LLM version: ${trtllm_ver}"
-    git -C "${TRTLLM_REPO_DIR}" fetch --tags
+    # Checkout specific commit from Yap-With-AI fork
+    echo "[build] Checking out specific commit from Yap-With-AI fork..."
+    echo "[build] Using commit: ${TRTLLM_COMMIT}"
     
-    if ! git -C "${TRTLLM_REPO_DIR}" checkout "v${trtllm_ver}" 2>/dev/null; then
-        if [[ "${trtllm_ver}" == "1.0.0" ]]; then
-            echo "[build] Tag v1.0.0 not found, using known commit ae8270b713446948246f16fadf4e2a32e35d0f62"
-            git -C "${TRTLLM_REPO_DIR}" checkout ae8270b713446948246f16fadf4e2a32e35d0f62
-        else
-            echo "[build] ERROR: Could not checkout version ${trtllm_ver}" >&2
-            exit 1
-        fi
+    if ! git -C "${TRTLLM_REPO_DIR}" checkout "${TRTLLM_COMMIT}" 2>/dev/null; then
+        echo "[build] ERROR: Could not checkout commit ${TRTLLM_COMMIT}" >&2
+        echo "[build] Repository may need to be re-cloned. Try with --force flag." >&2
+        exit 1
     fi
     
     # Verify quantization directory exists

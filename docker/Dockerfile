@@ -109,8 +109,9 @@ RUN python -c "from huggingface_hub import login; login(token='${HF_TOKEN}', add
 # =============================================================================
 
 # Clone TensorRT-LLM repository for build tools (using Yap-With-AI fork)
-RUN git clone --depth 1 --branch v1.0.0 \
-    https://github.com/Yap-With-AI/TensorRT-LLM.git /tmp/tensorrt-llm
+RUN git clone https://github.com/Yap-With-AI/TensorRT-LLM.git /tmp/tensorrt-llm && \
+    cd /tmp/tensorrt-llm && \
+    git checkout 663ce3a4deef92ddc4178857011dfb5cc93ca842
 
 # Set build environment variables (from our environment.sh)
 ENV TRTLLM_ENGINE_DIR=/app/models/orpheus-trt-int4-awq
