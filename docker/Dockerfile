@@ -198,12 +198,11 @@ USER tts
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
     CMD curl -f http://localhost:8000/healthz || exit 1
 
-# Copy startup and stop scripts for Runpod usage
+# Copy startup script for manual control if needed
 COPY docker/start-server.sh /app/start-server.sh
-COPY docker/stop-server.sh /app/stop-server.sh
-RUN chmod +x /app/start-server.sh /app/stop-server.sh
+RUN chmod +x /app/start-server.sh
 
-# Default command (can be overridden)
-# For Runpod: the container starts but doesn't auto-run the server
-# Users run: bash /app/start-server.sh inside the pod
-CMD ["bash", "-c", "echo 'TTS Server Ready. Run: bash /app/start-server.sh' && sleep infinity"]
+# Default command - automatically start TTS server
+# For instant deployment: server starts immediately when container runs
+# For manual control: override with docker run ... bash (then use /app/start-server.sh)
+CMD ["bash", "-c", "cd /app && source .venv/bin/activate && exec python -m uvicorn server.server:app --host 0.0.0.0 --port 8000 --timeout-keep-alive 75 --log-level info"]

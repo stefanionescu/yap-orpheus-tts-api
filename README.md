@@ -27,17 +27,21 @@ Run Orpheus 3B TTS behind a FastAPI server using TensorRT-LLM backend with INT4-
 
 **Local/Cloud VM:**
 ```bash
-# Pull and run pre-built image
+# Pull and run pre-built image (server starts automatically)
 docker pull your_username/orpheus-3b-tts:latest
 docker run --gpus all -p 8000:8000 --name orpheus-tts your_username/orpheus-3b-tts:latest
+
+# Health check (server auto-starts)
+curl -s http://127.0.0.1:8000/healthz
 ```
 
-**Runpod (inside running container):**
+**Runpod (automatic startup):**
 ```bash
-# Start TTS server (image already loaded)
-python -m uvicorn server.server:app --host 0.0.0.0 --port 8000 --timeout-keep-alive 75 --log-level info
+# 1. Create pod with Docker image: your_username/orpheus-3b-tts:latest
+# 2. Server starts automatically when pod boots
+# 3. Access via Runpod's public URL immediately
 
-# Health check
+# Optional: Test from pod terminal
 curl -s http://127.0.0.1:8000/healthz
 ```
 

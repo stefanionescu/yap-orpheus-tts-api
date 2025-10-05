@@ -12,18 +12,31 @@ For instant deployment on any GPU-enabled machine:
 # Set your Docker image name
 export DOCKER_IMAGE="your_username/orpheus-3b-tts:latest"
 
-# Pull and run pre-built image
+# Pull and run pre-built image (server starts automatically)
 docker pull $DOCKER_IMAGE
 docker run --gpus all -p 8000:8000 --name orpheus-tts $DOCKER_IMAGE
+
+# Server starts automatically - check health
+curl http://localhost:8000/healthz
 ```
 
 ### Runpod Deployment
 
-When using Runpod or similar cloud GPU services:
+#### Option 1: Automatic Startup (Recommended)
+When using Runpod with automatic server startup:
 
 1. **Create pod** using Docker image: `your_username/orpheus-3b-tts:latest`
-2. **Connect to pod** (SSH/Jupyter/Web terminal)  
-3. **Start server with simple command:**
+2. **Server starts automatically** when pod boots
+3. **Access immediately** via Runpod's public URL (check pod interface)
+4. **Test**: `curl http://localhost:8000/healthz` (from pod terminal)
+
+#### Option 2: Manual Control
+For manual server control inside the pod:
+
+1. **Create pod** with Docker image but override command:
+   - Use custom Docker command: `bash` (prevents auto-start)
+2. **Connect to pod** (SSH/Jupyter/Web terminal)
+3. **Start server manually:**
 
 ```bash
 # Easy startup (foreground)
@@ -35,14 +48,11 @@ bash /app/start-server.sh --background
 # Check if running
 curl http://localhost:8000/healthz
 
-# View logs (if running in background)
-tail -f /tmp/tts-server.log
+# View logs
+docker logs -f orpheus-tts
 
-# Stop server (clean shutdown)
-bash /app/stop-server.sh
-
-# Restart server
-bash /app/stop-server.sh && bash /app/start-server.sh --background
+# Stop/restart container (server auto-restarts)
+docker restart orpheus-tts
 ```
 
 4. **Access via Runpod's public URL** (check pod interface for the URL)
@@ -255,14 +265,20 @@ docker run --rm --gpus all nvidia/cuda:12.1-base-ubuntu20.04 nvidia-smi
 
 ### Container Issues
 ```bash
-# View container logs
+# View container logs (server logs)
 docker logs -f orpheus-tts
 
 # Check container status
 docker ps -a
 
-# Restart container
+# Restart container (server auto-restarts)
 docker restart orpheus-tts
+
+# Stop container
+docker stop orpheus-tts
+
+# Remove container
+docker rm orpheus-tts
 ```
 
 ### Image Issues
