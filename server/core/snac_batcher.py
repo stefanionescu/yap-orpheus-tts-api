@@ -69,13 +69,13 @@ class SnacBatched:
                                 c1 = torch.cat([c[1] for c in codes_list], dim=0)
                                 c2 = torch.cat([c[2] for c in codes_list], dim=0)
                                 z_q = self.m.quantizer.from_codes([c0, c1, c2])
-                                audio_hat = self.m.decoder(z_q.to(self.dtype_decoder))[:, :, 2048:4096]
+                                audio_hat = self.m.decoder(z_q.to(self.dtype_decoder))[:, :, -2048:]
                                 outs = list(audio_hat.split(1, dim=0))
                             else:
                                 outs = []
                                 for c0, c1, c2 in codes_list:
                                     z_q = self.m.quantizer.from_codes([c0, c1, c2])
-                                    outs.append(self.m.decoder(z_q.to(self.dtype_decoder))[:, :, 2048:4096])
+                                    outs.append(self.m.decoder(z_q.to(self.dtype_decoder))[:, :, -2048:])
                             torch.cuda.synchronize()
                     else:
                         shapes = [(c[0].shape, c[1].shape, c[2].shape) for c in codes_list]
@@ -85,13 +85,13 @@ class SnacBatched:
                             c1 = torch.cat([c[1] for c in codes_list], dim=0)
                             c2 = torch.cat([c[2] for c in codes_list], dim=0)
                             z_q = self.m.quantizer.from_codes([c0, c1, c2])
-                            audio_hat = self.m.decoder(z_q.to(self.dtype_decoder))[:, :, 2048:4096]
+                            audio_hat = self.m.decoder(z_q.to(self.dtype_decoder))[:, :, -2048:]
                             outs = list(audio_hat.split(1, dim=0))
                         else:
                             outs = []
                             for c0, c1, c2 in codes_list:
                                 z_q = self.m.quantizer.from_codes([c0, c1, c2])
-                                outs.append(self.m.decoder(z_q.to(self.dtype_decoder))[:, :, 2048:4096])
+                                outs.append(self.m.decoder(z_q.to(self.dtype_decoder))[:, :, -2048:])
                 for fut, out in zip(futs, outs):
                     if not fut.done():
                         fut.set_result(out[0].detach().cpu().numpy())
