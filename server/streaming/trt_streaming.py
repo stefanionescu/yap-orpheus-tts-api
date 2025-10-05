@@ -54,11 +54,6 @@ async def aiter_pcm_from_custom_tokens(engine, prompt: str, voice: str, sp) -> b
     total_samples = 0
 
     FRAME = _FRAME
-    # Minimal left context frames to stabilize hop (decoder receptive field)
-    # Default to 3 frames; env can override
-    HOP_DECODE_FRAMES = max(1, int(os.getenv("TTS_HOP_DECODE_FRAMES", "3")))
-    # Boundary smoothing via overlap-add crossfade (equal-power-ish), default 10 ms
-    FADE_SAMPLES = max(0, int(os.getenv("TTS_CROSSFADE_SAMPLES", str(int(0.010 * _SAMPLE_RATE)))))
     prev_len = 0  # previous length of token_ids
 
     async def _decode_window(window_codes: list[int]) -> np.ndarray:
@@ -83,11 +78,9 @@ async def aiter_pcm_from_custom_tokens(engine, prompt: str, voice: str, sp) -> b
         if frames_ready <= frames_emitted:
             return None
 
-        # Decode with small left context to stabilize boundary; emit last 2048
-        need_tokens = HOP_DECODE_FRAMES * FRAME
-        start = -need_tokens if len(codes_buf) >= need_tokens else -len(codes_buf)
-        hop_ctx_codes = codes_buf[start:]
-        pcm = await _decode_window(hop_ctx_codes)
+        # Decode only the new frame (last 7 codes)
+        hop_codes = codes_buf[-FRAME:]
+        pcm = await _decode_window(hop_codes)
         if pcm.size == 0:
             frames_emitted = frames_ready
             return None
@@ -108,8 +101,6 @@ async def aiter_pcm_from_custom_tokens(engine, prompt: str, voice: str, sp) -> b
 
         await asyncio.sleep(0)
         return emit_pcm.tobytes()
-
-    prev_chunk_np: np.ndarray | None = None
 
     async for chunk in engine.generate_async(formatted, sp, streaming=True):
         if not getattr(chunk, "outputs", None):
@@ -140,33 +131,9 @@ async def aiter_pcm_from_custom_tokens(engine, prompt: str, voice: str, sp) -> b
                     frames_ready = audio_tok_idx // FRAME
                     chunk_bytes = await _emit_hop(frames_ready)
                     if chunk_bytes:
-                        # Optional crossfade smoothing
-                        if FADE_SAMPLES > 0:
-                            curr = np.frombuffer(chunk_bytes, dtype=np.int16).copy()
-                            if prev_chunk_np is None:
-                                prev_chunk_np = curr
-                            else:
-                                n = min(FADE_SAMPLES, prev_chunk_np.size, curr.size)
-                                if n > 0:
-                                    # equal-power crossfade
-                                    t = np.linspace(0.0, 1.0, num=n, endpoint=True, dtype=np.float32)
-                                    fade_in = np.sqrt(t)
-                                    fade_out = np.sqrt(1.0 - t)
-                                    head = (prev_chunk_np[-n:].astype(np.float32) * fade_out + curr[:n].astype(np.float32) * fade_in)
-                                    mixed = np.clip(head, -32768.0, 32767.0).astype(np.int16)
-                                    to_send = np.concatenate([prev_chunk_np[:-n], mixed]) if prev_chunk_np.size > n else mixed
-                                else:
-                                    to_send = prev_chunk_np
-                                # emit and carry
-                                if to_send.size > 0:
-                                    yield to_send.tobytes()
-                                prev_chunk_np = curr
-                        else:
-                            yield chunk_bytes
+                        yield chunk_bytes
             else:
                 continue
 
-    # Flush any pending crossfade buffer on EOS/EOA/EOT
-    if 'prev_chunk_np' in locals() and prev_chunk_np is not None and FADE_SAMPLES > 0:
-        yield prev_chunk_np.tobytes()
+    # natural termination on EOS / EOA / EOT (nothing left to emit beyond last hop)
     return
