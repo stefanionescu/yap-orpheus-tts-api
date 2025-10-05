@@ -130,7 +130,7 @@ Note on HF token precedence:
 bash scripts/02-build.sh --force
 
 # Custom settings
-bash scripts/02-build.sh --max-batch-size 32 --force
+bash scripts/02-build.sh --max-batch-size 24 --force
 ```
 
 ## Benchmarking
