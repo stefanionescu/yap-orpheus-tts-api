@@ -55,6 +55,8 @@ async def aiter_pcm_from_custom_tokens(engine, prompt: str, voice: str, sp) -> b
 
     FRAME = _FRAME
     prev_len = 0  # previous length of token_ids
+    # Small left context to stabilize decoder boundary (3 frames)
+    HOP_LEFT_FRAMES = 3
 
     async def _decode_window(window_codes: list[int]) -> np.ndarray:
         arr = np.asarray(window_codes, dtype=np.int32).reshape(-1, FRAME)
@@ -78,9 +80,10 @@ async def aiter_pcm_from_custom_tokens(engine, prompt: str, voice: str, sp) -> b
         if frames_ready <= frames_emitted:
             return None
 
-        # Decode only the new frame (last 7 codes)
-        hop_codes = codes_buf[-FRAME:]
-        pcm = await _decode_window(hop_codes)
+        # Decode with a minimal left context (3 frames) and emit the hop
+        need_tokens = min(len(codes_buf), FRAME * HOP_LEFT_FRAMES)
+        hop_ctx_codes = codes_buf[-need_tokens:]
+        pcm = await _decode_window(hop_ctx_codes)
         if pcm.size == 0:
             frames_emitted = frames_ready
             return None
