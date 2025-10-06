@@ -38,6 +38,7 @@ async def aiter_pcm_from_custom_tokens(engine, prompt: str, voice: str, sp):
             enabled=settings.trim_leading_silence,
             rms_threshold=settings.silence_rms_threshold,
             activation_ms=settings.silence_activation_ms,
+            prepad_ms=settings.silence_prespeech_pad_ms,
             max_leading_sec=settings.silence_max_leading_sec,
         )
     )

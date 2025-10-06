@@ -16,6 +16,7 @@ class SilenceTrimConfig:
     enabled: bool
     rms_threshold: float
     activation_ms: float
+    prepad_ms: float
     max_leading_sec: float
 
 
@@ -38,6 +39,9 @@ class SilenceTrimmer:
         self._max_leading_samples = (
             int(cfg.sample_rate * cfg.max_leading_sec) if cfg.max_leading_sec > 0 else None
         )
+        self._prepad_samples = max(0, int(cfg.sample_rate * (cfg.prepad_ms / 1000.0)))
+        self._prepad_bytes = self._prepad_samples * 2
+        self._buffer = bytearray()
 
     def push(self, audio_bytes: bytes) -> bytes:
         """Process a PCM chunk and return trimmed bytes if leading silence remains."""
@@ -57,26 +61,31 @@ class SilenceTrimmer:
 
         if activation_index is None and rms < self.cfg.rms_threshold:
             self._trimmed_samples += frame.size
+            self._append_silence(audio_bytes)
             if self._should_force_start():
                 self._started = True
-                if frame.size:
-                    logger.debug("Silence trim forced after %.3fs", self._trimmed_samples / self.cfg.sample_rate)
-                return audio_bytes
+                logger.debug(
+                    "Silence trim forced after %.3fs", self._trimmed_samples / self.cfg.sample_rate
+                )
+                return self._emit_with_prepad(audio_bytes)
             return b""
 
         if activation_index is None:
-            # RMS threshold crossed but no sustained activation; fallback to whole chunk.
             activation_index = 0
 
-        trimmed = frame[activation_index:]
-        self._trimmed_samples += activation_index
+        if activation_index > 0:
+            pre_bytes = frame[:activation_index].tobytes()
+            self._append_silence(pre_bytes)
+            self._trimmed_samples += activation_index
+
+        trimmed = frame[activation_index:].tobytes()
         self._started = True
 
         if self._trimmed_samples > 0:
             trimmed_sec = self._trimmed_samples / self.cfg.sample_rate
             logger.debug("Trimmed %.3fs of leading silence", trimmed_sec)
 
-        return trimmed.tobytes()
+        return self._emit_with_prepad(trimmed)
 
     def flush(self) -> bytes:
         """Ensure downstream consumers know we won't emit more audio."""
@@ -103,3 +112,18 @@ class SilenceTrimmer:
         if self._max_leading_samples is None:
             return False
         return self._trimmed_samples >= self._max_leading_samples
+
+    def _append_silence(self, data: bytes) -> None:
+        if self._prepad_bytes == 0 or not data:
+            return
+        self._buffer.extend(data)
+        if len(self._buffer) > self._prepad_bytes:
+            del self._buffer[:-self._prepad_bytes]
+
+    def _emit_with_prepad(self, active_bytes: bytes) -> bytes:
+        if self._prepad_bytes and self._buffer:
+            prepad = bytes(self._buffer[-self._prepad_bytes:])
+        else:
+            prepad = b""
+        self._buffer.clear()
+        return prepad + active_bytes
