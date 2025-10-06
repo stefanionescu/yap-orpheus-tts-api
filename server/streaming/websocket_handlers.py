@@ -5,6 +5,7 @@ import json
 from typing import Optional
 
 from server.config import settings
+from server.prompts import resolve_voice
 
 
 class MessageParser:
@@ -40,6 +41,12 @@ class MessageParser:
             text = (obj.get("text") or "").strip()
             voice = obj.get("voice")
             if text:
+                # Validate voice parameter if provided
+                if voice is not None:
+                    try:
+                        resolve_voice(str(voice))  # This will raise ValueError if invalid
+                    except ValueError as e:
+                        raise ValueError(f"Voice validation failed: {e}")
                 return {"type": "text", "text": text, "voice": voice}
         
         return None
@@ -58,7 +65,13 @@ class ConnectionState:
     def update_from_meta(self, meta: dict) -> None:
         """Update connection state from metadata message."""
         if "voice" in meta and meta["voice"]:
-            self.voice = str(meta["voice"])
+            try:
+                # Validate voice parameter - only 'female' and 'male' allowed
+                voice_str = str(meta["voice"])
+                resolve_voice(voice_str)  # This will raise ValueError if invalid
+                self.voice = voice_str
+            except ValueError as e:
+                raise ValueError(f"Voice validation failed: {e}")
         
         for param, attr in [
             ("temperature", "temperature"),
@@ -105,6 +118,10 @@ async def message_receiver(ws, queue: asyncio.Queue) -> None:
             if parsed["type"] == "end":
                 break
                 
+        except ValueError:
+            # Voice validation error - send end signal to close connection
+            await queue.put({"type": "end", "error": "invalid_voice"})
+            break
         except Exception:
             await queue.put({"type": "end"})
             break

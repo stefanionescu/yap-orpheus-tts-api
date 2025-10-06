@@ -91,7 +91,7 @@ def parse_args() -> argparse.Namespace:
     ap.add_argument(
         "--voice",
         default=os.getenv("TTS_VOICE", "female"),
-        help="Voice alias: female|male|tara|zac",
+        help="Voice alias: female|male",
     )
     ap.add_argument(
         "--text",

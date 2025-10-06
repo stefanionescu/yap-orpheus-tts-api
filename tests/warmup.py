@@ -46,7 +46,7 @@ def _ws_url(server: str) -> str:
 def main() -> None:
     ap = argparse.ArgumentParser(description="WebSocket streaming warmup (Orpheus TTS)")
     ap.add_argument("--server", default="127.0.0.1:8000", help="host:port or http[s]://host:port")
-    ap.add_argument("--voice", default=os.environ.get("TTS_VOICE", "female"), help="Voice alias: female|male|tara|zac")
+    ap.add_argument("--voice", default=os.environ.get("TTS_VOICE", "female"), help="Voice alias: female|male")
     ap.add_argument("--text", default=DEFAULT_TEXT, help="Text to synthesize")
     ap.add_argument("--seed", type=int, default=None, help="Optional seed override")
     ap.add_argument("--num-predict", type=int, default=None, help="Optional num_predict override")

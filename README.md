@@ -68,7 +68,7 @@ All configuration is centralized in `scripts/environment.sh` with comprehensive 
 ### Key Configuration Settings
 - **Engine**: `TRTLLM_MAX_BATCH_SIZE=16` (concurrent users), `KV_FREE_GPU_FRAC=0.92` (GPU memory usage)
 - **TTS**: `SNAC_MAX_BATCH=64` (audio decoder batching), `ORPHEUS_MAX_TOKENS=1024` (output length)
-- **Server**: `HOST=0.0.0.0`, `PORT=8000`, `DEFAULT_VOICE=tara`
+- **Server**: `HOST=0.0.0.0`, `PORT=8000`, `DEFAULT_VOICE=female`
 - **Performance**: CUDA, PyTorch, and threading optimizations
 
 See `scripts/environment.sh` for all available options and detailed documentation.
@@ -269,7 +269,7 @@ python tests/warmup.py
 python tests/bench.py --n 8 --concurrency 8
 
 # Custom text and voice
-python tests/warmup.py --voice tara --text "Your custom text here"
+python tests/warmup.py --voice female --text "Your custom text here"
 ```
 
 ### Docker/Runpod Testing
@@ -384,20 +384,3 @@ TTS models generate discrete audio codes where activation precision is critical.
 **Avoid**: 
 - Full quantization (W8A8 SmoothQuant) destroys TTS quality by quantizing activations
 - FP8 quantization (A100 doesn't support FP8 instructions)
-
-## Client Usage
-
-WebSocket endpoint: `ws://host:8000/ws/tts`
-
-```python
-import websockets
-import json
-
-async with websockets.connect("ws://localhost:8000/ws/tts") as ws:
-    await ws.send(json.dumps({"text": "Hello world", "voice": "tara"}))
-    while True:
-        msg = await ws.recv()
-        if msg == b"__END__":
-            break
-        # msg is raw PCM audio bytes (24kHz, int16)
-```

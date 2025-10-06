@@ -192,7 +192,7 @@ def main() -> None:
     ap.add_argument("--server", default="127.0.0.1:8000", help="host:port or http[s]://host:port")
     ap.add_argument("--n", type=int, default=10, help="Total requests")
     ap.add_argument("--concurrency", type=int, default=10, help="Max concurrent sessions")
-    ap.add_argument("--voice", type=str, default=os.environ.get("TTS_VOICE", "female"), help="Voice alias: female|male|tara|zac")
+    ap.add_argument("--voice", type=str, default=os.environ.get("TTS_VOICE", "female"), help="Voice alias: female|male")
     ap.add_argument("--text", action="append", default=None, help="Inline text prompt (repeat for multiple)")
     ap.add_argument("--seed", type=int, default=None, help="Optional seed override")
     ap.add_argument("--num-predict", type=int, default=None, help="Optional num_predict override")

@@ -8,8 +8,8 @@ from dotenv import load_dotenv
 from server.auth.utils import ensure_hf_login
 from server.config import settings
 from server.engine import OrpheusTRTEngine as _Engine
-from server.websocket_handlers import message_receiver, ConnectionState
-from server.synthesis_pipeline import SynthesisPipeline
+from server.streaming.websocket_handlers import message_receiver, ConnectionState
+from server.streaming.synthesis_pipeline import SynthesisPipeline
 
 load_dotenv(".env")
 
@@ -65,7 +65,15 @@ async def tts_ws(ws: WebSocket):
                     break
                 
                 if message.get("type") == "meta":
-                    connection_state.update_from_meta(message.get("meta", {}))
+                    try:
+                        connection_state.update_from_meta(message.get("meta", {}))
+                    except ValueError:
+                        # Invalid voice parameter - close connection
+                        try:
+                            await ws.close(code=1008)  # Policy violation
+                        except Exception:
+                            pass
+                        break
                     continue
                 
                 if message.get("type") == "text":
@@ -73,7 +81,19 @@ async def tts_ws(ws: WebSocket):
                     voice_override = message.get("voice")
                     
                     if voice_override:
-                        connection_state.voice = str(voice_override)
+                        try:
+                            # Validate voice parameter - only 'female' and 'male' allowed
+                            voice_str = str(voice_override)
+                            from server.prompts import resolve_voice
+                            resolve_voice(voice_str)  # This will raise ValueError if invalid
+                            connection_state.voice = voice_str
+                        except ValueError:
+                            # Invalid voice parameter - close connection
+                            try:
+                                await ws.close(code=1008)  # Policy violation
+                            except Exception:
+                                pass
+                            break
                     
                     if not text:
                         try:

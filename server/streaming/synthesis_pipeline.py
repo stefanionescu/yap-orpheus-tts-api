@@ -7,7 +7,7 @@ from tensorrt_llm import SamplingParams
 
 from server.text.chunking import chunk_by_sentences
 from server.prompts import resolve_voice
-from server.tts_streaming import aiter_pcm_from_custom_tokens
+from server.streaming.tts_streaming import aiter_pcm_from_custom_tokens
 from server.config import settings
 
 
@@ -22,8 +22,13 @@ class SynthesisPipeline:
         # Build sampling params
         sp = SamplingParams(**sampling_kwargs)
         
-        # Resolve voice and chunk text
-        resolved_voice = resolve_voice(voice) or settings.default_voice
+        # Resolve voice and chunk text  
+        # Voice should already be validated by this point, but handle any edge cases
+        try:
+            resolved_voice = resolve_voice(voice)
+        except ValueError:
+            # Fallback to default voice if somehow an invalid voice got through
+            resolved_voice = resolve_voice("female")  # Default to female voice
         chunks = chunk_by_sentences(text)
         
         if not chunks:
