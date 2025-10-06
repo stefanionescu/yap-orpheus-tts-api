@@ -69,7 +69,12 @@ class Settings:
     # Event loop yield (0.0 keeps behavior identical while allowing tuning)
     yield_sleep_seconds: float = float(os.getenv("YIELD_SLEEP_SECONDS", "0"))
 
+    # Audio post-processing
+    trim_leading_silence: bool = os.getenv("TRIM_LEADING_SILENCE", "1") == "1"
+    silence_rms_threshold: float = float(os.getenv("SILENCE_RMS_THRESHOLD", "0.004"))
+    silence_activation_ms: float = float(os.getenv("SILENCE_ACTIVATION_MS", "12"))
+    silence_max_leading_sec: float = float(os.getenv("SILENCE_MAX_LEADING_SEC", "0.6"))
+
 
 settings = Settings()
-
 

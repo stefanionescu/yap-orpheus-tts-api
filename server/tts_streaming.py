@@ -3,6 +3,7 @@
 from server.prompts import build_prompt, resolve_voice
 from server.config import settings
 from server.streaming.audio_decoder import AudioDecoder, TokenProcessor
+from server.streaming.silence import SilenceTrimConfig, SilenceTrimmer
 
 
 async def aiter_pcm_from_custom_tokens(engine, prompt: str, voice: str, sp):
@@ -28,9 +29,18 @@ async def aiter_pcm_from_custom_tokens(engine, prompt: str, voice: str, sp):
     # Build the Orpheus prompt
     formatted = build_prompt(prompt, resolve_voice(voice))
 
-    # Initialize clean decoder and processor
+    # Initialize clean decoder, processor, and silence trimmer
     decoder = AudioDecoder()
     processor = TokenProcessor(decoder)
+    trimmer = SilenceTrimmer(
+        SilenceTrimConfig(
+            sample_rate=decoder.sample_rate,
+            enabled=settings.trim_leading_silence,
+            rms_threshold=settings.silence_rms_threshold,
+            activation_ms=settings.silence_activation_ms,
+            max_leading_sec=settings.silence_max_leading_sec,
+        )
+    )
     prev_len = 0
 
     # Stream tokens and process audio codes
@@ -57,9 +67,13 @@ async def aiter_pcm_from_custom_tokens(engine, prompt: str, voice: str, sp):
             if frames_ready is not None:
                 chunk_bytes = await processor.emit_window(frames_ready)
                 if chunk_bytes:
-                    yield chunk_bytes
+                    trimmed = trimmer.push(chunk_bytes)
+                    if trimmed:
+                        yield trimmed
 
     # Emit final window for remaining frames
     final_bytes = await processor.emit_final_window()
     if final_bytes:
-        yield final_bytes
+        trimmed = trimmer.push(final_bytes)
+        if trimmed:
+            yield trimmed
