@@ -93,7 +93,7 @@ RUN pip install -r requirements.txt
 
 # Install TensorRT-LLM and related packages
 RUN pip install --upgrade --extra-index-url https://pypi.nvidia.com \
-    tensorrt-llm==1.0.0 \
+    tensorrt-llm==1.1.0rc6 \
     tensorrt-cu12-bindings \
     tensorrt-cu12-libs
 

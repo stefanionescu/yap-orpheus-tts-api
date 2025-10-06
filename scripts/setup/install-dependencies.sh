@@ -195,7 +195,7 @@ EOF
 
 PYTHON_VERSION="${PYTHON_VERSION:-3.10}"
 VENV_DIR="${VENV_DIR:-$PWD/.venv}"
-TRTLLM_WHEEL_URL="${TRTLLM_WHEEL_URL:-https://pypi.nvidia.com/tensorrt-llm/tensorrt_llm-1.0.0-cp310-cp310-linux_x86_64.whl}"
+TRTLLM_WHEEL_URL="${TRTLLM_WHEEL_URL:-tensorrt-llm==${TRTLLM_VERSION}}"
 
 # Validate environment
 require_env HF_TOKEN
