@@ -1,6 +1,7 @@
 """Refactored TRT-LLM streaming with clean class-based architecture."""
 
-from server.prompts import build_prompt, resolve_voice
+from server.prompts import build_prompt
+from server.voices import resolve_voice
 from server.config import settings
 from server.streaming.audio_decoder import AudioDecoder, TokenProcessor
 from server.streaming.silence import SilenceTrimConfig, SilenceTrimmer
@@ -19,6 +20,7 @@ async def aiter_pcm_from_custom_tokens(engine, prompt: str, voice: str, sp):
         top_p=float(getattr(sp, "top_p", settings.default_top_p)) if hasattr(sp, "top_p") else settings.default_top_p,
         repetition_penalty=float(getattr(sp, "repetition_penalty", settings.default_repetition_penalty)) if hasattr(sp, "repetition_penalty") else settings.default_repetition_penalty,
         max_tokens=int(getattr(sp, "max_tokens", settings.streaming_default_max_tokens)) if hasattr(sp, "max_tokens") else settings.streaming_default_max_tokens,
+        seed=int(getattr(sp, "seed", 42)) if hasattr(sp, "seed") else 42,
         stop_token_ids=list(settings.streaming_stop_token_ids),
         detokenize=settings.trt_detokenize,
         skip_special_tokens=settings.trt_skip_special_tokens,

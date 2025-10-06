@@ -5,7 +5,7 @@ import json
 from typing import Optional
 
 from server.config import settings
-from server.prompts import resolve_voice
+from server.voices import resolve_voice, get_voice_defaults
 
 
 class MessageParser:
@@ -61,6 +61,7 @@ class ConnectionState:
         self.top_p: Optional[float] = None
         self.repetition_penalty: Optional[float] = None
         self.max_tokens: Optional[int] = None
+        self.seed: Optional[int] = None
     
     def update_from_meta(self, meta: dict) -> None:
         """Update connection state from metadata message."""
@@ -77,24 +78,36 @@ class ConnectionState:
             ("temperature", "temperature"),
             ("top_p", "top_p"), 
             ("repetition_penalty", "repetition_penalty"),
-            ("max_tokens", "max_tokens")
+            ("max_tokens", "max_tokens"),
+            ("seed", "seed")
         ]:
             if param in meta:
                 try:
-                    value = float(meta[param]) if param != "max_tokens" else int(meta[param])
+                    if param in ["max_tokens", "seed"]:
+                        value = int(meta[param])
+                    else:
+                        value = float(meta[param])
                     setattr(self, attr, value)
                 except Exception:
                     pass
     
     def get_sampling_kwargs(self) -> dict:
-        """Build sampling parameters dict with fallback defaults."""
+        """Build sampling parameters dict with voice-specific fallback defaults."""
+        # Get voice-specific defaults
+        voice_defaults = get_voice_defaults(self.voice)
+        
         return {
             "temperature": float(
-                self.temperature if self.temperature is not None else settings.default_temperature
+                self.temperature if self.temperature is not None else voice_defaults["temperature"]
             ),
-            "top_p": float(self.top_p if self.top_p is not None else settings.default_top_p),
+            "top_p": float(
+                self.top_p if self.top_p is not None else voice_defaults["top_p"]
+            ),
             "repetition_penalty": float(
-                self.repetition_penalty if self.repetition_penalty is not None else settings.default_repetition_penalty
+                self.repetition_penalty if self.repetition_penalty is not None else voice_defaults["repetition_penalty"]
+            ),
+            "seed": int(
+                self.seed if self.seed is not None else voice_defaults["seed"]
             ),
             "max_tokens": int(self.max_tokens if self.max_tokens is not None else settings.orpheus_max_tokens),
             "stop_token_ids": list(settings.server_stop_token_ids),

@@ -1,31 +1,12 @@
 from transformers import AutoTokenizer
 from server.config import settings
-
-ALIASES = {
-    "female": "tara",
-    "male": "zac",
-}
+from server.voices import resolve_voice
 
 MODEL_ID = settings.model_id
 
 # Cache tokenizer at import time
 _tok = AutoTokenizer.from_pretrained(MODEL_ID)
 
-def resolve_voice(v: str) -> str:
-    """
-    Resolve voice parameter to internal voice name.
-    Only accepts 'female' and 'male' as valid inputs.
-    """
-    if not v:
-        return "tara"  # Default to female voice
-    
-    key = v.strip().lower()
-    
-    # Only allow 'female' and 'male' as valid voice parameters
-    if key not in ALIASES:
-        raise ValueError(f"Invalid voice parameter '{v}'. Only 'female' and 'male' are supported.")
-    
-    return ALIASES[key]
 
 def build_prompt(text: str, voice: str = "tara") -> str:
     v = resolve_voice(voice)

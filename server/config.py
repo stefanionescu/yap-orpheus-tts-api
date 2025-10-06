@@ -47,7 +47,7 @@ class Settings:
     ws_queue_maxsize: int = int(os.getenv("WS_QUEUE_MAXSIZE", "128"))
     default_voice: str = os.getenv("DEFAULT_VOICE", "tara")
     ws_meta_keys: tuple[str, ...] = (
-        "voice", "max_tokens", "temperature", "top_p", "repetition_penalty", "buffer_size"
+        "voice", "max_tokens", "temperature", "top_p", "repetition_penalty", "seed", "buffer_size"
     )
 
     # TRT-LLM streaming SamplingParams policy (identical behavior centralized)

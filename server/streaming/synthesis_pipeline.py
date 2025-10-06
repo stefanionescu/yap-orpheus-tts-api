@@ -6,7 +6,7 @@ from typing import Optional
 from tensorrt_llm import SamplingParams
 
 from server.text.chunking import chunk_by_sentences
-from server.prompts import resolve_voice
+from server.voices import resolve_voice
 from server.streaming.tts_streaming import aiter_pcm_from_custom_tokens
 from server.config import settings
 

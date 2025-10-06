@@ -84,7 +84,7 @@ async def tts_ws(ws: WebSocket):
                         try:
                             # Validate voice parameter - only 'female' and 'male' allowed
                             voice_str = str(voice_override)
-                            from server.prompts import resolve_voice
+                            from server.voices import resolve_voice
                             resolve_voice(voice_str)  # This will raise ValueError if invalid
                             connection_state.voice = voice_str
                         except ValueError:
