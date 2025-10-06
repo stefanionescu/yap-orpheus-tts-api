@@ -1,6 +1,7 @@
 """Clean audio decoding logic extracted from streaming.py."""
 
 import asyncio
+from typing import Optional
 import numpy as np
 import torch
 
