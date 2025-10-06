@@ -108,11 +108,22 @@ _build_optimized_engine() {
     echo "[build] Step 1/2: Quantize to INT4-AWQ (weight-only)"
     echo "[build] ============================================"
     
-    # Install quantization dependencies
+    # Install quantization dependencies (excluding tensorrt-llm and constraints to avoid conflicts)
     local quant_requirements="${TRTLLM_REPO_DIR}/examples/quantization/requirements.txt"
     if [ -f "${quant_requirements}" ]; then
-        echo "[build] Installing quantization requirements..."
-        pip install -r "${quant_requirements}"
+        echo "[build] Installing quantization requirements (excluding tensorrt-llm and constraints)..."
+        # Filter out tensorrt-llm lines and constraints file references to avoid version conflicts
+        grep -v -E "(tensorrt.llm|^-c |^--constraint)" "${quant_requirements}" > /tmp/filtered_requirements.txt || true
+        if [ -s /tmp/filtered_requirements.txt ]; then
+            pip install -r /tmp/filtered_requirements.txt
+        else
+            echo "[build] No additional requirements needed (tensorrt-llm already installed)"
+        fi
+        rm -f /tmp/filtered_requirements.txt
+        
+        # Install specific additional packages that quantization needs
+        echo "[build] Installing additional quantization packages..."
+        pip install evaluate~=0.4.1 rouge_score~=0.1.2 || true
     else
         echo "[build] WARNING: quantization requirements.txt not found, skipping..."
     fi

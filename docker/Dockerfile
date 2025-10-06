@@ -93,7 +93,7 @@ RUN pip install -r requirements.txt
 
 # Install TensorRT-LLM and related packages
 RUN pip install --upgrade --extra-index-url https://pypi.nvidia.com \
-    tensorrt-llm==1.1.0rc6 \
+    tensorrt-llm==1.0.0 \
     tensorrt-cu12-bindings \
     tensorrt-cu12-libs
 
@@ -126,8 +126,11 @@ RUN mkdir -p ${TRTLLM_ENGINE_DIR} /app/audio
 # Build optimized TensorRT-LLM engine with INT4-AWQ + INT8 KV cache (2-step process)
 WORKDIR /tmp/tensorrt-llm/examples/quantization
 
-# Install quantization requirements
-RUN pip install -r requirements.txt
+# Install quantization requirements (excluding tensorrt-llm and constraints to avoid conflicts)
+RUN grep -v -E "(tensorrt.llm|^-c |^--constraint)" requirements.txt > /tmp/filtered_requirements.txt && \
+    (pip install -r /tmp/filtered_requirements.txt || true) && \
+    pip install evaluate~=0.4.1 rouge_score~=0.1.2 && \
+    rm -f /tmp/filtered_requirements.txt
 
 # Enable fast HF downloads
 ENV HF_HUB_ENABLE_HF_TRANSFER=1
