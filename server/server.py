@@ -10,6 +10,7 @@ from server.config import settings
 from server.engine import OrpheusTRTEngine as _Engine
 from server.websocket_handlers import message_receiver, ConnectionState
 from server.synthesis_pipeline import SynthesisPipeline
+from server.prompts import resolve_voice
 
 load_dotenv(".env")
 
@@ -73,7 +74,7 @@ async def tts_ws(ws: WebSocket):
                     voice_override = message.get("voice")
                     
                     if voice_override:
-                        connection_state.voice = str(voice_override)
+                        connection_state.voice = resolve_voice(str(voice_override))
                     
                     if not text:
                         try:
@@ -106,4 +107,3 @@ async def tts_ws(ws: WebSocket):
             await ws.close()
         except Exception:
             pass
-

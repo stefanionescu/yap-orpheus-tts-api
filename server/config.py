@@ -1,7 +1,6 @@
 import os
 from dataclasses import dataclass
 
-
 @dataclass(frozen=True)
 class Settings:
     """Centralized configuration for the TTS server.
@@ -26,9 +25,9 @@ class Settings:
     # TTS / Streaming
     orpheus_max_tokens: int = int(os.getenv("ORPHEUS_MAX_TOKENS", "1024"))
     # Default sampling parameters used when client omits values
-    default_temperature: float = float(os.getenv("DEFAULT_TEMPERATURE", "0.6"))
-    default_top_p: float = float(os.getenv("DEFAULT_TOP_P", "0.8"))
-    default_repetition_penalty: float = float(os.getenv("DEFAULT_REPETITION_PENALTY", "1.1"))
+    default_temperature: float = float(os.getenv("DEFAULT_TEMPERATURE", "0.45"))
+    default_top_p: float = float(os.getenv("DEFAULT_TOP_P", "0.9"))
+    default_repetition_penalty: float = float(os.getenv("DEFAULT_REPETITION_PENALTY", "1.15"))
     # Stop-token policy for the server-side SamplingParams (non-streaming path)
     server_stop_token_ids: tuple[int, ...] = (128009, 128260)
 
@@ -75,6 +74,7 @@ class Settings:
     silence_activation_ms: float = float(os.getenv("SILENCE_ACTIVATION_MS", "8"))
     silence_prespeech_pad_ms: float = float(os.getenv("SILENCE_PRESPEECH_PAD_MS", "80"))
     silence_max_leading_sec: float = float(os.getenv("SILENCE_MAX_LEADING_SEC", "0.6"))
+    voice_sampling_overrides: dict[str, dict[str, float]] = VOICE_SAMPLING_OVERRIDES  # type: ignore[assignment]
 
 
 settings = Settings()
