@@ -289,16 +289,31 @@ python tests/bench.py --host localhost --port 8000 --n 4 --concurrency 4
 tail -f /tmp/tts-server.log
 ```
 
-### External Client Testing
+### External Client Testing (from your laptop)
 
-To test from outside the container/pod:
+Run the streaming client against a remote/local server using a clean virtual environment:
 
 ```bash
-# Install websockets locally
+# 1) Clone this repo (or ensure you're in the repo root)
+git clone https://github.com/your_org/yap-orpheus-tts-api.git
+cd yap-orpheus-tts-api
+
+# 2) Create and activate a virtual environment
+python3 -m venv .venv
+source .venv/bin/activate
+
+# 3) Install lightweight client dependencies only
+python -m pip install --upgrade pip
 pip install websockets python-dotenv
 
-# Test against remote server (replace with your URL)
-python tests/client.py --server your-runpod-url.proxy.runpod.net:8000 --voice female
+# 4) Run the client against your server (replace with your URL/host)
+python tests/client.py --voice female
+
+# Example for local machine
+# python tests/client.py --server 127.0.0.1:8000 --voice male
+
+# 5) When done
+# deactivate
 ```
 
 ## Performance Tuning
