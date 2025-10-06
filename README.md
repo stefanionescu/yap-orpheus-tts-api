@@ -147,20 +147,16 @@ docker push $DOCKER_USERNAME/orpheus-3b-tts:latest
 export HF_TOKEN="hf_xxx"
 
 # 1) Bootstrap system dependencies (OpenMPI, Python dev libs)
-bash scripts/setup/bootstrap.sh
-# or: bash scripts/00-bootstrap.sh  (compatibility wrapper)
+bash scripts/00-bootstrap.sh
 
 # 2) Install Python environment and TensorRT-LLM
-bash scripts/setup/install-dependencies.sh
-# or: bash scripts/01-install-trt.sh  (compatibility wrapper)
+bash scripts/01-install-trt.sh
 
 # 3) Build INT4-AWQ + INT8 KV cache engine
-bash scripts/build/build-engine.sh
-# or: bash scripts/02-build.sh  (compatibility wrapper)
+bash scripts/02-build.sh
 
 # 4) Start TTS server
-bash scripts/runtime/start-server.sh
-# or: bash scripts/03-run-server.sh  (compatibility wrapper)
+bash scripts/03-run-server.sh
 ```
 
 ### Script Organization
@@ -204,8 +200,7 @@ export TRTLLM_ENGINE_DIR="$(pwd)/models/orpheus-trt-int4-awq"
 4) Start the server:
 
 ```bash
-bash scripts/runtime/start-server.sh
-# or: bash scripts/03-run-server.sh  (compatibility wrapper)
+bash scripts/03-run-server.sh
 ```
 
 5) Health check:
@@ -246,12 +241,10 @@ Note on HF token precedence:
 
 ```bash
 # Force rebuild with new settings
-bash scripts/build/build-engine.sh --force
-# or: bash scripts/02-build.sh --force  (compatibility wrapper)
+bash scripts/02-build.sh --force
 
 # Custom batch size
-bash scripts/build/build-engine.sh --max-batch-size 32 --force
-# or: bash scripts/02-build.sh --max-batch-size 32 --force
+bash scripts/02-build.sh --max-batch-size 32 --force
 ```
 
 ## Testing and Benchmarking
@@ -317,8 +310,7 @@ If you experience RTF degradation at high concurrency (16-20+ users):
 **Rebuild with INT8 KV Cache** (primary fix):
 ```bash
 # INT8 KV cache is now enabled by default in the build script
-bash scripts/build/build-engine.sh --force
-# or: bash scripts/02-build.sh --force  (compatibility wrapper)
+bash scripts/02-build.sh --force
 ```
 
 This reduces KV cache memory usage by 50%, allowing more concurrent requests.
@@ -369,7 +361,7 @@ bash scripts/utils/cleanup.sh --help
 - **`--clean-trt`**: Remove TensorRT engines, model files, build artifacts
 - **`--clean-system`**: Remove system package caches (apt, etc.)
 
-**Warning**: `--clean-trt` removes the built TensorRT engine. You'll need to rebuild it with `scripts/build/build-engine.sh` before running the server again.
+**Warning**: `--clean-trt` removes the built TensorRT engine. You'll need to rebuild it with `scripts/02-build.sh` before running the server again.
 
 ## Architecture
 

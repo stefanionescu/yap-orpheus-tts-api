@@ -106,9 +106,7 @@ class ConnectionState:
             "repetition_penalty": float(
                 self.repetition_penalty if self.repetition_penalty is not None else voice_defaults["repetition_penalty"]
             ),
-            "seed": int(
-                self.seed if self.seed is not None else voice_defaults["seed"]
-            ),
+            # Note: seed intentionally omitted from SamplingParams to avoid backend incompatibilities
             "max_tokens": int(self.max_tokens if self.max_tokens is not None else settings.orpheus_max_tokens),
             "stop_token_ids": list(settings.server_stop_token_ids),
         }

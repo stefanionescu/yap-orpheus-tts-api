@@ -9,7 +9,8 @@ _tok = AutoTokenizer.from_pretrained(MODEL_ID)
 
 
 def build_prompt(text: str, voice: str = "tara") -> str:
-    v = resolve_voice(voice)
+    # Accept internal names directly; resolve only external aliases
+    v = voice if voice in ("tara", "zac") else resolve_voice(voice)
     # Orpheus-official priming prompt: do not rely on tokenizer decoding
     return (
         f"<custom_token_3><|begin_of_text|>{v}: {text}"
