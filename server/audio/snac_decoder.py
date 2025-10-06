@@ -7,7 +7,7 @@ import numpy as np
 import torch
 from snac import SNAC
 
-from ..config import settings
+from server.config import settings
 
 
 SNAC_DEVICE = "cuda" if torch.cuda.is_available() else "cpu"

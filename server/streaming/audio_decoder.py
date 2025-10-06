@@ -4,8 +4,8 @@ import asyncio
 import numpy as np
 import torch
 
-from ..audio.snac_decoder import get_snac_batched, SNAC_DEVICE
-from ..config import settings
+from server.audio.snac_decoder import get_snac_batched, SNAC_DEVICE
+from server.config import settings
 
 
 class AudioDecoder:

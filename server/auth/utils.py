@@ -1,5 +1,5 @@
 from huggingface_hub import login
-from ..config import settings
+from server.config import settings
 
 
 def ensure_hf_login():

@@ -1,8 +1,8 @@
 """Refactored TRT-LLM streaming with clean class-based architecture."""
 
-from .prompts import build_prompt, resolve_voice
-from .config import settings
-from .streaming.audio_decoder import AudioDecoder, TokenProcessor
+from server.prompts import build_prompt, resolve_voice
+from server.config import settings
+from server.streaming.audio_decoder import AudioDecoder, TokenProcessor
 
 
 async def aiter_pcm_from_custom_tokens(engine, prompt: str, voice: str, sp):

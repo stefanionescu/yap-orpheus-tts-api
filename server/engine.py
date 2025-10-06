@@ -1,5 +1,5 @@
 import os
-from ..config import settings
+from server.config import settings
 
 
 MODEL_ID = settings.model_id

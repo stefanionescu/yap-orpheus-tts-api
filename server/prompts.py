@@ -1,5 +1,5 @@
 from transformers import AutoTokenizer
-from .config import settings
+from server.config import settings
 
 ALIASES = {
     "female": "tara",

@@ -5,11 +5,11 @@ from typing import Optional
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from dotenv import load_dotenv
 
-from .auth.utils import ensure_hf_login
-from .config import settings
-from .engine import OrpheusTRTEngine as _Engine
-from .websocket_handlers import message_receiver, ConnectionState
-from .synthesis_pipeline import SynthesisPipeline
+from server.auth.utils import ensure_hf_login
+from server.config import settings
+from server.engine import OrpheusTRTEngine as _Engine
+from server.websocket_handlers import message_receiver, ConnectionState
+from server.synthesis_pipeline import SynthesisPipeline
 
 load_dotenv(".env")
 

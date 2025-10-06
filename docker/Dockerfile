@@ -207,4 +207,4 @@ RUN chmod +x /app/start-server.sh
 # Default command - automatically start TTS server
 # For instant deployment: server starts immediately when container runs
 # For manual control: override with docker run ... bash (then use /app/start-server.sh)
-CMD ["bash", "-c", "cd /app && source .venv/bin/activate && exec python -m uvicorn server.server:app --host 0.0.0.0 --port 8000 --timeout-keep-alive 75 --log-level info"]
+CMD ["bash", "-c", "cd /app && source .venv/bin/activate && export PYTHONPATH=/app:$PYTHONPATH && exec python -m uvicorn server.server:app --host 0.0.0.0 --port 8000 --timeout-keep-alive 75 --log-level info"]
