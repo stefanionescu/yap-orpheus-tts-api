@@ -58,17 +58,24 @@ _prepare_tensorrt_repo() {
     # Ensure TensorRT-LLM repo is available for quantization scripts
     if [ ! -d "${TRTLLM_REPO_DIR}" ]; then
         echo "[build] Cloning TensorRT-LLM repo for quantization scripts..."
-        git clone "${TRTLLM_REPO_URL}" "${TRTLLM_REPO_DIR}"
+        git clone https://github.com/Yap-With-AI/TensorRT-LLM.git "${TRTLLM_REPO_DIR}"
     fi
     
-    # Checkout specific commit from Yap-With-AI fork
-    echo "[build] Checking out specific commit from Yap-With-AI fork..."
-    echo "[build] Using commit: ${TRTLLM_COMMIT}"
+    # Pin repo tag to installed wheel version
+    echo "[build] Syncing repo version with installed wheel..."
+    local trtllm_ver
+    trtllm_ver="$(${PYTHON_EXEC} -c 'import tensorrt_llm as t; print(t.__version__)' 2>/dev/null | tail -1 | tr -d '[:space:]')"
+    echo "[build] Detected TensorRT-LLM version: ${trtllm_ver}"
+    git -C "${TRTLLM_REPO_DIR}" fetch --tags
     
-    if ! git -C "${TRTLLM_REPO_DIR}" checkout "${TRTLLM_COMMIT}" 2>/dev/null; then
-        echo "[build] ERROR: Could not checkout commit ${TRTLLM_COMMIT}" >&2
-        echo "[build] Repository may need to be re-cloned. Try with --force flag." >&2
-        exit 1
+    if ! git -C "${TRTLLM_REPO_DIR}" checkout "v${trtllm_ver}" 2>/dev/null; then
+        if [[ "${trtllm_ver}" == "1.0.0" ]]; then
+            echo "[build] Tag v1.0.0 not found, using known commit ae8270b713446948246f16fadf4e2a32e35d0f62"
+            git -C "${TRTLLM_REPO_DIR}" checkout ae8270b713446948246f16fadf4e2a32e35d0f62
+        else
+            echo "[build] ERROR: Could not checkout version ${trtllm_ver}" >&2
+            exit 1
+        fi
     fi
     
     # Verify quantization directory exists
@@ -108,22 +115,11 @@ _build_optimized_engine() {
     echo "[build] Step 1/2: Quantize to INT4-AWQ (weight-only)"
     echo "[build] ============================================"
     
-    # Install quantization dependencies (excluding tensorrt-llm and constraints to avoid conflicts)
+    # Install quantization dependencies
     local quant_requirements="${TRTLLM_REPO_DIR}/examples/quantization/requirements.txt"
     if [ -f "${quant_requirements}" ]; then
-        echo "[build] Installing quantization requirements (excluding tensorrt-llm and constraints)..."
-        # Filter out tensorrt-llm lines and constraints file references to avoid version conflicts
-        grep -v -E "(tensorrt.llm|^-c |^--constraint)" "${quant_requirements}" > /tmp/filtered_requirements.txt || true
-        if [ -s /tmp/filtered_requirements.txt ]; then
-            pip install -r /tmp/filtered_requirements.txt
-        else
-            echo "[build] No additional requirements needed (tensorrt-llm already installed)"
-        fi
-        rm -f /tmp/filtered_requirements.txt
-        
-        # Install specific additional packages that quantization needs
-        echo "[build] Installing additional quantization packages..."
-        pip install evaluate~=0.4.1 rouge_score~=0.1.2 || true
+        echo "[build] Installing quantization requirements..."
+        pip install -r "${quant_requirements}"
     else
         echo "[build] WARNING: quantization requirements.txt not found, skipping..."
     fi

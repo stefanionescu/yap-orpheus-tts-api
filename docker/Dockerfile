@@ -108,10 +108,11 @@ RUN python -c "from huggingface_hub import login; login(token='${HF_TOKEN}', add
 # TensorRT-LLM Engine Build
 # =============================================================================
 
-# Clone TensorRT-LLM repository for build tools (using Yap-With-AI fork)
+# Clone TensorRT-LLM repository for build tools (using NVIDIA official repo)
 RUN git clone https://github.com/Yap-With-AI/TensorRT-LLM.git /tmp/tensorrt-llm && \
     cd /tmp/tensorrt-llm && \
-    git checkout 663ce3a4deef92ddc4178857011dfb5cc93ca842
+    git fetch --tags && \
+    (git checkout v1.0.0 || git checkout ae8270b713446948246f16fadf4e2a32e35d0f62)
 
 # Set build environment variables (from our environment.sh)
 ENV TRTLLM_ENGINE_DIR=/app/models/orpheus-trt-int4-awq
@@ -126,11 +127,8 @@ RUN mkdir -p ${TRTLLM_ENGINE_DIR} /app/audio
 # Build optimized TensorRT-LLM engine with INT4-AWQ + INT8 KV cache (2-step process)
 WORKDIR /tmp/tensorrt-llm/examples/quantization
 
-# Install quantization requirements (excluding tensorrt-llm and constraints to avoid conflicts)
-RUN grep -v -E "(tensorrt.llm|^-c |^--constraint)" requirements.txt > /tmp/filtered_requirements.txt && \
-    (pip install -r /tmp/filtered_requirements.txt || true) && \
-    pip install evaluate~=0.4.1 rouge_score~=0.1.2 && \
-    rm -f /tmp/filtered_requirements.txt
+# Install quantization requirements
+RUN pip install -r requirements.txt
 
 # Enable fast HF downloads
 ENV HF_HUB_ENABLE_HF_TRANSFER=1
