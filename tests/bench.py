@@ -71,7 +71,11 @@ async def _tts_one_ws(
 
     # Sticky WS: open once, send meta, all sentences, then __END__
     sentences = [s for s in chunk_by_sentences(text) if s and s.strip()]
-    async with websockets.connect(url, max_size=None) as ws:
+    headers = {}
+    key = os.environ.get("YAP_API_KEY")
+    if key:
+        headers["Authorization"] = f"Bearer {key}"
+    async with websockets.connect(url, max_size=None, additional_headers=headers or None) as ws:
         meta = {"voice": voice}
         if num_predict is not None:
             meta["max_tokens"] = num_predict

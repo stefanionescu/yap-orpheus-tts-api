@@ -99,13 +99,6 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="Text to synthesize (repeat flag for multiple sentences)",
     )
-    # Buffer-size no longer used in Mode A; kept for CLI compatibility but ignored
-    ap.add_argument(
-        "--buffer-size",
-        type=int,
-        default=5,
-        help="Ignored in Mode A (kept for CLI compatibility)",
-    )
     ap.add_argument(
         "--max-tokens",
         type=int,
@@ -113,9 +106,9 @@ def parse_args() -> argparse.Namespace:
         help="Max tokens to generate (optional)",
     )
     ap.add_argument(
-        "--runpod-api-key",
-        default=os.getenv("RUNPOD_API_KEY"),
-        help="RunPod TCP API key",
+        "--api-key",
+        default=os.getenv("YAP_API_KEY"),
+        help="API key for server Authorization (Bearer)",
     )
     ap.add_argument(
         "--outfile",
@@ -141,16 +134,14 @@ async def tts_client(
     server: str,
     voice: str,
     texts: List[str],
-    buffer_size: int,
     max_tokens: Optional[int],
-    runpod_api_key: Optional[str],
+    api_key: Optional[str],
     out_path: Path,
 ) -> dict:
     url = _ws_url(server)
     headers = {}
-    if runpod_api_key:
-        headers["runpod-api-key"] = runpod_api_key
-        headers["Authorization"] = f"Bearer {runpod_api_key}"
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
 
     ws_options = {
         "additional_headers": headers if headers else None,
@@ -282,9 +273,8 @@ def main() -> None:
             server_str,
             args.voice,
             texts,
-            args.buffer_size,
             args.max_tokens,
-            args.runpod_api_key,
+            args.api_key,
             out,
         )
     )

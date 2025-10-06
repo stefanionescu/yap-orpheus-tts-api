@@ -5,7 +5,7 @@ from typing import Optional
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from dotenv import load_dotenv
 
-from server.auth.utils import ensure_hf_login
+from server.auth.utils import ensure_hf_login, extract_api_key_from_ws_headers, is_api_key_authorized
 from server.config import settings
 from server.engine import OrpheusTRTEngine as _Engine
 from server.streaming.websocket_handlers import message_receiver, ConnectionState
@@ -41,6 +41,16 @@ async def tts_ws(ws: WebSocket):
       - For each sentence, runs one generation and streams audio hops.
       - Strict in-order emission; no timers, no word buffering.
     """
+    # API key check via auth utility
+    provided_key = extract_api_key_from_ws_headers(ws.headers.raw)
+    if not is_api_key_authorized(provided_key):
+        # Unauthorized
+        try:
+            await ws.close(code=1008)
+        except Exception:
+            pass
+        return
+
     await ws.accept()
     global engine
     if engine is None:

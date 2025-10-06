@@ -48,6 +48,7 @@ def main() -> None:
     ap.add_argument("--server", default="127.0.0.1:8000", help="host:port or http[s]://host:port")
     ap.add_argument("--voice", default=os.environ.get("TTS_VOICE", "female"), help="Voice alias: female|male")
     ap.add_argument("--text", default=DEFAULT_TEXT, help="Text to synthesize")
+    ap.add_argument("--api-key", default=os.environ.get("YAP_API_KEY"), help="API key (Authorization Bearer)")
     ap.add_argument("--seed", type=int, default=None, help="Optional seed override")
     ap.add_argument("--num-predict", type=int, default=None, help="Optional num_predict override")
     args = ap.parse_args()
@@ -63,7 +64,10 @@ def main() -> None:
     async def run():
         nonlocal first_chunk_at, total_bytes
         sentences = [s for s in chunk_by_sentences(str(args.text)) if s and s.strip()]
-        async with websockets.connect(url, max_size=None) as ws:
+        headers = {}
+        if args.api_key:
+            headers["Authorization"] = f"Bearer {args.api_key}"
+        async with websockets.connect(url, max_size=None, additional_headers=headers or None) as ws:
             # Send metadata first
             payload = {"voice": args.voice}
             if args.num_predict is not None:

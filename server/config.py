@@ -46,6 +46,8 @@ class Settings:
     ws_close_internal_code: int = int(os.getenv("WS_CLOSE_INTERNAL_CODE", "1011"))
     ws_queue_maxsize: int = int(os.getenv("WS_QUEUE_MAXSIZE", "128"))
     default_voice: str = os.getenv("DEFAULT_VOICE", "tara")
+    # API key for simple auth (default for local dev; override in production)
+    api_key: str = os.getenv("API_KEY", "yap_api_key")
     ws_meta_keys: tuple[str, ...] = (
         "voice", "max_tokens", "temperature", "top_p", "repetition_penalty", "seed", "buffer_size"
     )
