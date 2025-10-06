@@ -5,7 +5,6 @@ import json
 from typing import Optional
 
 from server.config import settings
-from server.prompts import resolve_voice
 
 
 class MessageParser:
@@ -50,7 +49,7 @@ class ConnectionState:
     """Manages per-connection synthesis parameters."""
     
     def __init__(self):
-        self.voice = resolve_voice(settings.default_voice)
+        self.voice = settings.default_voice
         self.temperature: Optional[float] = None
         self.top_p: Optional[float] = None
         self.repetition_penalty: Optional[float] = None
@@ -59,7 +58,7 @@ class ConnectionState:
     def update_from_meta(self, meta: dict) -> None:
         """Update connection state from metadata message."""
         if "voice" in meta and meta["voice"]:
-            self.voice = resolve_voice(str(meta["voice"]))
+            self.voice = str(meta["voice"])
         
         for param, attr in [
             ("temperature", "temperature"),
@@ -76,23 +75,14 @@ class ConnectionState:
     
     def get_sampling_kwargs(self) -> dict:
         """Build sampling parameters dict with fallback defaults."""
-        resolved_voice = resolve_voice(self.voice)
-        overrides = settings.voice_sampling_overrides.get(resolved_voice, {})
-
-        temperature = self.temperature if self.temperature is not None else overrides.get(
-            "temperature", settings.default_temperature
-        )
-        top_p = self.top_p if self.top_p is not None else overrides.get("top_p", settings.default_top_p)
-        repetition_penalty = (
-            self.repetition_penalty
-            if self.repetition_penalty is not None
-            else overrides.get("repetition_penalty", settings.default_repetition_penalty)
-        )
-
         return {
-            "temperature": float(temperature),
-            "top_p": float(top_p),
-            "repetition_penalty": float(repetition_penalty),
+            "temperature": float(
+                self.temperature if self.temperature is not None else settings.default_temperature
+            ),
+            "top_p": float(self.top_p if self.top_p is not None else settings.default_top_p),
+            "repetition_penalty": float(
+                self.repetition_penalty if self.repetition_penalty is not None else settings.default_repetition_penalty
+            ),
             "max_tokens": int(self.max_tokens if self.max_tokens is not None else settings.orpheus_max_tokens),
             "stop_token_ids": list(settings.server_stop_token_ids),
         }

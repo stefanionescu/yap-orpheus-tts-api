@@ -74,7 +74,6 @@ class Settings:
     silence_activation_ms: float = float(os.getenv("SILENCE_ACTIVATION_MS", "8"))
     silence_prespeech_pad_ms: float = float(os.getenv("SILENCE_PRESPEECH_PAD_MS", "80"))
     silence_max_leading_sec: float = float(os.getenv("SILENCE_MAX_LEADING_SEC", "0.6"))
-    voice_sampling_overrides: dict[str, dict[str, float]] = VOICE_SAMPLING_OVERRIDES  # type: ignore[assignment]
 
 
 settings = Settings()
