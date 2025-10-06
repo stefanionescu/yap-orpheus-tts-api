@@ -25,9 +25,9 @@ class Settings:
     # TTS / Streaming
     orpheus_max_tokens: int = int(os.getenv("ORPHEUS_MAX_TOKENS", "1024"))
     # Default sampling parameters used when client omits values
-    default_temperature: float = float(os.getenv("DEFAULT_TEMPERATURE", "0.45"))
+    default_temperature: float = float(os.getenv("DEFAULT_TEMPERATURE", "0.40"))
     default_top_p: float = float(os.getenv("DEFAULT_TOP_P", "0.9"))
-    default_repetition_penalty: float = float(os.getenv("DEFAULT_REPETITION_PENALTY", "1.15"))
+    default_repetition_penalty: float = float(os.getenv("DEFAULT_REPETITION_PENALTY", "1.25"))
     # Stop-token policy for the server-side SamplingParams (non-streaming path)
     server_stop_token_ids: tuple[int, ...] = (128009, 128260)
 
