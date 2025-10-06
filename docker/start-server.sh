@@ -78,8 +78,7 @@ if pgrep -f "uvicorn server.server:app" >/dev/null; then
     fi
 fi
 
-# Build uvicorn command with proper Python path
-export PYTHONPATH="/app:${PYTHONPATH:-}"
+# Build uvicorn command
 UVICORN_CMD="python -m uvicorn server.server:app --host $HOST --port $PORT --timeout-keep-alive 75 --log-level info"
 
 if [ "$BACKGROUND" = true ]; then
