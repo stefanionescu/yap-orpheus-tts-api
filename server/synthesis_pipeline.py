@@ -7,7 +7,7 @@ from tensorrt_llm import SamplingParams
 
 from server.text.chunking import chunk_by_sentences
 from server.prompts import resolve_voice
-from server.streaming import aiter_pcm_from_custom_tokens
+from server.tts_streaming import aiter_pcm_from_custom_tokens
 from server.config import settings
 
 
