@@ -101,7 +101,7 @@ def parse_args() -> argparse.Namespace:
     )
     ap.add_argument(
         "--api-key",
-        default=os.getenv("YAP_API_KEY"),
+        default=os.getenv("YAP_API_KEY", "YAP_API_KEY"),
         help="API key for server Authorization (Bearer)",
     )
     ap.add_argument(

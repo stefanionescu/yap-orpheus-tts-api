@@ -18,6 +18,8 @@ VENV_DIR="$APP_DIR/.venv"
 LOG_FILE="/tmp/tts-server.log"
 HOST="0.0.0.0"
 PORT="8000"
+# Unified API key env
+YAP_API_KEY="${YAP_API_KEY:-YAP_API_KEY}"
 
 # Parse arguments
 BACKGROUND=false
