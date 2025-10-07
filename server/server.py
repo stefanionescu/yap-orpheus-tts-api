@@ -114,7 +114,20 @@ async def tts_ws(ws: WebSocket):
                     
                     # Synthesize and stream
                     sampling_kwargs = connection_state.get_sampling_kwargs()
-                    await synthesis_pipeline.synthesize_text(text, connection_state.voice, sampling_kwargs, ws)
+                    trim_flag = connection_state.trim_silence
+                    # Allow per-message override when provided
+                    if "trim_silence" in message:
+                        try:
+                            val = message["trim_silence"]
+                            if isinstance(val, bool):
+                                trim_flag = val
+                            elif isinstance(val, str):
+                                trim_flag = val.strip().lower() in {"1", "true", "yes", "y", "on"}
+                            else:
+                                trim_flag = bool(int(val))
+                        except Exception:
+                            pass
+                    await synthesis_pipeline.synthesize_text(text, connection_state.voice, sampling_kwargs, ws, trim_silence=trim_flag)
                     
         except Exception as e:
             try:

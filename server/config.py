@@ -49,7 +49,7 @@ class Settings:
     # API key for simple auth (default for local dev; override in production)
     api_key: str = os.getenv("API_KEY", "yap_api_key")
     ws_meta_keys: tuple[str, ...] = (
-        "voice", "max_tokens", "temperature", "top_p", "repetition_penalty", "seed", "buffer_size"
+        "voice", "temperature", "top_p", "repetition_penalty", "buffer_size", "trim_silence"
     )
 
     # TRT-LLM streaming SamplingParams policy (identical behavior centralized)

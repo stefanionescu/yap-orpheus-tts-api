@@ -7,7 +7,7 @@ from server.streaming.audio_decoder import AudioDecoder, TokenProcessor
 from server.streaming.silence import SilenceTrimConfig, SilenceTrimmer
 
 
-async def aiter_pcm_from_custom_tokens(engine, prompt: str, voice: str, sp):
+async def aiter_pcm_from_custom_tokens(engine, prompt: str, voice: str, sp, trim_silence: bool = True):
     """
     TRT-LLM streaming: read token_ids deltas, not detokenized text.
     Map Orpheus audio token ids → 7-stream RVQ codes → SNAC decode.
@@ -42,7 +42,7 @@ async def aiter_pcm_from_custom_tokens(engine, prompt: str, voice: str, sp):
     trimmer = SilenceTrimmer(
         SilenceTrimConfig(
             sample_rate=decoder.sample_rate,
-            enabled=settings.trim_leading_silence,
+            enabled=bool(trim_silence),
             rms_threshold=settings.silence_rms_threshold,
             activation_ms=settings.silence_activation_ms,
             prepad_ms=settings.silence_prespeech_pad_ms,
@@ -75,13 +75,19 @@ async def aiter_pcm_from_custom_tokens(engine, prompt: str, voice: str, sp):
             if frames_ready is not None:
                 chunk_bytes = await processor.emit_window(frames_ready)
                 if chunk_bytes:
-                    trimmed = trimmer.push(chunk_bytes)
-                    if trimmed:
-                        yield trimmed
+                    if trim_silence:
+                        trimmed = trimmer.push(chunk_bytes)
+                        if trimmed:
+                            yield trimmed
+                    else:
+                        yield chunk_bytes
 
     # Emit final window for remaining frames
     final_bytes = await processor.emit_final_window()
     if final_bytes:
-        trimmed = trimmer.push(final_bytes)
-        if trimmed:
-            yield trimmed
+        if trim_silence:
+            trimmed = trimmer.push(final_bytes)
+            if trimmed:
+                yield trimmed
+        else:
+            yield final_bytes

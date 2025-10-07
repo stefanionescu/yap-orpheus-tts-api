@@ -38,14 +38,14 @@ def get_voice_defaults(voice: str) -> dict:
     Get voice-specific default sampling parameters.
     
     Based on optimal settings:
-    - Female (Tara): temperature=0.45, top_p=0.95, repetition_penalty=1.25, seed=42
-    - Male (Zac): temperature=0.55, top_p=0.95, repetition_penalty=1.15, seed=42
+    - Female (Tara): temperature=0.45, top_p=0.95, repetition_penalty=1.25
+    - Male (Zac): temperature=0.55, top_p=0.95, repetition_penalty=1.15
     
     Args:
         voice: Voice parameter ('female' or 'male')
         
     Returns:
-        Dict with default temperature, top_p, repetition_penalty, and seed for the voice
+        Dict with default temperature, top_p, repetition_penalty for the voice
     """
     resolved = resolve_voice(voice) if voice else "tara"
     
@@ -54,14 +54,12 @@ def get_voice_defaults(voice: str) -> dict:
             "temperature": 0.55,
             "top_p": 0.95,
             "repetition_penalty": 1.15,
-            "seed": 42
         }
     else:  # Female voice (tara) - default
         return {
             "temperature": 0.45,
             "top_p": 0.95,
             "repetition_penalty": 1.25,
-            "seed": 42
         }
 
 

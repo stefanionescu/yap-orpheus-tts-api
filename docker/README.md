@@ -89,7 +89,6 @@ python tests/warmup.py [OPTIONS]
   --port PORT          Server port (default: 8000)  
   --voice VOICE        Voice to use (default: female)
   --text TEXT          Text to synthesize
-  --max-tokens N       Max tokens to generate
 ```
 
 **bench.py** - Concurrent load testing:
@@ -101,7 +100,6 @@ python tests/bench.py [OPTIONS]
   --concurrency N      Number of concurrent workers (default: 2)
   --voice VOICE        Voice to use (default: female)
   --text TEXT          Text to synthesize
-  --max-tokens N       Max tokens to generate
 ```
 
 ### Example Testing Workflow

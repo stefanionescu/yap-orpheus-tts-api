@@ -58,9 +58,6 @@ async def _tts_one_ws(
     server: str,
     text: str,
     voice: str,
-    *,
-    seed: Optional[int] = None,
-    num_predict: Optional[int] = None,
 ) -> Dict[str, float]:
     url = _ws_url(server)
 
@@ -77,8 +74,6 @@ async def _tts_one_ws(
         headers["Authorization"] = f"Bearer {key}"
     async with websockets.connect(url, max_size=None, additional_headers=headers or None) as ws:
         meta = {"voice": voice}
-        if num_predict is not None:
-            meta["max_tokens"] = num_predict
         await ws.send(json.dumps(meta))
 
         async def _recv_loop():
@@ -164,8 +159,6 @@ async def bench_ws(
     concurrency: int,
     voice: str,
     texts: List[str],
-    seed: Optional[int],
-    num_predict: Optional[int],
 ) -> Tuple[List[Dict[str, float]], int]:
     sem = asyncio.Semaphore(max(1, concurrency))
     results: List[Dict[str, float]] = []
@@ -176,7 +169,7 @@ async def bench_ws(
         text = texts[req_idx % len(texts)]
         async with sem:
             try:
-                r = await _tts_one_ws(server, text, voice, seed=seed, num_predict=num_predict)
+                r = await _tts_one_ws(server, text, voice)
                 results.append(r)
             except Exception as e:
                 errors_total += 1
@@ -198,8 +191,7 @@ def main() -> None:
     ap.add_argument("--concurrency", type=int, default=10, help="Max concurrent sessions")
     ap.add_argument("--voice", type=str, default=os.environ.get("TTS_VOICE", "female"), help="Voice alias: female|male")
     ap.add_argument("--text", action="append", default=None, help="Inline text prompt (repeat for multiple)")
-    ap.add_argument("--seed", type=int, default=None, help="Optional seed override")
-    ap.add_argument("--num-predict", type=int, default=None, help="Optional num_predict override")
+    # Removed: seed and num-predict are not client-configurable
     args = ap.parse_args()
 
     texts = _load_texts(args.text)
@@ -209,7 +201,7 @@ def main() -> None:
     print(f"Texts: {len(texts)}")
 
     t0 = time.time()
-    results, errors = asyncio.run(bench_ws(args.server, args.n, args.concurrency, args.voice, texts, args.seed, args.num_predict))
+    results, errors = asyncio.run(bench_ws(args.server, args.n, args.concurrency, args.voice, texts))
     elapsed = time.time() - t0
 
     _summarize("TTS Streaming", results)

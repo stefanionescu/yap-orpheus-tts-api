@@ -40,6 +40,7 @@ class MessageParser:
             # Text message with optional voice override
             text = (obj.get("text") or "").strip()
             voice = obj.get("voice")
+            trim_silence = obj.get("trim_silence")
             if text:
                 # Validate voice parameter if provided
                 if voice is not None:
@@ -47,7 +48,11 @@ class MessageParser:
                         resolve_voice(str(voice))  # This will raise ValueError if invalid
                     except ValueError as e:
                         raise ValueError(f"Voice validation failed: {e}")
-                return {"type": "text", "text": text, "voice": voice}
+                # Pass through optional trim_silence override when present
+                msg = {"type": "text", "text": text, "voice": voice}
+                if trim_silence is not None:
+                    msg["trim_silence"] = trim_silence
+                return msg
         
         return None
 
@@ -60,8 +65,8 @@ class ConnectionState:
         self.temperature: Optional[float] = None
         self.top_p: Optional[float] = None
         self.repetition_penalty: Optional[float] = None
-        self.max_tokens: Optional[int] = None
-        self.seed: Optional[int] = None
+        # Default to global setting; clients can override per-connection or per-text
+        self.trim_silence: bool = bool(settings.trim_leading_silence)
     
     def update_from_meta(self, meta: dict) -> None:
         """Update connection state from metadata message."""
@@ -78,18 +83,26 @@ class ConnectionState:
             ("temperature", "temperature"),
             ("top_p", "top_p"), 
             ("repetition_penalty", "repetition_penalty"),
-            ("max_tokens", "max_tokens"),
-            ("seed", "seed")
         ]:
             if param in meta:
                 try:
-                    if param in ["max_tokens", "seed"]:
-                        value = int(meta[param])
-                    else:
-                        value = float(meta[param])
+                    value = float(meta[param])
                     setattr(self, attr, value)
                 except Exception:
                     pass
+        # Boolean parsing for trim_silence
+        if "trim_silence" in meta:
+            val = meta["trim_silence"]
+            try:
+                if isinstance(val, bool):
+                    self.trim_silence = val
+                elif isinstance(val, str):
+                    self.trim_silence = val.strip().lower() in {"1", "true", "yes", "y", "on"}
+                else:
+                    self.trim_silence = bool(int(val))
+            except Exception:
+                # Ignore invalid boolean; keep previous setting
+                pass
     
     def get_sampling_kwargs(self) -> dict:
         """Build sampling parameters dict with voice-specific fallback defaults."""
@@ -106,8 +119,8 @@ class ConnectionState:
             "repetition_penalty": float(
                 self.repetition_penalty if self.repetition_penalty is not None else voice_defaults["repetition_penalty"]
             ),
-            # Note: seed intentionally omitted from SamplingParams to avoid backend incompatibilities
-            "max_tokens": int(self.max_tokens if self.max_tokens is not None else settings.orpheus_max_tokens),
+            # Server-enforced output length; not client-overridable
+            "max_tokens": int(settings.orpheus_max_tokens),
             "stop_token_ids": list(settings.server_stop_token_ids),
         }
 

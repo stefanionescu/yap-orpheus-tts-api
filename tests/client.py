@@ -100,12 +100,6 @@ def parse_args() -> argparse.Namespace:
         help="Text to synthesize (repeat flag for multiple sentences)",
     )
     ap.add_argument(
-        "--max-tokens",
-        type=int,
-        default=None,
-        help="Max tokens to generate (optional)",
-    )
-    ap.add_argument(
         "--api-key",
         default=os.getenv("YAP_API_KEY"),
         help="API key for server Authorization (Bearer)",
@@ -134,7 +128,6 @@ async def tts_client(
     server: str,
     voice: str,
     texts: List[str],
-    max_tokens: Optional[int],
     api_key: Optional[str],
     out_path: Path,
 ) -> dict:
@@ -169,10 +162,8 @@ async def tts_client(
     async with websockets.connect(url, **ws_options) as ws:
         connect_ms += (time.perf_counter() - connect_start) * 1000.0
 
-        # Send optional meta first (voice and max_tokens)
+        # Send meta first (voice only)
         meta = {"voice": voice}
-        if max_tokens is not None:
-            meta["max_tokens"] = max_tokens
         await ws.send(json.dumps(meta))
 
         # Start server TTFB timer when we send the first text
@@ -265,15 +256,12 @@ def main() -> None:
     print(f"Out:    {out}")
     print(f"Text(s): {len(texts)}")
     # Buffer size is ignored in Mode A; kept for CLI compatibility
-    if args.max_tokens:
-        print(f"Max tokens: {args.max_tokens}")
 
     res = asyncio.run(
         tts_client(
             server_str,
             args.voice,
             texts,
-            args.max_tokens,
             args.api_key,
             out,
         )
