@@ -89,11 +89,11 @@ else
 fi
 
 case "${ID}-${VERSION_ID}" in
-    ubuntu-20.04|ubuntu-22.04|debian-11|debian-12)
+    ubuntu-20.04|ubuntu-22.04|ubuntu-24.04|debian-11|debian-12)
         echo "[main] Detected supported OS: ${PRETTY_NAME}"
         ;;
     *)
-        echo "ERROR: Unsupported OS: ${ID} ${VERSION_ID}. Supported: Ubuntu 20.04/22.04, Debian 11/12." >&2
+        echo "ERROR: Unsupported OS: ${ID} ${VERSION_ID}. Supported: Ubuntu 20.04/22.04/24.04, Debian 11/12." >&2
         exit 1
         ;;
 esac

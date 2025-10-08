@@ -11,7 +11,7 @@ This directory contains Docker configuration for building and deploying the Orph
 Clone the repo and run the build script **directly on a GPU machine**:
 
 ```bash
-# On the GPU machine (Ubuntu 20.04/22.04 or Debian 11/12)
+# On the GPU machine (Ubuntu 20.04/22.04/24.04 or Debian 11/12)
 git clone https://github.com/your_username/yap-orpheus-tts-api.git
 cd yap-orpheus-tts-api
 
@@ -31,7 +31,7 @@ What it does:
 
 Requirements:
 - GPU machine with NVIDIA drivers installed
-- Ubuntu 20.04/22.04 or Debian 11/12
+- Ubuntu 20.04/22.04/24.04 or Debian 11/12
 - Root/sudo access
 
 Troubleshooting:
