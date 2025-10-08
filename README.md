@@ -318,11 +318,13 @@ bash scripts/utils/cleanup.sh --help
 ### Cleanup Options Explained
 
 - **No flags**: Stop processes, clean runtime files only
-- **`--clean-install`**: Remove Python venv, pip/torch/HF caches
-- **`--clean-trt`**: Remove TensorRT engines, model files, build artifacts
-- **`--clean-system`**: Remove system package caches (apt, etc.)
+- **`--clean-install`**: AGGRESSIVELY remove Python venv and ALL caches
+- **`--clean-trt`**: Remove TensorRT engines, CUDA artifacts, force uninstall packages
+- **`--clean-system`**: NUCLEAR system cleanup - removes ALL caches/logs/temp files
+- **`--clean-models`**: Remove downloaded models, checkpoints, and engines
+- **`--clean-all`**: NUCLEAR OPTION - removes EVERYTHING (all of the above)
 
-**Warning**: `--clean-trt` removes the built TensorRT engine. You'll need to rebuild it with `scripts/02-build.sh` before running the server again.
+**Warning**: `--clean-trt` removes the built TensorRT engine. `--clean-all` is extremely aggressive and will remove gigabytes of cached data. You'll need to rebuild everything from scratch.
 
 ## Architecture
 

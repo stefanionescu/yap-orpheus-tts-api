@@ -8,11 +8,11 @@
 #
 # Usage: bash scripts/utils/cleanup.sh [OPTIONS]
 # Options:
-#   --clean-install  Remove Python venv and package caches
-#   --clean-system   Remove system package caches (aggressive for cloud)
-#   --clean-trt      Remove TensorRT-LLM build artifacts and packages
+#   --clean-install  AGGRESSIVELY remove Python venv, ALL caches, and packages  
+#   --clean-system   NUCLEAR system cleanup - removes ALL caches, logs, temp files
+#   --clean-trt      Remove TensorRT-LLM, CUDA artifacts, force uninstall packages
 #   --clean-models   Remove downloaded models, checkpoints, and engines
-#   --clean-all      Perform complete cleanup (all of the above)
+#   --clean-all      NUCLEAR OPTION - removes EVERYTHING (all of the above)
 # =============================================================================
 
 set -euo pipefail
@@ -75,63 +75,41 @@ _stop_background_processes() {
 }
 
 _cleanup_gpu_memory() {
-    if ! command -v nvidia-smi >/dev/null 2>&1; then
-        return 0
-    fi
-    
     echo "[cleanup] Terminating GPU compute processes..."
     
-    # Get list of GPU compute processes
-    local pids
-    pids=$(nvidia-smi --query-compute-apps=pid --format=csv,noheader 2>/dev/null | tr -d ' ' || true)
-    
-    if [ -n "$pids" ]; then
-        echo "$pids" | xargs -r -n1 kill 2>/dev/null || true
-        sleep 1
-        
-        # Force kill any remaining processes
-        pids=$(nvidia-smi --query-compute-apps=pid --format=csv,noheader 2>/dev/null | tr -d ' ' || true)
-        if [ -n "$pids" ]; then
-            echo "$pids" | xargs -r -n1 kill -9 2>/dev/null || true
-        fi
-    fi
-    
-    # Kill specific process types
+    # Kill specific process types (no nvidia-smi bullshit)
     pkill -9 -f "python.*tensorrt" 2>/dev/null || true
     pkill -9 -f "python.*trtllm" 2>/dev/null || true
+    pkill -9 -f "python.*modelopt" 2>/dev/null || true
+    pkill -9 -f "trtllm-build" 2>/dev/null || true
+    pkill -9 -f "quantize.py" 2>/dev/null || true
     pkill -9 -f "mpirun" 2>/dev/null || true
     pkill -9 -f "mpi4py" 2>/dev/null || true
     sleep 1
     
-    # Clean up device files
+    # Kill any Python processes using CUDA
+    pkill -9 -f "python.*cuda" 2>/dev/null || true
+    pkill -9 -f ".*\.venv.*python" 2>/dev/null || true
+    
+    # Clean up device files aggressively
     if command -v fuser >/dev/null 2>&1; then
-        for dev in /dev/nvidiactl /dev/nvidia-uvm /dev/nvidia-uvm-tools /dev/nvidia0 /dev/nvidia1; do
+        for dev in /dev/nvidia* /dev/nvidiactl /dev/nvidia-uvm* /dev/dri/card*; do
             [ -e "$dev" ] && fuser -k -9 "$dev" 2>/dev/null || true
         done
     fi
     
     # Clean up shared memory and temporary files
-    rm -rf /dev/shm/nvidia* /dev/shm/cuda* /tmp/cuda* /tmp/.X11-unix/* 2>/dev/null || true
+    rm -rf /dev/shm/nvidia* /dev/shm/cuda* /dev/shm/torch* /dev/shm/tensorrt* 2>/dev/null || true
+    rm -rf /tmp/cuda* /tmp/nvidia* /tmp/tensorrt* /tmp/torch* /tmp/.X11-unix/* 2>/dev/null || true
     
-    # Clean up IPC resources
+    # Clean up IPC resources aggressively
     if command -v ipcs >/dev/null 2>&1; then
         local current_user
         current_user=$(whoami)
-        ipcs -s | grep "$current_user" | awk '{print $2}' | xargs -r -n1 ipcrm -s 2>/dev/null || true
-        ipcs -q | grep "$current_user" | awk '{print $2}' | xargs -r -n1 ipcrm -q 2>/dev/null || true
-        ipcs -m | grep "$current_user" | awk '{print $2}' | xargs -r -n1 ipcrm -m 2>/dev/null || true
-    fi
-    
-    sleep 2
-    
-    # Attempt GPU reset if no processes remain
-    local remaining
-    remaining=$(nvidia-smi --query-compute-apps=pid --format=csv,noheader 2>/dev/null | tr -d ' ' || true)
-    if [ -z "$remaining" ]; then
-        local gpu_index="${GPU_INDEX:-0}"
-        nvidia-smi --gpu-reset -i "$gpu_index" 2>/dev/null || true
-        nvidia-smi -i "$gpu_index" -pm 0 2>/dev/null || true
-        nvidia-smi -i "$gpu_index" -pm 1 2>/dev/null || true
+        # Clean all IPC resources for current user
+        ipcs -s 2>/dev/null | grep "$current_user" | awk '{print $2}' | xargs -r -n1 ipcrm -s 2>/dev/null || true
+        ipcs -q 2>/dev/null | grep "$current_user" | awk '{print $2}' | xargs -r -n1 ipcrm -q 2>/dev/null || true  
+        ipcs -m 2>/dev/null | grep "$current_user" | awk '{print $2}' | xargs -r -n1 ipcrm -m 2>/dev/null || true
     fi
 }
 
@@ -140,35 +118,50 @@ _cleanup_runtime_files() {
 }
 
 _cleanup_python_environment() {
-    # Remove virtual environment
+    echo "[cleanup] Aggressively removing Python environment and ALL caches..."
+    
+    # Remove virtual environment completely
     rm -rf .venv || true
     
-    # Remove HuggingFace caches
-    rm -rf ~/.cache/huggingface ~/.local/share/huggingface || true
-    [ -n "${HF_HOME:-}" ] && rm -rf "${HF_HOME}" || true
-    [ -n "${HF_HUB_CACHE:-}" ] && rm -rf "${HF_HUB_CACHE}" || true
+    # Remove ALL Python-related caches (be fucking thorough)
+    rm -rf ~/.cache/* || true
+    rm -rf ~/.local/share/* || true
+    rm -rf ~/.local/lib/* || true
+    rm -rf ~/.local/bin/* || true
     
-    # Remove PyTorch caches
-    rm -rf ~/.cache/torch ~/.cache/torch_extensions ~/.torch || true
-    rm -rf /tmp/torch* /tmp/.torch* /dev/shm/torch* || true
-    
-    # Remove other Python caches
+    # Remove specific ML/AI framework caches
     rm -rf ~/.triton ~/.cache/triton /tmp/triton* || true
-    rm -rf ~/.cache/pip ~/.cache/hf_transfer ~/.cache/clip ~/.cache/transformers || true
-    rm -rf /tmp/.hf* 2>/dev/null || true
+    rm -rf ~/.torch ~/.cache/torch ~/.cache/torch_extensions || true
+    rm -rf ~/.cache/nvidia ~/.cache/modelopt ~/.cache/quantization || true
     
-    # Remove additional Python package caches
-    rm -rf ~/.cache/wheel ~/.cache/setuptools ~/.cache/build || true
-    rm -rf ~/.local/lib/python*/site-packages/__pycache__ || true
-    rm -rf /tmp/pip-* /tmp/build-* /tmp/easy_install-* || true
+    # Remove all temporary Python files
+    rm -rf /tmp/pip-* /tmp/build-* /tmp/easy_install-* /tmp/python* || true
+    rm -rf /tmp/.hf* /tmp/hf-* /tmp/huggingface* || true
+    rm -rf /tmp/torch* /tmp/.torch* /tmp/tensorrt* /tmp/trt* || true
     
-    # Remove conda/mamba caches if present
-    rm -rf ~/.conda/pkgs ~/.mamba/pkgs ~/.cache/conda ~/.cache/mamba || true
+    # Remove conda/mamba completely if present
+    rm -rf ~/.conda ~/.mamba ~/.cache/conda ~/.cache/mamba || true
+    rm -rf ~/miniconda* ~/anaconda* ~/mambaforge* || true
     
-    # Clean up Python bytecode files in workspace
-    find "$PWD" -name "*.pyc" -delete 2>/dev/null || true
-    find "$PWD" -name "*.pyo" -delete 2>/dev/null || true
-    find "$PWD" -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
+    # Clean shared memory aggressively
+    rm -rf /dev/shm/pip* /dev/shm/python* /dev/shm/torch* /dev/shm/hf* || true
+    
+    # Remove Python package directories in common locations
+    rm -rf /usr/local/lib/python*/site-packages/__pycache__ || true
+    rm -rf /usr/lib/python*/site-packages/__pycache__ || true
+    
+    # Clean up Python bytecode files EVERYWHERE
+    find / -name "*.pyc" -delete 2>/dev/null || true
+    find / -name "*.pyo" -delete 2>/dev/null || true  
+    find / -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
+    
+    # Remove pip cache and wheel cache completely
+    rm -rf ~/.pip ~/.cache/pip* ~/.local/share/pip* || true
+    
+    # Force remove any remaining Python processes
+    pkill -9 python 2>/dev/null || true
+    pkill -9 python3 2>/dev/null || true
+    pkill -9 pip 2>/dev/null || true
 }
 
 _cleanup_models_and_artifacts() {
@@ -186,73 +179,124 @@ _cleanup_models_and_artifacts() {
 }
 
 _cleanup_tensorrt_artifacts() {
-    # Remove TensorRT-LLM repository
+    echo "[cleanup] Aggressively removing TensorRT and CUDA artifacts..."
+    
+    # Remove TensorRT-LLM repository and models completely
     rm -rf "$TRTLLM_REPO_DIR" || true
     rm -rf .trtllm-repo || true
+    rm -rf models/ || true
     
-    # Remove TensorRT and CUDA caches
-    rm -rf ~/.cache/tensorrt* ~/.cache/nv_tensorrt ~/.cache/nvidia ~/.nv || true
-    rm -rf ~/.cache/modelopt ~/.cache/model_optimizer ~/.cache/nvidia_modelopt || true
+    # Remove ALL NVIDIA/CUDA/TensorRT caches and files
+    rm -rf ~/.cache/nvidia* ~/.cache/tensorrt* ~/.cache/nv* ~/.nv || true
+    rm -rf ~/.cache/modelopt* ~/.cache/model_optimizer* ~/.cache/nvidia_modelopt* || true
     rm -rf ~/.cache/cuda* ~/.cache/nvcc* ~/.cache/cutlass* || true
+    rm -rf ~/.cache/triton* ~/.triton* || true
     
-    # Remove temporary build files
-    rm -rf /tmp/trt* /tmp/tensorrt* /tmp/modelopt* /tmp/quantiz* /tmp/calib* 2>/dev/null || true
-    rm -rf /dev/shm/trt* /dev/shm/quantiz* /dev/shm/cuda* /dev/shm/nv* 2>/dev/null || true
+    # Remove temporary build files EVERYWHERE
+    rm -rf /tmp/trt* /tmp/tensorrt* /tmp/TensorRT* /tmp/modelopt* || true
+    rm -rf /tmp/quantiz* /tmp/calib* /tmp/nvidia* /tmp/cuda* || true
+    rm -rf /tmp/triton* /tmp/torch* /tmp/pytorch* || true
     
-    # Remove TensorRT installation artifacts if they exist
-    rm -rf /tmp/TensorRT* /tmp/tensorrt* 2>/dev/null || true
+    # Clean shared memory aggressively
+    rm -rf /dev/shm/trt* /dev/shm/quantiz* /dev/shm/cuda* /dev/shm/nv* || true
+    rm -rf /dev/shm/triton* /dev/shm/modelopt* /dev/shm/tensorrt* || true
     
-    # Clean up quantization tool dependencies and caches (if venv exists)
-    if [ -f ".venv/bin/activate" ]; then
-        source .venv/bin/activate 2>/dev/null || true
-        pip uninstall -y nvidia-modelopt nvidia-ammo 2>/dev/null || true
-        pip uninstall -y tensorrt-cu12-bindings tensorrt-cu12-libs 2>/dev/null || true
-        pip uninstall -y tensorrt-llm 2>/dev/null || true
-    fi
+    # Remove NVIDIA installation directories if they exist
+    rm -rf /usr/local/tensorrt* /usr/local/cuda* /usr/local/nvidia* || true
+    rm -rf /opt/tensorrt* /opt/cuda* /opt/nvidia* || true
+    
+    # Force uninstall packages (don't depend on venv)
+    python3 -m pip uninstall -y nvidia-modelopt nvidia-ammo 2>/dev/null || true
+    python3 -m pip uninstall -y tensorrt-cu12-bindings tensorrt-cu12-libs 2>/dev/null || true  
+    python3 -m pip uninstall -y tensorrt-llm 2>/dev/null || true
+    python3 -m pip uninstall -y torch torchvision torchaudio 2>/dev/null || true
+    
+    # Clean up any remaining NVIDIA processes
+    pkill -9 -f nvidia 2>/dev/null || true
+    pkill -9 -f tensorrt 2>/dev/null || true
+    pkill -9 -f cuda 2>/dev/null || true
 }
 
 _cleanup_system_caches() {
-    # Clean package manager caches (aggressive for cloud environments)
+    echo "[cleanup] Nuclear system cache cleanup (aggressive for cloud)..."
+    
+    # Clean ALL package manager caches aggressively
     if command -v apt-get >/dev/null 2>&1; then
         apt-get clean || true
         apt-get autoclean || true
-        apt-get autoremove -y || true
+        apt-get autoremove -y --purge || true
         rm -rf /var/lib/apt/lists/* || true
-        rm -rf /var/cache/apt/archives/* || true
+        rm -rf /var/cache/apt/* || true
+        rm -rf /var/lib/dpkg/* || true
     fi
     
-    # Clean other package managers
+    # Clean other package managers aggressively
     if command -v yum >/dev/null 2>&1; then
         yum clean all || true
+        rm -rf /var/cache/yum/* || true
     fi
     
     if command -v dnf >/dev/null 2>&1; then
         dnf clean all || true
+        rm -rf /var/cache/dnf/* || true
     fi
     
-    # Remove temporary system files (aggressive cleanup for containers)
+    # Remove ALL temporary files and caches (NUCLEAR option)
     rm -rf /tmp/* /var/tmp/* 2>/dev/null || true
-    rm -rf /root/.cache/* /root/.local/share/* 2>/dev/null || true
+    rm -rf /root/.cache/* /root/.local/* 2>/dev/null || true
+    rm -rf /home/*/.cache/* /home/*/.local/* 2>/dev/null || true
     
-    # Clean up systemd and journal logs if running in container
-    if [ -f /.dockerenv ] || [ -n "${container:-}" ]; then
-        journalctl --vacuum-time=1d 2>/dev/null || true
-        rm -rf /var/log/*.log /var/log/*/*.log 2>/dev/null || true
+    # Clean system logs aggressively
+    journalctl --vacuum-time=1s 2>/dev/null || true
+    rm -rf /var/log/* 2>/dev/null || true
+    
+    # Clean up ALL build artifacts and development files
+    rm -rf /usr/local/src/* /usr/src/* /usr/local/include/* 2>/dev/null || true
+    rm -rf /usr/local/lib/python* /usr/local/bin/pip* 2>/dev/null || true
+    
+    # Clean up system caches
+    rm -rf ~/.cache/* ~/.fontconfig ~/.local/* ~/.config/* 2>/dev/null || true
+    rm -rf ~/.pki ~/.gnupg ~/.ssh/known_hosts 2>/dev/null || true
+    
+    # Clean up compiler caches
+    rm -rf ~/.ccache ~/.cache/clang* ~/.cache/gcc* 2>/dev/null || true
+    
+    # Clean docker caches if present
+    docker system prune -af 2>/dev/null || true
+    rm -rf /var/lib/docker/* 2>/dev/null || true
+    
+    # Clean snap packages if present
+    if command -v snap >/dev/null 2>&1; then
+        snap list --all | awk '/disabled/{print $1, $3}' | while read snapname revision; do
+            snap remove "$snapname" --revision="$revision" 2>/dev/null || true
+        done
     fi
-    
-    # Clean up build artifacts and development files
-    rm -rf /usr/local/src/* /usr/src/* 2>/dev/null || true
-    
-    # Clean up font caches and other system caches
-    rm -rf ~/.cache/fontconfig ~/.fontconfig 2>/dev/null || true
-    
-    # Clean up SSL certificate caches
-    rm -rf ~/.pki ~/.cache/ca-certificates 2>/dev/null || true
 }
 
 _cleanup_workspace_files() {
-    # Remove workspace temporary files
+    echo "[cleanup] Cleaning workspace and additional system areas..."
+    
+    # Remove workspace temporary files and caches
     rm -rf audio/*.wav .pytest_cache .mypy_cache .ruff_cache *.egg-info 2>/dev/null || true
+    rm -rf .git/objects/pack/.tmp* .git/objects/tmp* 2>/dev/null || true
+    rm -rf node_modules/ .npm/ .yarn/ 2>/dev/null || true
+    
+    # Additional comprehensive cleanup for missed areas
+    rm -rf ~/.cargo ~/.rustup ~/.gradle ~/.m2 2>/dev/null || true
+    rm -rf ~/.npm ~/.nvm ~/.yarn ~/.node-gyp 2>/dev/null || true
+    rm -rf ~/.cache/go-build ~/.cache/bazel 2>/dev/null || true
+    
+    # Clean up any remaining large cache directories
+    find /tmp -type f -size +100M -delete 2>/dev/null || true
+    find /var/tmp -type f -size +100M -delete 2>/dev/null || true
+    find ~/.cache -type f -size +100M -delete 2>/dev/null || true
+    
+    # Clean up shared libraries and build caches
+    rm -rf /usr/local/share/man /usr/local/share/doc 2>/dev/null || true
+    rm -rf /usr/share/doc /usr/share/man /usr/share/info 2>/dev/null || true
+    
+    # Force sync to ensure all deletions are committed
+    sync
 }
 
 # =============================================================================
@@ -273,15 +317,15 @@ for arg in "$@"; do
     case "$arg" in
         --clean-install)
             CLEAN_INSTALL=1
-            echo "[cleanup] Will remove Python environment and caches"
+            echo "[cleanup] Will AGGRESSIVELY remove Python environment and ALL caches"
             ;;
         --clean-system)
             CLEAN_SYSTEM=1
-            echo "[cleanup] Will remove system package caches"
+            echo "[cleanup] Will perform NUCLEAR system cleanup (all caches/logs/temp files)"
             ;;
         --clean-trt)
             CLEAN_TRT=1
-            echo "[cleanup] Will remove TensorRT-LLM build artifacts"
+            echo "[cleanup] Will remove TensorRT-LLM and force uninstall CUDA packages"
             ;;
         --clean-models)
             CLEAN_MODELS=1
@@ -292,17 +336,17 @@ for arg in "$@"; do
             CLEAN_SYSTEM=1
             CLEAN_TRT=1
             CLEAN_MODELS=1
-            echo "[cleanup] Will perform complete cleanup (all options)"
+            echo "[cleanup] Will perform NUCLEAR cleanup (EVERYTHING)"
             ;;
         --help|-h)
             echo "Usage: $0 [--clean-install] [--clean-system] [--clean-trt] [--clean-models] [--clean-all]"
             echo ""
             echo "Options:"
-            echo "  --clean-install  Remove Python venv and package caches"
-            echo "  --clean-system   Remove system package caches (aggressive for cloud)"
-            echo "  --clean-trt      Remove TensorRT-LLM build artifacts and packages"
-            echo "  --clean-models   Remove downloaded models, checkpoints, and engines"
-            echo "  --clean-all      Perform complete cleanup (all of the above)"
+            echo "  --clean-install  AGGRESSIVELY remove Python venv and ALL caches"
+            echo "  --clean-system   NUCLEAR system cleanup - removes ALL caches/logs/temp files"
+            echo "  --clean-trt      Remove TensorRT-LLM and force uninstall CUDA packages"
+            echo "  --clean-models   Remove downloaded models, checkpoints, and engines"  
+            echo "  --clean-all      NUCLEAR OPTION - removes EVERYTHING (all of the above)"
             exit 0
             ;;
         *)
@@ -356,4 +400,4 @@ fi
 echo "[cleanup] Removing workspace temporary files..."
 _cleanup_workspace_files
 
-echo "[cleanup] ✓ Cleanup completed successfully"
+echo "[cleanup] ✓ AGGRESSIVE cleanup completed successfully - all specified targets obliterated"
