@@ -30,6 +30,13 @@ PYTORCH_INDEX_URL=https://download.pytorch.org/whl/cu126 \
 TRTLLM_WHEEL_URL=https://pypi.nvidia.com/tensorrt-llm/tensorrt_llm-1.0.0-cp310-cp310-linux_x86_64.whl \
 IMAGE_NAME=sionescu/orpheus-trtllm-base IMAGE_TAG=cu126-py310-trt1.0 \
 bash docker/build.sh
+
+# Push existing image (skip build script)
+docker login                              # only needed once per registry
+docker push ${IMAGE_NAME:-sionescu/orpheus-trtllm}:${IMAGE_TAG:-cu121-py310}
+
+# Optional: build + push in one go
+DOCKER_BUILDKIT=1 bash docker/build.sh --push
 ```
 
 Notes:

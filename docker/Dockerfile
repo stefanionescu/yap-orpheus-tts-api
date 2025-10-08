@@ -142,6 +142,6 @@ ENV HF_TRANSFER=1 \
 # This is a base image layer; no entrypoint/cmd so it can be reused downstream.
 WORKDIR /app
 
-LABEL org.opencontainers.image.title="Yap Orpheus TTS Base (CUDA 12.1, Py310)" \
+LABEL org.opencontainers.image.title="Yap Orpheus TTS Base (CUDA 12.1.1, Py310)" \
       org.opencontainers.image.description="Prebuilt base with system deps, PyTorch CU12.1, and TensorRT-LLM to speed up cloud provisioning." \
       org.opencontainers.image.source="https://github.com/Yap-With-AI/yap-orpheus-tts-api"

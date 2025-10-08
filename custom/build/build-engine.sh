@@ -229,10 +229,41 @@ print('✓ Downloaded complete model repository')
 
         # Detect versions and arch tags
         local trtllm_ver
-        trtllm_ver="$(${PYTHON_EXEC} -c 'import tensorrt_llm as t; print(getattr(t, "__version__", ""))' 2>/dev/null | tail -1 | tr -d '[:space:]')"
+        local default_trtllm_ver="${DEFAULT_TRTLLM_VERSION:-1.0.0}"
+        trtllm_ver="$(${PYTHON_EXEC} - <<'PY' 2>/dev/null | tail -1 | tr -d '[:space:]'
+import importlib.metadata as md
+candidates = ("tensorrt-llm", "tensorrt_llm")
+for name in candidates:
+    try:
+        print(md.version(name))
+        break
+    except md.PackageNotFoundError:
+        continue
+else:
+    print("")
+PY
+)"
+        if [ -z "$trtllm_ver" ]; then
+            trtllm_ver="$default_trtllm_ver"
+        fi
 
         local tensorrt_ver
-        tensorrt_ver="$(${PYTHON_EXEC} -c 'import sys;\ntry:\n import tensorrt as trt\n print(getattr(trt, "__version__", ""))\nexcept Exception:\n print("")' 2>/dev/null | tail -1 | tr -d '[:space:]')"
+        tensorrt_ver="$(${PYTHON_EXEC} - <<'PY' 2>/dev/null | tail -1 | tr -d '[:space:]'
+import importlib.metadata as md
+candidates = ("tensorrt-cu12-bindings", "tensorrt", "nvidia-tensorrt")
+for name in candidates:
+    try:
+        print(md.version(name))
+        break
+    except md.PackageNotFoundError:
+        continue
+else:
+    print("")
+PY
+)"
+        if [ -z "$tensorrt_ver" ]; then
+            tensorrt_ver="unknown"
+        fi
 
         local cuda_ver
         cuda_ver="$(detect_cuda_version)"

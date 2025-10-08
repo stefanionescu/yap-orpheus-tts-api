@@ -56,6 +56,7 @@ All configuration is centralized in `custom/environment.sh` with comprehensive d
 - **Server**: `HOST=0.0.0.0`, `PORT=8000`, `DEFAULT_VOICE=female`
 - **Performance**: CUDA, PyTorch, and threading optimizations
 - **GPU**: `GPU_SM_ARCH=sm80` (only required for HuggingFace push)
+- **Build metadata**: `DEFAULT_TRTLLM_VERSION=1.0.0` (fallback TensorRT-LLM version when the wheel metadata is unavailable during engine build)
 
 See `custom/environment.sh` for all available options and detailed documentation.
 
@@ -70,6 +71,9 @@ Quickstart (container):
 # Build base image (CUDA 12.1, Python 3.10 venv, torch==2.4.1)
 export HF_TOKEN="hf_xxx"   # optional at build time
 DOCKER_BUILDKIT=1 bash docker/build.sh
+
+# Push to Docker Hub (optional)
+DOCKER_BUILDKIT=1 bash docker/build.sh --push
 
 # Single-shot: quantize → build engine → start server (background)
 docker run --gpus all --rm \

@@ -5,6 +5,34 @@ set -euo pipefail
 
 IMAGE_NAME=${IMAGE_NAME:-sionescu/orpheus-trtllm}
 IMAGE_TAG=${IMAGE_TAG:-cu121-py310}
+PUSH_IMAGE=${PUSH_IMAGE:-0}
+
+usage() {
+  cat <<'EOF'
+Usage: docker/build.sh [--push]
+
+Builds the Orpheus TRT-LLM base image. Pass --push (or set PUSH_IMAGE=1) to
+push the resulting tag to the configured registry (default docker.io).
+EOF
+}
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --push)
+      PUSH_IMAGE=1
+      shift
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      echo "Unknown option: $1" >&2
+      usage >&2
+      exit 1
+      ;;
+  esac
+done
 
 # Optional: pass HF_TOKEN at build time if you want to bake auth (not recommended)
 BUILD_ARGS=(
@@ -32,3 +60,11 @@ docker build \
 echo "\nBuilt image: ${IMAGE_NAME}:${IMAGE_TAG}"
 echo "Use this as a base in cloud to skip bootstrap and TRT installs."
 
+if [[ "$PUSH_IMAGE" == "1" ]]; then
+  echo "\nPushing ${IMAGE_NAME}:${IMAGE_TAG}..."
+  docker push "${IMAGE_NAME}:${IMAGE_TAG}"
+  echo "Pushed ${IMAGE_NAME}:${IMAGE_TAG}"
+else
+  echo "\nTo push: docker push ${IMAGE_NAME}:${IMAGE_TAG}"
+  echo "(Or rerun with --push / PUSH_IMAGE=1)"
+fi
