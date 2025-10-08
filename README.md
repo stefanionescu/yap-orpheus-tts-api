@@ -20,7 +20,7 @@ Run Orpheus 3B TTS behind a FastAPI server using TensorRT-LLM backend with INT4-
 - OpenMPI runtime (installed automatically by bootstrap script)
 - Python 3.10 with shared libraries (installed automatically by bootstrap script)
 - Hugging Face token (`HF_TOKEN`) with access to `canopylabs/orpheus-3b-0.1-ft`
- - 120–130 GB free disk space to run `scripts/` (models, engine build, caches)
+- 80–90 GB free disk space to run `scripts/` (optimized model download, engine build, caches)
 
 ### Quickstart
 ```bash
@@ -47,6 +47,7 @@ All configuration is centralized in `scripts/environment.sh` with comprehensive 
 - **TTS**: `SNAC_MAX_BATCH=64` (audio decoder batching), `ORPHEUS_MAX_TOKENS=1024` (output length)
 - **Server**: `HOST=0.0.0.0`, `PORT=8000`, `DEFAULT_VOICE=female`
 - **Performance**: CUDA, PyTorch, and threading optimizations
+- **Download**: `HF_DOWNLOAD_ESSENTIAL_ONLY=1` (excludes training artifacts, saves ~40GB)
 
 See `scripts/environment.sh` for all available options and detailed documentation.
 

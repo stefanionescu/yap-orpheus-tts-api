@@ -95,7 +95,8 @@ export OPENBLAS_NUM_THREADS=${OPENBLAS_NUM_THREADS:-1}
 export NUMEXPR_NUM_THREADS=${NUMEXPR_NUM_THREADS:-1}
 
 # HuggingFace optimization
-export HF_TRANSFER=${HF_TRANSFER:-1}                        # Use hf_transfer for faster downloads
+export HF_TRANSFER=${HF_TRANSFER:-1}                                # Use hf_transfer for faster downloads
+export HF_DOWNLOAD_ESSENTIAL_ONLY=${HF_DOWNLOAD_ESSENTIAL_ONLY:-1}  # Download only essential files (excludes training artifacts)
 
 # Development and debugging toggles
 export TORCH_COMPILE_DISABLE=${TORCH_COMPILE_DISABLE:-1}    # Disable torch.compile by default

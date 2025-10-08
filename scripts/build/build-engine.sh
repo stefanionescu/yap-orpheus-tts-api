@@ -143,14 +143,56 @@ _build_optimized_engine() {
             
             if [[ ! -d "${local_model_dir}" ]]; then
                 mkdir -p "${local_model_dir}"
-                "${PYTHON_EXEC}" -c "
+                
+                if [ "${HF_DOWNLOAD_ESSENTIAL_ONLY:-1}" = "1" ]; then
+                    echo "[build] Downloading only essential files (excluding training artifacts)..."
+                    "${PYTHON_EXEC}" -c "
+from huggingface_hub import snapshot_download
+
+# Only download essential files for TRT/quantization (excludes training artifacts)
+essential_patterns = [
+    '*.safetensors',           # Model weights (preferred format)
+    '*.bin',                   # Model weights (fallback format)
+    'config.json',             # Model configuration
+    'tokenizer.json',          # Tokenizer data
+    'tokenizer_config.json',   # Tokenizer configuration  
+    'generation_config.json',  # Generation parameters
+    'special_tokens_map.json', # Special token mappings
+    'vocab.json',              # Vocabulary (if present)
+    'merges.txt'               # BPE merges (if present)
+]
+
+snapshot_download(
+    repo_id='${MODEL_ID}',
+    local_dir='${local_model_dir}',
+    local_dir_use_symlinks=False,
+    allow_patterns=essential_patterns,
+    ignore_patterns=[
+        '*.md',                # Documentation
+        '*.txt',               # Text files (except merges.txt)
+        'training_*',          # Training artifacts
+        'checkpoint_*',        # Training checkpoints
+        'optimizer.*',         # Optimizer states
+        'scheduler.*',         # Scheduler states
+        'trainer_state.*',     # Training state
+        '*.log',               # Log files
+        '.git*'                # Git files
+    ]
+)
+print('✓ Downloaded essential model files only')
+"
+                else
+                    echo "[build] Downloading complete model repository..."
+                    "${PYTHON_EXEC}" -c "
 from huggingface_hub import snapshot_download
 snapshot_download(
     repo_id='${MODEL_ID}',
     local_dir='${local_model_dir}',
     local_dir_use_symlinks=False
 )
+print('✓ Downloaded complete model repository')
 "
+                fi
             else
                 echo "[build] Using cached HF model at ${local_model_dir}"
             fi
