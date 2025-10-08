@@ -6,7 +6,21 @@ This directory contains Docker configuration for building and deploying the Orph
 
 ## Quick Start (2-5 minutes)
 
-### Build & Push on GPU Machine
+### Choose Your Build Environment
+
+**Clean GPU Machine (Recommended for Docker builds):**
+- Bare metal server or VM with GPU drivers
+- Full root access and systemd support
+- Use `build.sh` for complete Docker image creation
+
+**Containerized Environment (Runpod, Vast.ai, etc.):**
+- Already running inside a container/pod
+- Limited systemd access (Docker-in-Docker issues)
+- Use `containerized-build.sh` for direct engine building
+
+---
+
+### Build & Push on Clean GPU Machine
 
 Clone the repo and run the build script **directly on a GPU machine**:
 
@@ -34,8 +48,75 @@ Requirements:
 - Ubuntu 20.04/22.04/24.04 or Debian 11/12
 - Root/sudo access
 
-Troubleshooting:
+**Troubleshooting:**
 - If `nvcr.io/nvidia/tensorrt:23.12-py3` requires login: `docker login nvcr.io -u '$oauthtoken' -p '<NGC_API_KEY>'`
+- If you get systemd errors, you're likely in a containerized environment - use the Runpod method below
+
+---
+
+### Build in Containerized Environment (Runpod/Vast.ai)
+
+If you're already inside a container (Runpod, Vast.ai, etc.), Docker-in-Docker won't work. Use the direct build approach:
+
+```bash
+# Inside your Runpod/container environment
+git clone https://github.com/your_username/yap-orpheus-tts-api.git
+cd yap-orpheus-tts-api
+
+# Build TensorRT engine directly (no Docker)
+bash docker/scripts/containerized-build.sh --hf-token hf_xxx
+```
+
+**What it does:**
+1. Uses the existing `scripts/` pipeline (no Docker complications)
+2. Builds the same **INT4-AWQ quantized TensorRT engine** (30-45 min)
+3. Creates engine ready for immediate use
+
+**To run the server after building:**
+```bash
+export YAP_API_KEY="your_api_key_here"
+export TRTLLM_ENGINE_DIR=$(find $PWD -name 'rank0.engine' -type f | head -1 | xargs dirname)
+bash scripts/03-run-server.sh
+```
+
+**Requirements:**
+- GPU environment with NVIDIA drivers
+- HuggingFace token for model access
+- No Docker or root access needed
+
+---
+
+### Cleanup Build Artifacts
+
+Universal cleanup script that works in both clean machines and containerized environments:
+
+```bash
+# Stop processes and remove build artifacts only
+bash docker/scripts/stop.sh
+
+# Remove everything including built engines and Docker images
+bash docker/scripts/stop.sh --all
+```
+
+**What it cleans (automatically detects environment):**
+
+**Both Environments:**
+- ✅ Stops TTS server processes (uvicorn)
+- ✅ Removes temporary build directories
+- ✅ Cleans up PID and log files
+
+**Clean Machine (Docker available):**
+- ✅ Stops and removes Orpheus TTS containers
+- ✅ Cleans Docker build cache and unused resources
+- ✅ Removes Docker images (with `--all`)
+
+**Containerized (Runpod/Vast.ai):**
+- ✅ Removes built TensorRT engines (with `--all`)
+- ✅ Removes virtual environments and models (with `--all`)
+
+**Always Preserved:**
+- ❌ **Docker installation and system components**
+- ❌ **Base system packages and drivers**
 
 ### Deploy Pre-built Image
 
@@ -265,10 +346,11 @@ The Docker image includes:
 
 ## Performance Comparison
 
-| Method | Setup Time | Use Case |
-|--------|------------|----------|
-| Docker (pre-built) | 2-5 minutes | Production, cloud deployment |
-| Scripts (from scratch) | 45 minutes | Development, customization |
+| Method | Setup Time | Use Case | Environment |
+|--------|------------|----------|-------------|
+| Docker (pre-built) | 2-5 minutes | Production, cloud deployment | Any GPU machine |
+| build.sh (clean machine) | 45 minutes | Docker image creation | Clean GPU server/VM |
+| containerized-build.sh (containerized) | 45 minutes | Direct engine building | Runpod, Vast.ai, containers |
 
 ## Troubleshooting
 
