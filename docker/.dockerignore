@@ -67,7 +67,6 @@ Thumbs.db
 
 # Documentation (not needed for runtime, but keep main README for reference)
 docker/README.md
-docker/example-usage.sh
 docker/scripts/
 
 # Audio test files

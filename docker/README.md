@@ -1,22 +1,55 @@
-# Docker Deployment for Orpheus 3B TTS
+# Docker Deployment for Orpheus 3B TTS (INT4 AWQ Quantized)
 
 This directory contains Docker configuration for building and deploying the Orpheus 3B TTS server with pre-built TensorRT engines for rapid deployment.
 
 ## Quick Start (2-5 minutes)
 
-### Standard Docker Deployment
+### One-Command Remote Build & Push
 
-For instant deployment on any GPU-enabled machine:
+Run this **directly on a GPU machine** to build and push your Docker image:
 
 ```bash
-# Set your Docker image name
+# On the remote GPU machine (Ubuntu 20.04/22.04 or Debian 11/12)
+curl -fsSL https://raw.githubusercontent.com/YOUR_REPO/main/docker/scripts/build.sh | bash -s -- \
+  --docker-username YOUR_DOCKERHUB_USERNAME \
+  --docker-password YOUR_DOCKERHUB_PASSWORD \
+  --hf-token hf_xxx
+```
+
+Or download and run:
+```bash
+wget https://raw.githubusercontent.com/YOUR_REPO/main/docker/scripts/build.sh
+bash build.sh --docker-username USER --docker-password PASS --hf-token TOKEN
+```
+
+What it does:
+1. Installs Docker + NVIDIA Container Toolkit
+2. Clones the repository 
+3. Builds the image with TensorRT engine (30-45 min)
+4. Pushes to `docker.io/YOUR_DOCKERHUB_USERNAME/orpheus-3b-tts:latest`
+
+Requirements:
+- GPU machine with NVIDIA drivers installed
+- Ubuntu 20.04/22.04 or Debian 11/12
+- Root/sudo access
+
+Troubleshooting:
+- If `nvcr.io/nvidia/tensorrt:23.12-py3` requires login: `docker login nvcr.io -u '$oauthtoken' -p '<NGC_API_KEY>'`
+
+### Deploy Pre-built Image
+
+After building with `build.sh`, deploy anywhere:
+
+```bash
+# Set your Docker image name and API key
 export DOCKER_IMAGE="your_username/orpheus-3b-tts:latest"
+export YAP_API_KEY="your_api_key_here"
 
-# Pull and run pre-built image (server starts automatically)
+# Pull and run pre-built image
 docker pull $DOCKER_IMAGE
-docker run --gpus all -p 8000:8000 --name orpheus-tts $DOCKER_IMAGE
+docker run --gpus all -p 8000:8000 -e YAP_API_KEY="$YAP_API_KEY" --name orpheus-tts $DOCKER_IMAGE
 
-# Server starts automatically - check health
+# Check health (server starts after API key validation)
 curl http://localhost:8000/healthz
 ```
 
@@ -128,7 +161,7 @@ If you have access to the pre-built Docker image:
 ```bash
 # Simple deployment
 docker pull your_username/orpheus-3b-tts:latest
-docker run --gpus all -p 8000:8000 your_username/orpheus-3b-tts:latest
+docker run --gpus all -p 8000:8000 -e YAP_API_KEY=your_key your_username/orpheus-3b-tts:latest
 ```
 
 ## Building Your Own Image
@@ -137,31 +170,13 @@ To build the Docker image with pre-built TensorRT engine (45 minutes):
 
 ### Prerequisites
 
+You can skip manual prerequisites by using the automated remote build above. If you prefer to build locally, ensure:
 1. GPU-enabled machine with NVIDIA drivers
 2. Docker with GPU support (nvidia-container-toolkit)
 
-### Build Steps
+### Manual Build Steps
 
-```bash
-# 1. Set required environment variables
-export HF_TOKEN="hf_your_token_here"
-export DOCKER_USERNAME="your_dockerhub_username"
-export DOCKER_PASSWORD="your_dockerhub_password"
-
-# 2. Login to Docker Hub
-echo $DOCKER_PASSWORD | docker login --username $DOCKER_USERNAME --password-stdin
-
-# 3. Build image
-docker build \
-  --build-arg HF_TOKEN="$HF_TOKEN" \
-  --build-arg DOCKER_USERNAME="$DOCKER_USERNAME" \
-  --build-arg DOCKER_PASSWORD="$DOCKER_PASSWORD" \
-  -t $DOCKER_USERNAME/orpheus-3b-tts:latest \
-  -f docker/Dockerfile .
-
-# 4. Push to Docker Hub
-docker push $DOCKER_USERNAME/orpheus-3b-tts:latest
-```
+The `build.sh` script handles everything automatically. For manual control, you can run the individual steps from `build.sh` separately if needed.
 
 This will:
 - Build Docker image with all dependencies

@@ -18,8 +18,11 @@ VENV_DIR="$APP_DIR/.venv"
 LOG_FILE="/tmp/tts-server.log"
 HOST="0.0.0.0"
 PORT="8000"
-# Unified API key env
-YAP_API_KEY="${YAP_API_KEY:-YAP_API_KEY}"
+
+# Environment variables (matching main scripts)
+export TRTLLM_ENGINE_DIR="/app/models/orpheus-trt-int4-awq"
+export YAP_API_KEY="${YAP_API_KEY:-}"
+export HF_TOKEN="${HF_TOKEN:-}"
 
 # Parse arguments
 BACKGROUND=false
@@ -39,24 +42,39 @@ for arg in "$@"; do
     esac
 done
 
-# Validate environment
+# Validate environment (matching main scripts logic)
 echo "[startup] Validating environment..."
 
+# Check required directories
 if [ ! -d "$APP_DIR" ]; then
     echo "ERROR: App directory not found at $APP_DIR" >&2
-    echo "Make sure you're running this inside the TTS Docker container" >&2
     exit 1
 fi
 
 if [ ! -d "$VENV_DIR" ]; then
     echo "ERROR: Virtual environment not found at $VENV_DIR" >&2
-    echo "Make sure the Docker image was built correctly" >&2
     exit 1
 fi
 
-if [ ! -f "$APP_DIR/models/orpheus-trt-int4-awq/rank0.engine" ]; then
-    echo "ERROR: TensorRT engine not found" >&2
-    echo "Expected: $APP_DIR/models/orpheus-trt-int4-awq/rank0.engine" >&2
+# Check TensorRT engine
+if [ ! -f "$TRTLLM_ENGINE_DIR/rank0.engine" ]; then
+    echo "ERROR: TensorRT engine not found at $TRTLLM_ENGINE_DIR/rank0.engine" >&2
+    exit 1
+fi
+
+# Validate required environment variables (matching main scripts)
+missing_vars=()
+
+if [ -z "$YAP_API_KEY" ]; then
+    missing_vars+=("YAP_API_KEY")
+fi
+
+if [ ${#missing_vars[@]} -gt 0 ]; then
+    echo "ERROR: Missing required environment variables:" >&2
+    printf "  - %s\n" "${missing_vars[@]}" >&2
+    echo "" >&2
+    echo "Please set these variables when running the container:" >&2
+    echo "  docker run -e YAP_API_KEY=your_key ..." >&2
     exit 1
 fi
 

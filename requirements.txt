@@ -2,28 +2,28 @@
 fastapi==0.115.4
 uvicorn[standard]==0.30.6
 python-dotenv==1.0.1
-websockets>=12.0
+websockets==12.0
 
 # HuggingFace and ML
-huggingface_hub>=0.24.7
-transformers>=4.44.2
-torch>=2.0.0
-numpy>=1.26
-snac>=0.1.6
+huggingface_hub==0.24.7
+transformers==4.44.2
+torch==2.4.1
+numpy==1.26.4
+snac==0.1.6
 
 # Audio processing
-soundfile>=0.12.1
+soundfile==0.12.1
 
 # TensorRT-LLM (installed separately via wheel)
 # tensorrt-llm==1.0.0  # Installed from NVIDIA PyPI
 
 # TensorRT-LLM dependencies
-mpi4py>=3.1
-cuda-python>=12.6,<13
-hf_transfer>=0.1.6
+mpi4py==3.1.6
+cuda-python==12.6.0
+hf_transfer==0.1.8
 
 # Build tools (needed for some packages)
-ninja
-packaging
-setuptools
-wheel
+ninja==1.11.1.1
+packaging==24.1
+setuptools==75.1.0
+wheel==0.44.0

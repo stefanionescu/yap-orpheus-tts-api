@@ -24,10 +24,6 @@ ARG DOCKER_USERNAME
 ARG DOCKER_PASSWORD
 ARG IMAGE_NAME=orpheus-3b-tts
 
-# Validate required build arguments
-RUN if [ -z "$HF_TOKEN" ]; then echo "ERROR: HF_TOKEN build arg required" && exit 1; fi
-RUN if [ -z "$DOCKER_USERNAME" ]; then echo "ERROR: DOCKER_USERNAME build arg required" && exit 1; fi
-
 # Set environment variables for the build
 ENV HF_TOKEN=${HF_TOKEN}
 ENV DEBIAN_FRONTEND=noninteractive
@@ -101,8 +97,12 @@ RUN pip install --upgrade --extra-index-url https://pypi.nvidia.com \
 # HuggingFace Authentication
 # =============================================================================
 
-# Login to HuggingFace (required for model access)
-RUN python -c "from huggingface_hub import login; login(token='${HF_TOKEN}', add_to_git_credential=False)"
+# Login to HuggingFace only if token is provided (skip if public models)
+RUN if [ -n "${HF_TOKEN}" ]; then \
+      python -c "from huggingface_hub import login; login(token='${HF_TOKEN}', add_to_git_credential=False)"; \
+    else \
+      echo "Skipping HuggingFace login (HF_TOKEN not provided)"; \
+    fi
 
 # =============================================================================
 # TensorRT-LLM Engine Build
@@ -204,7 +204,7 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
 COPY docker/start-server.sh /app/start-server.sh
 RUN chmod +x /app/start-server.sh
 
-# Default command - automatically start TTS server
-# For instant deployment: server starts immediately when container runs
-# For manual control: override with docker run ... bash (then use /app/start-server.sh)
-CMD ["bash", "-c", "cd /app && source .venv/bin/activate && exec python -m uvicorn server.server:app --host 0.0.0.0 --port 8000 --timeout-keep-alive 75 --log-level info"]
+# Default command - wait for API key, then start server
+# Server requires YAP_API_KEY to be set at runtime
+# For manual control: docker run ... bash (then use /app/start-server.sh)
+CMD ["bash", "/app/start-server.sh"]
