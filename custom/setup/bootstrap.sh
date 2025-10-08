@@ -9,14 +9,14 @@
 # - OpenMPI runtime (for multi-GPU builds)
 # - Basic system utilities
 #
-# Usage: bash scripts/setup/bootstrap.sh
+# Usage: bash custom/setup/bootstrap.sh
 # Environment: Requires HF_TOKEN to be set
 # =============================================================================
 
 set -euo pipefail
 
 # Load common utilities and environment
-source "scripts/lib/common.sh"
+source "custom/lib/common.sh"
 load_env_if_present
 load_environment
 

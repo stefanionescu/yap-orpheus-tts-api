@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Common helpers for scripts/
+# Common helpers for custom/
 
 # Do not set -euo here; these functions are sourced by other scripts
 
@@ -89,7 +89,7 @@ start_background() {
 
 # Load centralized environment configuration
 load_environment() {
-  local env_file="${1:-scripts/environment.sh}"
+  local env_file="${1:-custom/environment.sh}"
   if [ -f "$env_file" ]; then
     # shellcheck disable=SC1090
     source "$env_file"

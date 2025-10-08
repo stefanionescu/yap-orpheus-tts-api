@@ -8,14 +8,14 @@
 # - All Python package dependencies
 # - Validates critical runtime libraries
 #
-# Usage: bash scripts/setup/install-dependencies.sh
+# Usage: bash custom/setup/install-dependencies.sh
 # Environment: Requires HF_TOKEN, optionally PYTHON_VERSION, VENV_DIR
 # =============================================================================
 
 set -euo pipefail
 
 # Load common utilities and environment
-source "scripts/lib/common.sh"
+source "custom/lib/common.sh"
 load_env_if_present
 load_environment
 

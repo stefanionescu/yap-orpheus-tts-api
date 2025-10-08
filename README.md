@@ -3,7 +3,7 @@
 Run Orpheus 3B TTS behind a FastAPI server using TensorRT-LLM backend with INT4-AWQ quantization. Optimized for A100 GPUs to support **16 concurrent users** with minimal to no quality loss.
 
 - **Server**: `server/` - Clean, modular FastAPI application
-- **Scripts**: `scripts/` - Organized setup, build, and runtime scripts  
+- **Scripts**: `custom/` - Organized setup, build, and runtime scripts  
 - **Tests**: `tests/` - Benchmarking and validation tools
 
 ## Key Features
@@ -20,7 +20,7 @@ Run Orpheus 3B TTS behind a FastAPI server using TensorRT-LLM backend with INT4-
 - OpenMPI runtime (installed automatically by bootstrap script)
 - Python 3.10 with shared libraries (installed automatically by bootstrap script)
 - Hugging Face token (`HF_TOKEN`) with access to `canopylabs/orpheus-3b-0.1-ft`
-- 60–70 GB free disk space to run `scripts/` (optimized model download, engine build, caches)
+- 60–70 GB free disk space to run `custom/` (optimized model download, engine build, caches)
 
 ### Quickstart
 ```bash
@@ -28,7 +28,7 @@ Run Orpheus 3B TTS behind a FastAPI server using TensorRT-LLM backend with INT4-
 export HF_TOKEN="hf_xxx"
 
 # 2) Bootstrap → install → run (tails logs)
-bash scripts/main.sh
+bash custom/main.sh
 
 # 3) Health check
 curl -s http://127.0.0.1:8000/healthz
@@ -38,7 +38,7 @@ curl -s http://127.0.0.1:8000/healthz
 
 ## Configuration
 
-All configuration is centralized in `scripts/environment.sh` with comprehensive documentation.
+All configuration is centralized in `custom/environment.sh` with comprehensive documentation.
 
 ### Required Environment Variables
 - `HF_TOKEN`: Hugging Face token for model access
@@ -55,7 +55,7 @@ All configuration is centralized in `scripts/environment.sh` with comprehensive 
 - **Download**: `HF_DOWNLOAD_ESSENTIAL_ONLY=1` (excludes training artifacts, saves ~40GB)
 - **GPU**: `GPU_SM_ARCH=sm80` (only required for HuggingFace push)
 
-See `scripts/environment.sh` for all available options and detailed documentation.
+See `custom/environment.sh` for all available options and detailed documentation.
 
 ## Installation & Deployment
 
@@ -65,7 +65,7 @@ Runs bootstrap → install → build INT4-AWQ engine → start server:
 
 ```bash
 export HF_TOKEN="hf_xxx"
-bash scripts/main.sh
+bash custom/main.sh
 ```
 
 ### Optional: Push artifacts to Hugging Face after build
@@ -90,7 +90,7 @@ export HF_PUSH_ENGINE_LABEL=""
 2) Run the normal pipeline; a push occurs right after build:
 
 ```bash
-bash scripts/main.sh
+bash custom/main.sh
 ```
 
 Artifacts layout pushed to HF:
@@ -125,26 +125,26 @@ Practical guidance:
 export HF_TOKEN="hf_xxx"
 
 # 1) Bootstrap system dependencies (OpenMPI, Python dev libs)
-bash scripts/00-bootstrap.sh
+bash custom/00-bootstrap.sh
 
 # 2) Install Python environment and TensorRT-LLM
-bash scripts/01-install-trt.sh
+bash custom/01-install-trt.sh
 
 # 3) Build INT4-AWQ + INT8 KV cache engine
-bash scripts/02-build.sh
+bash custom/02-build.sh
 
 # 4) Start TTS server
-bash scripts/03-run-server.sh
+bash custom/03-run-server.sh
 ```
 
 ### Script Organization
 
 The scripts are now organized into logical directories:
-- **`scripts/setup/`** - System bootstrap and dependency installation
-- **`scripts/build/`** - TensorRT-LLM engine building
-- **`scripts/runtime/`** - Server startup and management
-- **`scripts/utils/`** - Cleanup and maintenance utilities
-- **`scripts/lib/`** - Shared helper functions
+- **`custom/setup/`** - System bootstrap and dependency installation
+- **`custom/build/`** - TensorRT-LLM engine building
+- **`custom/runtime/`** - Server startup and management
+- **`custom/utils/`** - Cleanup and maintenance utilities
+- **`custom/lib/`** - Shared helper functions
 
 Old numbered script names (`00-bootstrap.sh`, etc.) are maintained as compatibility wrappers.
 
@@ -155,7 +155,7 @@ Use this when you already have a built TensorRT-LLM engine and just want to rest
 1) Stop any running server:
 
 ```bash
-bash scripts/utils/cleanup.sh
+bash custom/utils/cleanup.sh
 ```
 
 2) Ensure your Hugging Face token is exported:
@@ -177,7 +177,7 @@ export TRTLLM_ENGINE_DIR="$(pwd)/models/orpheus-trt-int4-awq"
 4) Start the server:
 
 ```bash
-bash scripts/03-run-server.sh
+bash custom/03-run-server.sh
 ```
 
 5) Health check:
@@ -218,10 +218,10 @@ Note on HF token precedence:
 
 ```bash
 # Force rebuild with new settings
-bash scripts/02-build.sh --force
+bash custom/02-build.sh --force
 
 # Custom batch size
-bash scripts/02-build.sh --max-batch-size 32 --force
+bash custom/02-build.sh --max-batch-size 12 --force
 ```
 
 ## Testing and Benchmarking
@@ -278,7 +278,7 @@ If you experience RTF degradation at high concurrency (16-20+ users):
 **Rebuild with INT8 KV Cache** (primary fix):
 ```bash
 # INT8 KV cache is now enabled by default in the build script
-bash scripts/02-build.sh --force
+bash custom/02-build.sh --force
 ```
 
 This reduces KV cache memory usage by 50%, allowing more concurrent requests.
@@ -303,19 +303,19 @@ export TLLM_LOG_LEVEL=DEBUG
 
 ```bash
 # Stop server only
-bash scripts/utils/cleanup.sh
+bash custom/utils/cleanup.sh
 
 # Stop + remove build artifacts
-bash scripts/utils/cleanup.sh --clean-trt
+bash custom/utils/cleanup.sh --clean-trt
 
 # Stop + remove venv and caches  
-bash scripts/utils/cleanup.sh --clean-install
+bash custom/utils/cleanup.sh --clean-install
 
 # Nuclear option: remove everything
-bash scripts/utils/cleanup.sh --clean-install --clean-trt --clean-system
+bash custom/utils/cleanup.sh --clean-install --clean-trt --clean-system
 
 # Get help on cleanup options
-bash scripts/utils/cleanup.sh --help
+bash custom/utils/cleanup.sh --help
 ```
 
 ### Cleanup Options Explained

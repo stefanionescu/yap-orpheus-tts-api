@@ -7,14 +7,14 @@
 # - INT8 KV cache (2x memory reduction)
 # - Optimized for realtime TTS workload (48 input, 1024 output tokens)
 #
-# Usage: bash scripts/build/build-engine.sh [--force] [--max-batch-size N]
+# Usage: bash custom/build/build-engine.sh [--force] [--max-batch-size N]
 # Environment: Requires HF_TOKEN, VENV_DIR, optionally TRTLLM_ENGINE_DIR
 # =============================================================================
 
 set -euo pipefail
 
 # Load common utilities and environment
-source "scripts/lib/common.sh"
+source "custom/lib/common.sh"
 load_env_if_present
 load_environment
 
@@ -404,7 +404,7 @@ require_env HF_TOKEN
 # Check virtual environment
 if [ ! -d "$VENV_DIR" ]; then
     echo "ERROR: Virtual environment not found at $VENV_DIR" >&2
-    echo "Run scripts/01-install-trt.sh first" >&2
+    echo "Run custom/01-install-trt.sh first" >&2
     exit 1
 fi
 
@@ -450,5 +450,5 @@ echo "[build] Configuration: INT4-AWQ weight-only"
 echo "[build] Model weights: 6GB → ~1.5GB (≈4x smaller)"
 echo "[build] To run server:"
 echo "  export TRTLLM_ENGINE_DIR=\"${ENGINE_OUTPUT_DIR}\""
-echo "  bash scripts/03-run-server.sh"
+echo "  bash custom/03-run-server.sh"
 echo "[build] ============================================"

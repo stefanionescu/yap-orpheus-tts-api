@@ -6,7 +6,7 @@
 # build artifacts, caches, and temporary files. Includes GPU memory cleanup.
 # Optimized for cloud/container environments with aggressive cleanup options.
 #
-# Usage: bash scripts/utils/cleanup.sh [OPTIONS]
+# Usage: bash custom/utils/cleanup.sh [OPTIONS]
 # Options:
 #   --clean-install  AGGRESSIVELY remove Python venv, ALL caches, and packages  
 #   --clean-system   NUCLEAR system cleanup - removes ALL caches, logs, temp files
@@ -69,8 +69,8 @@ _stop_background_processes() {
     fi
     
     # Kill any remaining pipeline processes
-    pkill -f "scripts/run-all.sh" 2>/dev/null || true
-    pkill -f "scripts/main.sh" 2>/dev/null || true
+    pkill -f "custom/run-all.sh" 2>/dev/null || true
+    pkill -f "custom/main.sh" 2>/dev/null || true
     pkill -f "setup-pipeline" 2>/dev/null || true
 }
 

@@ -8,7 +8,7 @@
 # 3. Engine build (INT4-AWQ quantization)
 # 4. Server startup (FastAPI with TTS endpoints)
 #
-# Usage: bash scripts/run-complete-setup.sh
+# Usage: bash custom/run-complete-setup.sh
 # Environment: Requires HF_TOKEN to be set
 # =============================================================================
 
@@ -56,17 +56,17 @@ mkdir -p logs .run
 # Define the complete pipeline command
 PIPELINE_CMD='
     echo "[pipeline] === Step 1/4: System Bootstrap ===" && \
-    bash scripts/00-bootstrap.sh && \
+    bash custom/00-bootstrap.sh && \
     echo "" && \
     echo "[pipeline] === Step 2/4: Install Dependencies ===" && \
-    bash scripts/01-install-trt.sh && \
+    bash custom/01-install-trt.sh && \
     echo "" && \
     echo "[pipeline] === Step 3/4: Build TensorRT Engine ===" && \
-    bash scripts/02-build.sh && \
+    bash custom/02-build.sh && \
     echo "" && \
     if [ "${HF_PUSH_AFTER_BUILD:-0}" = "1" ]; then \
         echo "[pipeline] === Optional: Push artifacts to Hugging Face ===" && \
-        source scripts/environment.sh && \
+        source custom/environment.sh && \
         if [ -z "${HF_PUSH_REPO_ID:-}" ]; then \
             echo "[pipeline] Skipping push: HF_PUSH_REPO_ID not set"; \
         elif [ -z "${GPU_SM_ARCH:-}" ]; then \
@@ -79,13 +79,13 @@ PIPELINE_CMD='
             # Use venv python if available
             PYTHON_EXEC="${PYTHON_EXEC:-python}"; \
             if [ -x ".venv/bin/python" ]; then PYTHON_EXEC=".venv/bin/python"; fi; \
-            "$PYTHON_EXEC" scripts/utils/push_to_hf.py --repo-id "${HF_PUSH_REPO_ID}" $([ "${HF_PUSH_PRIVATE:-1}" = "1" ] && echo --private) --what "${HF_PUSH_WHAT:-both}" --engine-label "${HF_PUSH_ENGINE_LABEL:-}" $([ "${HF_PUSH_PRUNE:-0}" = "1" ] && echo --prune) $([ "${HF_PUSH_NO_README:-0}" = "1" ] && echo --no-readme); \
+            "$PYTHON_EXEC" custom/utils/push_to_hf.py --repo-id "${HF_PUSH_REPO_ID}" $([ "${HF_PUSH_PRIVATE:-1}" = "1" ] && echo --private) --what "${HF_PUSH_WHAT:-both}" --engine-label "${HF_PUSH_ENGINE_LABEL:-}" $([ "${HF_PUSH_PRUNE:-0}" = "1" ] && echo --prune) $([ "${HF_PUSH_NO_README:-0}" = "1" ] && echo --no-readme); \
         fi; \
         echo ""; \
     fi && \
     echo "[pipeline] === Step 4/4: Start TTS Server ===" && \
     export TRTLLM_ENGINE_DIR="${TRTLLM_ENGINE_DIR:-$PWD/models/orpheus-trt-int4-awq}" && \
-    bash scripts/03-run-server.sh
+    bash custom/03-run-server.sh
 '
 
 # Run pipeline in background with proper process isolation
@@ -99,7 +99,7 @@ echo $bg_pid > .run/setup-pipeline.pid
 echo "[pipeline] Pipeline started (PID: $bg_pid)"
 echo "[pipeline] Logs: logs/setup-pipeline.log"
 echo "[pipeline] Server logs: logs/server.log (when server starts)"
-echo "[pipeline] To stop: bash scripts/utils/cleanup.sh"
+echo "[pipeline] To stop: bash custom/utils/cleanup.sh"
 echo ""
 echo "[pipeline] Following setup logs (Ctrl-C detaches, pipeline continues)..."
 
