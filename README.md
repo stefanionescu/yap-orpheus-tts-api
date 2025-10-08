@@ -47,6 +47,9 @@ All configuration is centralized in `custom/environment.sh` with comprehensive d
 ### Optional Environment Variables
 - `GPU_SM_ARCH`: GPU architecture - **only required for HuggingFace push** (A100: `sm80`, RTX 4090: `sm89`, H100: `sm90`)
 
+### Authentication
+- `YAP_API_KEY` (optional): If set, the server requires `Authorization: Bearer <YAP_API_KEY>` on incoming requests. For Docker, pass with `-e YAP_API_KEY=...`.
+
 ### Key Configuration Settings
 - **Engine**: `TRTLLM_MAX_BATCH_SIZE=16` (concurrent users), `KV_FREE_GPU_FRAC=0.92` (GPU memory usage)
 - **TTS**: `SNAC_MAX_BATCH=64` (audio decoder batching), `ORPHEUS_MAX_TOKENS=1024` (output length)
@@ -61,6 +64,23 @@ See `custom/environment.sh` for all available options and detailed documentation
 ### Docker (containerized) path
 
 If you want to build and run everything inside a container, see `docker/README.md` for image build (with BuildKit secret for `HF_TOKEN`) and instructions to quantize/build the engine and start the server inside the image.
+
+Quickstart (container):
+```bash
+# Build base image (CUDA 12.1, Python 3.10 venv, torch==2.4.1)
+export HF_TOKEN="hf_xxx"   # optional at build time
+DOCKER_BUILDKIT=1 bash docker/build.sh
+
+# Single-shot: quantize → build engine → start server (background)
+docker run --gpus all --rm \
+  -e HF_TOKEN=$HF_TOKEN \
+  -e YAP_API_KEY=your_secret_key \
+  -e MODEL_ID=canopylabs/orpheus-3b-0.1-ft \
+  -e TRTLLM_ENGINE_DIR=/opt/engines/orpheus-trt-int4-awq \
+  -v /path/for/engines:/opt/engines \
+  -p 8000:8000 \
+  -it IMAGE:TAG run.sh
+```
 
 ### Scripts Deployment
 
@@ -188,6 +208,9 @@ bash custom/03-run-server.sh
 ```bash
 curl -s http://127.0.0.1:8000/healthz
 ```
+
+### Voices
+The server accepts `voice` values `female` or `male` (mapped internally to `tara` and `zac`).
 
 ### Checking Server Logs
 

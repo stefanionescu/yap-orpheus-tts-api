@@ -3,10 +3,10 @@
 This image pre-installs everything done by `scripts/00-bootstrap.sh` and `scripts/01-install-trt.sh` so cloud jobs can skip slow dependency setup.
 
 #### Contents
-- **Base**: `nvidia/cuda:12.6.2-cudnn-runtime-ubuntu22.04`
+- **Base**: `nvidia/cuda:12.1.1-cudnn8-runtime-ubuntu22.04`
 - **System deps**: git, wget, curl, jq, OpenMPI runtime/dev, Python 3.10 + dev/venv
 - **Python env**: venv at `/opt/venv` and set as default `PATH`
-- **PyTorch**: installed from CU126 index (torch==2.4.1)
+- **PyTorch**: installed from CU121 index (torch==2.4.1)
 - **App deps**: `requirements.txt`
 - **TensorRT-LLM**: via NVIDIA PyPI (wheel URL is build-arg)
 - **TRT-LLM repo**: cloned to `/opt/TensorRT-LLM` and pinned to installed wheel version
@@ -28,7 +28,7 @@ DOCKER_BUILDKIT=1 bash docker/build.sh                 # uses --secret id=HF_TOK
 # or with overrides:
 PYTORCH_INDEX_URL=https://download.pytorch.org/whl/cu126 \
 TRTLLM_WHEEL_URL=https://pypi.nvidia.com/tensorrt-llm/tensorrt_llm-1.0.0-cp310-cp310-linux_x86_64.whl \
-IMAGE_NAME=yapai/orpheus-trtllm-base IMAGE_TAG=cu126-py310-trt1.0 \
+IMAGE_NAME=sionescu/orpheus-trtllm-base IMAGE_TAG=cu126-py310-trt1.0 \
 bash docker/build.sh
 ```
 
@@ -39,7 +39,7 @@ Notes:
 #### Use in Cloud
 Use this image as a base for your runtime image where you add model engines and start the server.
 ```Dockerfile
-FROM yapai/orpheus-trtllm-base:cu126-py310-trtllm1.0.0
+FROM sionescu/orpheus-trtllm-base:cu126-py310-trtllm1.0.0
 WORKDIR /app
 COPY . /app
 # Supply runtime env like HF_TOKEN, TRTLLM_ENGINE_DIR, etc.

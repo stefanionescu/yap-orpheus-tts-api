@@ -62,27 +62,27 @@ if [[ ! -d "$TRTLLM_REPO_DIR" ]]; then
   exit 1
 fi
 
+# Install quantization requirements now (match custom/build/build-engine.sh)
+quant_requirements="$TRTLLM_REPO_DIR/examples/quantization/requirements.txt"
+if [[ -f "$quant_requirements" ]]; then
+  echo "[build] Installing quantization requirements..."
+  pip install -r "$quant_requirements"
+else
+  echo "[build] WARNING: quantization requirements.txt not found, continuing"
+fi
+
 export HF_HUB_ENABLE_HF_TRANSFER=1
 export HUGGING_FACE_HUB_TOKEN="${HUGGING_FACE_HUB_TOKEN:-$HF_TOKEN}"
 export HF_HUB_TOKEN="${HF_HUB_TOKEN:-$HF_TOKEN}"
 
-# Resolve model directory (download if needed)
+# Resolve model directory (use pre-downloaded model inside image)
 local_model_dir="$MODEL_ID"
 if [[ ! -d "$MODEL_ID" ]]; then
   basename="${MODEL_ID##*/}"
   local_model_dir="${MODELS_DIR}/${basename}-hf"
   if [[ ! -d "$local_model_dir" ]]; then
-    echo "[build] Downloading complete model repository: ${MODEL_ID}"
-    mkdir -p "$local_model_dir"
-    "$PYTHON_EXEC" - <<PY
-from huggingface_hub import login, snapshot_download
-import os
-token=os.environ.get('HF_TOKEN')
-if token:
-    login(token=token, add_to_git_credential=False)
-snapshot_download(repo_id='${MODEL_ID}', local_dir='${local_model_dir}', local_dir_use_symlinks=False)
-print('✓ Downloaded complete model repository')
-PY
+    echo "ERROR: Expected pre-downloaded model at ${local_model_dir}. Rebuild image with HF_TOKEN secret."
+    exit 1
   else
     echo "[build] Using cached HF model at ${local_model_dir}"
   fi
