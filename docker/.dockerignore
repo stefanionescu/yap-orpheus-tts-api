@@ -5,6 +5,7 @@
 
 # Allow only Docker assets and requirements.txt
 !docker/
+!server/
 !requirements.txt
 
 

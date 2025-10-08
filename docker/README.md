@@ -11,13 +11,17 @@ This image pre-installs everything done by `scripts/00-bootstrap.sh` and `script
 - **TensorRT-LLM**: via NVIDIA PyPI (wheel URL is build-arg)
 - **TRT-LLM repo**: cloned to `/opt/TensorRT-LLM` and pinned to installed wheel version
 - **HF model cache**: Orpheus model snapshot downloaded to `/opt/models/<basename>-hf`
+- **Runtime scripts** (inside image at `/usr/local/bin`):
+  - `quantize_and_build.sh`: performs INT4-AWQ quantization and builds TRT engine
+  - `start_server.sh`: starts the FastAPI server
 
 #### Build
 ```bash
 cd /path/to/yap-orpheus-tts-api
-export HF_TOKEN=hf_xxx   # REQUIRED at build time
+export HF_TOKEN=hf_xxx                        # REQUIRED at build time
 export MODEL_ID=canopylabs/orpheus-3b-0.1-ft  # optional override
 bash docker/build-base.sh
+
 # or with overrides:
 PYTORCH_INDEX_URL=https://download.pytorch.org/whl/cu126 \
 TRTLLM_WHEEL_URL=https://pypi.nvidia.com/tensorrt-llm/tensorrt_llm-1.0.0-cp310-cp310-linux_x86_64.whl \
@@ -41,6 +45,19 @@ CMD ["bash", "-lc", "uvicorn server.server:app --host $HOST --port $PORT --timeo
 
 #### Notes
 - This base image intentionally mirrors bootstrap steps; additionally it pre-clones the TRT-LLM repo and caches the Orpheus model. Engine build (`scripts/02-build.sh`) and server run are left to downstream images or runtime.
+
+#### Runtime
+Examples after pulling the image:
+```bash
+# Quantize and build engine
+docker run --gpus all --rm -e HF_TOKEN=$HF_TOKEN -e MODEL_ID=canopylabs/orpheus-3b-0.1-ft \
+  -v /path/for/engines:/opt/engines \
+  -it IMAGE:TAG quantize_and_build.sh --engine-dir /opt/engines/orpheus-trt-int4-awq
+
+# Start server (assumes engine exists at /opt/engines/...)
+docker run --gpus all --rm -e HF_TOKEN=$HF_TOKEN -e TRTLLM_ENGINE_DIR=/opt/engines/orpheus-trt-int4-awq \
+  -p 8000:8000 -it IMAGE:TAG start_server.sh
+```
 - Ensure the host runtime provides NVIDIA GPU access (`--gpus all` in Docker, or equivalent in your cloud).
 
 

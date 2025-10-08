@@ -1,0 +1,15 @@
+# Global Docker ignore for building docker/Dockerfile with context '.'
+
+# Ignore everything by default
+**
+
+# Include only what's needed for the image
+!docker/**
+!requirements.txt
+!server/**
+!tests/**
+
+# But exclude the interactive client script from tests
+tests/client.py
+
+

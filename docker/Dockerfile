@@ -43,6 +43,16 @@ RUN echo "Using PyTorch index: ${PYTORCH_INDEX_URL}" && \
 WORKDIR /app
 COPY requirements.txt /app/requirements.txt
 RUN pip install --no-cache-dir -r /app/requirements.txt
+# ----------------------------------------------------------------------------
+# Copy server code and runtime scripts into image
+# ----------------------------------------------------------------------------
+COPY server/ /app/server/
+COPY tests/ /app/tests/
+COPY docker/scripts/quantize_and_build.sh /usr/local/bin/quantize_and_build.sh
+COPY docker/scripts/start_server.sh /usr/local/bin/start_server.sh
+COPY docker/scripts/prepare_repo.sh /usr/local/bin/prepare_repo.sh
+RUN chmod +x /usr/local/bin/quantize_and_build.sh /usr/local/bin/start_server.sh /usr/local/bin/prepare_repo.sh
+
 
 # ----------------------------------------------------------------------------
 # TensorRT-LLM from NVIDIA PyPI (replicates _install_tensorrt_llm)
