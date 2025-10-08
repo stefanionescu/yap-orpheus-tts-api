@@ -112,7 +112,7 @@ BASH
 ARG TRTLLM_REPO_URL=https://github.com/Yap-With-AI/TensorRT-LLM.git
 ENV TRTLLM_REPO_DIR=/opt/TensorRT-LLM
 RUN git clone "${TRTLLM_REPO_URL}" "${TRTLLM_REPO_DIR}" && \
-    trtllm_ver=$(python -c 'import tensorrt_llm as t; print(t.__version__)') && \
+    trtllm_ver="$(python -c "import importlib.metadata as md; versions = {dist.metadata['Name'].lower(): dist.version for dist in md.distributions()}; print(versions.get('tensorrt-llm') or versions.get('tensorrt_llm'))")" && \
     echo "Detected TensorRT-LLM version: ${trtllm_ver}" && \
     git -C "${TRTLLM_REPO_DIR}" fetch --tags && \
     if ! git -C "${TRTLLM_REPO_DIR}" checkout "v${trtllm_ver}" 2>/dev/null; then \
@@ -145,5 +145,3 @@ WORKDIR /app
 LABEL org.opencontainers.image.title="Yap Orpheus TTS Base (CUDA 12.1, Py310)" \
       org.opencontainers.image.description="Prebuilt base with system deps, PyTorch CU12.1, and TensorRT-LLM to speed up cloud provisioning." \
       org.opencontainers.image.source="https://github.com/Yap-With-AI/yap-orpheus-tts-api"
-
-
