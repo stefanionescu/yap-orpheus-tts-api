@@ -39,17 +39,17 @@ mkdir -p logs .run
 # Define the complete pipeline command
 PIPELINE_CMD='
     echo "[pipeline] === Step 1/4: System Bootstrap ===" && \
-    bash scripts/setup/bootstrap.sh && \
+    bash scripts/00-bootstrap.sh && \
     echo "" && \
     echo "[pipeline] === Step 2/4: Install Dependencies ===" && \
-    bash scripts/setup/install-dependencies.sh && \
+    bash scripts/01-install-trt.sh && \
     echo "" && \
     echo "[pipeline] === Step 3/4: Build TensorRT Engine ===" && \
-    bash scripts/build/build-engine.sh && \
+    bash scripts/02-build.sh && \
     echo "" && \
     echo "[pipeline] === Step 4/4: Start TTS Server ===" && \
     export TRTLLM_ENGINE_DIR="${TRTLLM_ENGINE_DIR:-$PWD/models/orpheus-trt-int4-awq}" && \
-    bash scripts/runtime/start-server.sh
+    bash scripts/03-run-server.sh
 '
 
 # Run pipeline in background with proper process isolation

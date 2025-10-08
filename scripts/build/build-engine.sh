@@ -310,7 +310,7 @@ echo "[build] Validating build environment..."
 # Check virtual environment
 if [ ! -d "$VENV_DIR" ]; then
     echo "ERROR: Virtual environment not found at $VENV_DIR" >&2
-    echo "Run scripts/setup/install-dependencies.sh first" >&2
+    echo "Run scripts/01-install-trt.sh first" >&2
     exit 1
 fi
 

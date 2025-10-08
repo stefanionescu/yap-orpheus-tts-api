@@ -31,14 +31,14 @@ validate_required_env || exit 1
 VENV_DIR="${VENV_DIR:-$PWD/.venv}"
 if [ ! -d "$VENV_DIR" ]; then
     echo "ERROR: Virtual environment not found at $VENV_DIR" >&2
-    echo "Run scripts/setup/install-dependencies.sh first" >&2
+    echo "Run scripts/01-install-trt.sh first" >&2
     exit 1
 fi
 
 # Check TensorRT-LLM engine
 if [ ! -f "$TRTLLM_ENGINE_DIR/rank0.engine" ]; then
     echo "ERROR: TensorRT-LLM engine not found at $TRTLLM_ENGINE_DIR/rank0.engine" >&2
-    echo "Run scripts/build/build-engine.sh first" >&2
+    echo "Run scripts/02-build.sh first" >&2
     exit 1
 fi
 
