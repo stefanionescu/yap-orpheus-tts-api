@@ -151,15 +151,26 @@ from huggingface_hub import snapshot_download
 
 # Only download essential files for TRT/quantization (excludes training artifacts)
 essential_patterns = [
-    '*.safetensors',           # Model weights (preferred format)
-    '*.bin',                   # Model weights (fallback format)
+    # Model weight files (all possible formats)
+    '*.safetensors',           # Safetensors format
+    '*.bin',                   # PyTorch binary format
+    'pytorch_model*.bin',      # Specific PyTorch model files
+    'model*.safetensors',      # Specific safetensors files
+    'model.safetensors',       # Single safetensors file
+    'pytorch_model.bin',       # Single PyTorch file
+    
+    # Configuration files
     'config.json',             # Model configuration
     'tokenizer.json',          # Tokenizer data
     'tokenizer_config.json',   # Tokenizer configuration  
     'generation_config.json',  # Generation parameters
     'special_tokens_map.json', # Special token mappings
     'vocab.json',              # Vocabulary (if present)
-    'merges.txt'               # BPE merges (if present)
+    'merges.txt',              # BPE merges (if present)
+    
+    # Additional essential files
+    'tokenizer.model',         # SentencePiece tokenizer
+    'added_tokens.json',       # Additional tokens
 ]
 
 snapshot_download(
