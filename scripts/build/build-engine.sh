@@ -5,7 +5,7 @@
 # Builds optimized TensorRT-LLM engine for Orpheus 3B TTS model with:
 # - INT4-AWQ weight quantization (4x compression)
 # - INT8 KV cache (2x memory reduction)
-# - Optimized for TTS workload (48 input, 1024 output tokens)
+# - Optimized for realtime TTS workload (48 input, 1024 output tokens)
 #
 # Usage: bash scripts/build/build-engine.sh [--force] [--max-batch-size N]
 # Environment: Requires HF_TOKEN, VENV_DIR, optionally TRTLLM_ENGINE_DIR
@@ -277,12 +277,8 @@ print('✓ Downloaded complete model repository')
         local cuda_ver
         cuda_ver="$(detect_cuda_version)"
 
-        local sm_tag
-        if command -v nvidia-smi >/dev/null 2>&1; then
-          sm_tag=$(nvidia-smi --query-gpu=compute_cap --format=csv,noheader 2>/dev/null | head -n1 | tr -d '.' | sed 's/^/sm/' || true)
-        else
-          sm_tag=""
-        fi
+        local sm_tag="${GPU_SM_ARCH:-unknown}"
+        echo "[build] Using GPU architecture: ${sm_tag}"
 
         local meta_file="${ENGINE_OUTPUT_DIR}/build_metadata.json"
         cat > "$meta_file" <<META

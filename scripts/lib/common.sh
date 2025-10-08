@@ -26,7 +26,8 @@ require_env() {
 # Detect CUDA version via nvidia-smi (echoes X.Y or empty)
 detect_cuda_version() {
   if command -v nvidia-smi >/dev/null 2>&1; then
-    nvidia-smi | grep -o "CUDA Version: [0-9][0-9]*\.[0-9]*" | awk '{print $3}'
+    # Use timeout to prevent hanging if GPU access is lost
+    timeout 10s nvidia-smi 2>/dev/null | grep -o "CUDA Version: [0-9][0-9]*\.[0-9]*" | awk '{print $3}' 2>/dev/null || echo ""
   else
     echo ""
   fi

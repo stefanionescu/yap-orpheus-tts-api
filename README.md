@@ -20,7 +20,7 @@ Run Orpheus 3B TTS behind a FastAPI server using TensorRT-LLM backend with INT4-
 - OpenMPI runtime (installed automatically by bootstrap script)
 - Python 3.10 with shared libraries (installed automatically by bootstrap script)
 - Hugging Face token (`HF_TOKEN`) with access to `canopylabs/orpheus-3b-0.1-ft`
-- 80–90 GB free disk space to run `scripts/` (optimized model download, engine build, caches)
+- 60–70 GB free disk space to run `scripts/` (optimized model download, engine build, caches)
 
 ### Quickstart
 ```bash
@@ -48,6 +48,7 @@ All configuration is centralized in `scripts/environment.sh` with comprehensive 
 - **Server**: `HOST=0.0.0.0`, `PORT=8000`, `DEFAULT_VOICE=female`
 - **Performance**: CUDA, PyTorch, and threading optimizations
 - **Download**: `HF_DOWNLOAD_ESSENTIAL_ONLY=1` (excludes training artifacts, saves ~40GB)
+- **GPU**: `GPU_SM_ARCH=sm80` (default A100 - avoids nvidia-smi queries in cloud environments)
 
 See `scripts/environment.sh` for all available options and detailed documentation.
 
@@ -64,7 +65,7 @@ bash scripts/main.sh
 
 ### Optional: Push artifacts to Hugging Face after build
 
-You can optionally publish the converted/quantized TRT-LLM checkpoint and/or the built engine(s) to a Hugging Face model repo. Engines are not portable across GPU architectures and TRT/CUDA versions, so prefer pushing TRT-LLM checkpoints for broad reuse.
+You can optionally publish the converted/quantized TRT-LLM checkpoint and/or the built engine(s) to a Hugging Face model repo. **Requires GPU_SM_ARCH to be set** - the pipeline will abort if GPU architecture is not explicitly configured. Engines are not portable across GPU architectures and TRT/CUDA versions, so prefer pushing TRT-LLM checkpoints for broad reuse.
 
 1) Set publishing variables (only if you want to push):
 
@@ -74,6 +75,9 @@ export HF_PUSH_AFTER_BUILD=1                       # enable push step in pipelin
 export HF_PUSH_REPO_ID="your-org/my-model-trtllm"  # target HF repo
 export HF_PUSH_PRIVATE=0                           # 1=private, 0=public
 export HF_PUSH_WHAT=both                           # engines | checkpoints | both
+
+# GPU architecture MUST be set for push (defaults to A100 sm80)
+export GPU_SM_ARCH="sm80"                          # A100: sm80, RTX4090: sm89, H100: sm90
 
 # Optional: label for engine subtree (auto-detected if omitted)
 # e.g., sm80_trt-llm-1.0.0_cuda12.4

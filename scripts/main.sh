@@ -52,8 +52,13 @@ PIPELINE_CMD='
         source scripts/environment.sh && \
         if [ -z "${HF_PUSH_REPO_ID:-}" ]; then \
             echo "[pipeline] Skipping push: HF_PUSH_REPO_ID not set"; \
+        elif [ -z "${GPU_SM_ARCH:-}" ]; then \
+            echo "[pipeline] ERROR: HF push enabled but GPU_SM_ARCH not set!" && \
+            echo "[pipeline] Set GPU_SM_ARCH (e.g. export GPU_SM_ARCH=sm80 for A100) before pushing." && \
+            echo "[pipeline] NEVER push without explicit GPU configuration!" && \
+            exit 1; \
         else \
-            echo "[pipeline] Pushing to HF repo: ${HF_PUSH_REPO_ID}" && \
+            echo "[pipeline] GPU architecture configured (${GPU_SM_ARCH}) - proceeding with push to HF repo: ${HF_PUSH_REPO_ID}" && \
             # Use venv python if available
             PYTHON_EXEC="${PYTHON_EXEC:-python}"; \
             if [ -x ".venv/bin/python" ]; then PYTHON_EXEC=".venv/bin/python"; fi; \

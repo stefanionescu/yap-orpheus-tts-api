@@ -98,15 +98,20 @@ export NUMEXPR_NUM_THREADS=${NUMEXPR_NUM_THREADS:-1}
 export HF_TRANSFER=${HF_TRANSFER:-1}                                # Use hf_transfer for faster downloads
 export HF_DOWNLOAD_ESSENTIAL_ONLY=${HF_DOWNLOAD_ESSENTIAL_ONLY:-1}  # Download only essential files (excludes training artifacts)
 
+# GPU Architecture (REQUIRED for HF push - default: A100 PCIe sm80)
+export GPU_SM_ARCH=${GPU_SM_ARCH:-sm80}                             # A100: "sm80", RTX 4090: "sm89", H100: "sm90"
+# NEVER set to empty if you plan to push to HuggingFace - pipeline will abort!
+
 # Development and debugging toggles
 export TORCH_COMPILE_DISABLE=${TORCH_COMPILE_DISABLE:-1}    # Disable torch.compile by default
 export TRITON_DISABLE_COMPILATION=${TRITON_DISABLE_COMPILATION:-0}
 
 # =============================================================================
-# HUGGING FACE PUBLISHING (OPTIONAL)
+# HUGGING FACE PUBLISHING (OPTIONAL - REQUIRES GPU_SM_ARCH TO BE SET)
 # =============================================================================
 
 # Toggle push of artifacts to Hugging Face after build (0/1)
+# WARNING: Pipeline will abort if GPU_SM_ARCH is empty when push is enabled
 export HF_PUSH_AFTER_BUILD=${HF_PUSH_AFTER_BUILD:-0}
 
 # Target HF repo ID (e.g., your-org/my-model-trtllm)
