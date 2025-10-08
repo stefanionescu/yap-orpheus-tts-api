@@ -1,5 +1,5 @@
-# Base image: CUDA 12.4 runtime on Ubuntu 22.04 (matches PyTorch cu124 wheels)
-FROM nvidia/cuda:12.4.1-cudnn-runtime-ubuntu22.04
+# Base image: CUDA 12.6 runtime on Ubuntu 22.04 (matches PyTorch cu126 wheels)
+FROM nvidia/cuda:12.6.2-cudnn-runtime-ubuntu22.04
 
 # Use bash for RUN lines
 SHELL ["/bin/bash", "-lc"]
@@ -8,7 +8,7 @@ SHELL ["/bin/bash", "-lc"]
 ENV DEBIAN_FRONTEND=noninteractive
 
 # ----------------------------------------------------------------------------
-# System bootstrap (replicates custom/setup/bootstrap.sh install set)
+# System bootstrap (replicates scripts/setup/bootstrap.sh install set)
 # ----------------------------------------------------------------------------
 RUN apt-get update -y && \
     apt-get install -y --no-install-recommends \
@@ -31,9 +31,9 @@ RUN python3.10 -m venv "$VENV_DIR" && \
 ENV PATH="/opt/venv/bin:${PATH}"
 
 # ----------------------------------------------------------------------------
-# PyTorch installation (replicates _install_pytorch with CUDA 12.4 index)
+# PyTorch installation (replicates _install_pytorch with CUDA 12.6 index)
 # ----------------------------------------------------------------------------
-ARG PYTORCH_INDEX_URL=https://download.pytorch.org/whl/cu124
+ARG PYTORCH_INDEX_URL=https://download.pytorch.org/whl/cu126
 RUN echo "Using PyTorch index: ${PYTORCH_INDEX_URL}" && \
     pip install --no-cache-dir --index-url "${PYTORCH_INDEX_URL}" torch==2.4.1 --only-binary=:all:
 
@@ -58,24 +58,78 @@ RUN pip install --upgrade --no-cache-dir --extra-index-url https://pypi.nvidia.c
 RUN pip check
 
 # ----------------------------------------------------------------------------
-# Optional: Hugging Face authentication (supply at build time to bake creds)
-# WARNING: Embedding tokens in images may be insecure; prefer runtime injection
+# Hugging Face authentication (REQUIRED at build-time) — authenticate BEFORE downloads
 # ----------------------------------------------------------------------------
-ARG HF_TOKEN=""
+ARG HF_TOKEN
 ENV HF_TOKEN=${HF_TOKEN}
-RUN if [[ -n "${HF_TOKEN}" ]]; then \
-      python - <<'PY'
+# Explicitly fail the build if HF_TOKEN is not provided
+RUN test -n "${HF_TOKEN}" || (echo "ERROR: HF_TOKEN build-arg is required (export HF_TOKEN=...)" >&2; exit 1)
+RUN python - <<'PY'
 import os
 from huggingface_hub import login
 token = os.environ.get("HF_TOKEN")
+if not token:
+    raise SystemExit("HF_TOKEN missing")
 login(token=token, add_to_git_credential=False)
-print("\u2713 HuggingFace authentication OK (baked into image)")
+print("\u2713 HuggingFace authentication OK (validated during build)")
 PY
-    ; else echo "Skipping HF auth during build (no HF_TOKEN provided)"; fi
+
+# ----------------------------------------------------------------------------
+# TensorRT-LLM repository: clone and sync to installed wheel version
+# ----------------------------------------------------------------------------
+ARG TRTLLM_REPO_URL=https://github.com/Yap-With-AI/TensorRT-LLM.git
+ENV TRTLLM_REPO_DIR=/opt/TensorRT-LLM
+RUN git clone "${TRTLLM_REPO_URL}" "${TRTLLM_REPO_DIR}" && \
+    trtllm_ver=$(python - <<'PY'
+import tensorrt_llm as t
+print(t.__version__)
+PY
+) && \
+    echo "Detected TensorRT-LLM version: ${trtllm_ver}" && \
+    git -C "${TRTLLM_REPO_DIR}" fetch --tags && \
+    if ! git -C "${TRTLLM_REPO_DIR}" checkout "v${trtllm_ver}" 2>/dev/null; then \
+      if [[ "${trtllm_ver}" == "1.0.0" ]]; then \
+        echo "Tag v1.0.0 not found, using known commit ae8270b713446948246f16fadf4e2a32e35d0f62" && \
+        git -C "${TRTLLM_REPO_DIR}" checkout ae8270b713446948246f16fadf4e2a32e35d0f62; \
+      else \
+        echo "ERROR: Could not checkout version ${trtllm_ver}" >&2; exit 1; \
+      fi; \
+    fi
+
+# Install TRT-LLM repo dependencies commonly used by build/quant scripts
+RUN if [ -f "${TRTLLM_REPO_DIR}/requirements.txt" ]; then \
+      pip install --no-cache-dir -r "${TRTLLM_REPO_DIR}/requirements.txt" || true; \
+    fi && \
+    if [ -f "${TRTLLM_REPO_DIR}/examples/quantization/requirements.txt" ]; then \
+      pip install --no-cache-dir -r "${TRTLLM_REPO_DIR}/examples/quantization/requirements.txt" || true; \
+    fi
+
+# ----------------------------------------------------------------------------
+# Pre-download Orpheus model snapshot from Hugging Face (full repo, no quantization)
+# ----------------------------------------------------------------------------
+ARG MODEL_ID=canopylabs/orpheus-3b-0.1-ft
+ENV MODEL_ID=${MODEL_ID}
+ENV MODELS_DIR=/opt/models
+ENV HF_HUB_ENABLE_HF_TRANSFER=1
+RUN mkdir -p "${MODELS_DIR}" && \
+    python - <<'PY'
+import os
+from huggingface_hub import snapshot_download
+
+model_id = os.environ.get('MODEL_ID', 'canopylabs/orpheus-3b-0.1-ft')
+models_dir = os.environ.get('MODELS_DIR', '/opt/models')
+basename = model_id.split('/')[-1]
+local_dir = os.path.join(models_dir, f"{basename}-hf")
+os.makedirs(local_dir, exist_ok=True)
+
+snapshot_download(repo_id=model_id, local_dir=local_dir, local_dir_use_symlinks=False)
+
+print(f"\u2713 Downloaded model '{model_id}' to {local_dir}")
+PY
 
 # Default environment knobs carried from custom/environment.sh (safe defaults)
 ENV HF_TRANSFER=1 \
-    HF_DOWNLOAD_ESSENTIAL_ONLY=1 \
+    HF_DOWNLOAD_ESSENTIAL_ONLY=0 \
     OMP_NUM_THREADS=1 \
     MKL_NUM_THREADS=1 \
     OPENBLAS_NUM_THREADS=1 \
@@ -84,8 +138,8 @@ ENV HF_TRANSFER=1 \
 # This is a base image layer; no entrypoint/cmd so it can be reused downstream.
 WORKDIR /app
 
-LABEL org.opencontainers.image.title="Yap Orpheus TTS Base (CUDA 12.4, Py310)" \
-      org.opencontainers.image.description="Prebuilt base with system deps, PyTorch CU124, and TensorRT-LLM to speed up cloud provisioning." \
+LABEL org.opencontainers.image.title="Yap Orpheus TTS Base (CUDA 12.6, Py310)" \
+      org.opencontainers.image.description="Prebuilt base with system deps, PyTorch CU126, and TensorRT-LLM to speed up cloud provisioning." \
       org.opencontainers.image.source="https://github.com/Yap-With-AI/yap-orpheus-tts-api"
 
 

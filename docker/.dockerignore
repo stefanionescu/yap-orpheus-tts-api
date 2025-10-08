@@ -1,0 +1,10 @@
+# Minimize build context: only send what's needed for base image build
+
+# Ignore everything by default
+**
+
+# Allow only Docker assets and requirements.txt
+!docker/
+!requirements.txt
+
+
