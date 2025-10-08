@@ -23,30 +23,6 @@ Run Orpheus 3B TTS behind a FastAPI server using TensorRT-LLM backend with INT4-
  - 120–130 GB free disk space to run `scripts/` (models, engine build, caches)
 
 ### Quickstart
-
-#### Option 1: Docker (2-5 minutes)
-
-**Local/Cloud VM:**
-```bash
-# Pull and run pre-built image (server starts automatically)
-docker pull your_username/orpheus-3b-tts:latest
-docker run --gpus all -p 8000:8000 --name orpheus-tts your_username/orpheus-3b-tts:latest
-
-# Health check (server auto-starts)
-curl -s http://127.0.0.1:8000/healthz
-```
-
-**Runpod (automatic startup):**
-```bash
-# 1. Create pod with Docker image: your_username/orpheus-3b-tts:latest
-# 2. Server starts automatically when pod boots
-# 3. Access via Runpod's public URL immediately
-
-# Optional: Test from pod terminal
-curl -s http://127.0.0.1:8000/healthz
-```
-
-#### Option 2: Scripts (45 minutes)
 ```bash
 # 1) Set required token
 export HF_TOKEN="hf_xxx"
@@ -76,40 +52,7 @@ See `scripts/environment.sh` for all available options and detailed documentatio
 
 ## Installation & Deployment
 
-### Docker Deployment (Recommended - 2-5 minutes)
-
-#### Standard Docker Deployment
-For rapid deployment using pre-built image:
-
-```bash
-# Simple deployment
-docker pull your_username/orpheus-3b-tts:latest
-docker run --gpus all -p 8000:8000 --name orpheus-tts your_username/orpheus-3b-tts:latest
-```
-
-#### Runpod Deployment
-When using Runpod, you start a pod with your Docker image, then run the server inside:
-
-1. **Create Runpod instance** using your Docker image: `your_username/orpheus-3b-tts:latest`
-2. **Connect to the pod** (SSH/Jupyter/Web terminal)
-3. **Start the TTS server:**
-```bash
-# Navigate to app directory
-cd /app
-
-# Start server
-python -m uvicorn server.server:app --host 0.0.0.0 --port 8000 --timeout-keep-alive 75 --log-level info
-
-# Or run in background
-nohup python -m uvicorn server.server:app --host 0.0.0.0 --port 8000 --timeout-keep-alive 75 --log-level info > server.log 2>&1 &
-
-# Check logs
-tail -f server.log
-```
-
-4. **Access via Runpod's public URL** (usually shown in pod interface)
-
-### Scripts Deployment (45 minutes)
+### Scripts Deployment
 
 Runs bootstrap → install → build INT4-AWQ engine → start server:
 
@@ -118,29 +61,55 @@ export HF_TOKEN="hf_xxx"
 bash scripts/main.sh
 ```
 
-### Building Docker Image
+### Optional: Push artifacts to Hugging Face after build
 
-To build your own Docker image with pre-built TensorRT engine:
+You can optionally publish the converted/quantized TRT-LLM checkpoint and/or the built engine(s) to a Hugging Face model repo. Engines are not portable across GPU architectures and TRT/CUDA versions, so prefer pushing TRT-LLM checkpoints for broad reuse.
+
+1) Set publishing variables (only if you want to push):
 
 ```bash
-# Set credentials
-export HF_TOKEN="hf_your_token"
-export DOCKER_USERNAME="your_dockerhub_username"
-export DOCKER_PASSWORD="your_dockerhub_password"
+export HF_TOKEN="hf_xxx"                           # required for access and upload
+export HF_PUSH_AFTER_BUILD=1                       # enable push step in pipeline
+export HF_PUSH_REPO_ID="your-org/my-model-trtllm"  # target HF repo
+export HF_PUSH_PRIVATE=0                           # 1=private, 0=public
+export HF_PUSH_WHAT=both                           # engines | checkpoints | both
 
-# Login to Docker Hub
-echo $DOCKER_PASSWORD | docker login --username $DOCKER_USERNAME --password-stdin
-
-# Build and push
-docker build \
-  --build-arg HF_TOKEN="$HF_TOKEN" \
-  --build-arg DOCKER_USERNAME="$DOCKER_USERNAME" \
-  --build-arg DOCKER_PASSWORD="$DOCKER_PASSWORD" \
-  -t $DOCKER_USERNAME/orpheus-3b-tts:latest \
-  -f docker/Dockerfile .
-
-docker push $DOCKER_USERNAME/orpheus-3b-tts:latest
+# Optional: label for engine subtree (auto-detected if omitted)
+# e.g., sm80_trt-llm-1.0.0_cuda12.4
+export HF_PUSH_ENGINE_LABEL=""
 ```
+
+2) Run the normal pipeline; a push occurs right after build:
+
+```bash
+bash scripts/main.sh
+```
+
+Artifacts layout pushed to HF:
+
+```
+tokenizer.json
+tokenizer.model
+trt-llm/
+  checkpoints/
+    awq_config.json
+    rank0.safetensors
+    rank1.safetensors
+    ...
+  engines/
+    <engine_label>/
+      rank0.engine
+      rank1.engine
+      build_command.sh
+      build_metadata.json
+```
+
+LFS rules are included automatically for large files (`.engine`, `.plan`, `.safetensors`, `.bin`).
+
+Practical guidance:
+- Engines are great for your own homogeneous fleet; risky for general reuse.
+- Prefer publishing TRT-LLM checkpoints (post-convert, pre-engine) for portability.
+- If you publish engines, include the metadata we generate next to them to avoid “invalid engine” surprises.
 
 ### Manual Steps
 
@@ -179,7 +148,6 @@ Use this when you already have a built TensorRT-LLM engine and just want to rest
 
 ```bash
 bash scripts/utils/cleanup.sh
-# or: bash scripts/stop.sh  (compatibility wrapper)
 ```
 
 2) Ensure your Hugging Face token is exported:
@@ -250,7 +218,7 @@ bash scripts/02-build.sh --max-batch-size 32 --force
 
 ## Testing and Benchmarking
 
-### Local/Scripts Testing
+### Testing
 
 ```bash
 # Activate venv
@@ -264,30 +232,6 @@ python tests/bench.py --n 8 --concurrency 8
 
 # Custom text and voice
 python tests/warmup.py --voice female --text "Your custom text here"
-```
-
-### Docker/Runpod Testing
-
-When running inside a Docker container or Runpod:
-
-```bash
-# Navigate to app directory and activate environment
-cd /app && source .venv/bin/activate
-
-# Start server in background (if not already running)
-bash /app/start-server.sh --background
-
-# Wait for server startup
-sleep 10
-
-# Quick validation
-python tests/warmup.py --host localhost --port 8000
-
-# Performance benchmark
-python tests/bench.py --host localhost --port 8000 --n 4 --concurrency 4
-
-# View server logs
-tail -f /tmp/tts-server.log
 ```
 
 ### External Client Testing (from your laptop)
@@ -341,30 +285,26 @@ export TLLM_LOG_LEVEL=DEBUG
 # Look for "waiting for free blocks" in logs → increase KV_FREE_GPU_FRAC
 ```
 
-## Recommended Container Images
+## Recommended GPU Environments
 
-- `nvidia/cuda:12.2.0-devel-ubuntu22.04` (build + runtime)
-- `nvidia/cuda:12.4.1-runtime-ubuntu22.04` (runtime only)
+- **Local/Cloud VM**: Ubuntu 20.04/22.04/24.04 with NVIDIA drivers
 - **Runpod**: Ubuntu 22.04 template with A100 + CUDA 12.x
+- **Vast.ai**: Any Ubuntu template with A100/A6000 + CUDA 12.x
 
 ## Cleanup
 
 ```bash
 # Stop server only
 bash scripts/utils/cleanup.sh
-# or: bash scripts/stop.sh  (compatibility wrapper)
 
 # Stop + remove build artifacts
 bash scripts/utils/cleanup.sh --clean-trt
-# or: bash scripts/stop.sh --clean-trt
 
 # Stop + remove venv and caches  
 bash scripts/utils/cleanup.sh --clean-install
-# or: bash scripts/stop.sh --clean-install
 
 # Nuclear option: remove everything
 bash scripts/utils/cleanup.sh --clean-install --clean-trt --clean-system
-# or: bash scripts/stop.sh --clean-install --clean-trt --clean-system
 
 # Get help on cleanup options
 bash scripts/utils/cleanup.sh --help

@@ -47,6 +47,20 @@ PIPELINE_CMD='
     echo "[pipeline] === Step 3/4: Build TensorRT Engine ===" && \
     bash scripts/02-build.sh && \
     echo "" && \
+    if [ "${HF_PUSH_AFTER_BUILD:-0}" = "1" ]; then \
+        echo "[pipeline] === Optional: Push artifacts to Hugging Face ===" && \
+        source scripts/environment.sh && \
+        if [ -z "${HF_PUSH_REPO_ID:-}" ]; then \
+            echo "[pipeline] Skipping push: HF_PUSH_REPO_ID not set"; \
+        else \
+            echo "[pipeline] Pushing to HF repo: ${HF_PUSH_REPO_ID}" && \
+            # Use venv python if available
+            PYTHON_EXEC="${PYTHON_EXEC:-python}"; \
+            if [ -x ".venv/bin/python" ]; then PYTHON_EXEC=".venv/bin/python"; fi; \
+            "$PYTHON_EXEC" scripts/utils/push_to_hf.py --repo-id "${HF_PUSH_REPO_ID}" $([ "${HF_PUSH_PRIVATE:-1}" = "1" ] && echo --private) --what "${HF_PUSH_WHAT:-both}" --engine-label "${HF_PUSH_ENGINE_LABEL:-}" $([ "${HF_PUSH_PRUNE:-0}" = "1" ] && echo --prune) $([ "${HF_PUSH_NO_README:-0}" = "1" ] && echo --no-readme); \
+        fi; \
+        echo ""; \
+    fi && \
     echo "[pipeline] === Step 4/4: Start TTS Server ===" && \
     export TRTLLM_ENGINE_DIR="${TRTLLM_ENGINE_DIR:-$PWD/models/orpheus-trt-int4-awq}" && \
     bash scripts/03-run-server.sh

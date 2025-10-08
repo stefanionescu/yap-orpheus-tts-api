@@ -216,6 +216,48 @@ snapshot_download(
         )
         echo "[build] Running: ${build_cmd[*]}"
         "${build_cmd[@]}"
+
+        # Persist build command and metadata next to the engine for reproducibility
+        echo "[build] Recording build command and metadata..."
+        mkdir -p "${ENGINE_OUTPUT_DIR}"
+
+        local cmd_file="${ENGINE_OUTPUT_DIR}/build_command.sh"
+        printf "#!/usr/bin/env bash\n%s\n" "${build_cmd[*]}" > "$cmd_file"
+        chmod +x "$cmd_file"
+
+        # Detect versions and arch tags
+        local trtllm_ver
+        trtllm_ver="$(${PYTHON_EXEC} -c 'import tensorrt_llm as t; print(getattr(t, "__version__", ""))' 2>/dev/null | tail -1 | tr -d '[:space:]')"
+
+        local tensorrt_ver
+        tensorrt_ver="$(${PYTHON_EXEC} -c 'import sys;\ntry:\n import tensorrt as trt\n print(getattr(trt, "__version__", ""))\nexcept Exception:\n print("")' 2>/dev/null | tail -1 | tr -d '[:space:]')"
+
+        local cuda_ver
+        cuda_ver="$(detect_cuda_version)"
+
+        local sm_tag
+        if command -v nvidia-smi >/dev/null 2>&1; then
+          sm_tag=$(nvidia-smi --query-gpu=compute_cap --format=csv,noheader 2>/dev/null | head -n1 | tr -d '.' | sed 's/^/sm/' || true)
+        else
+          sm_tag=""
+        fi
+
+        local meta_file="${ENGINE_OUTPUT_DIR}/build_metadata.json"
+        cat > "$meta_file" <<META
+{
+  "model_id": "${MODEL_ID}",
+  "dtype": "${dtype}",
+  "max_batch_size": ${max_batch_size},
+  "max_input_len": ${max_input_len},
+  "max_output_len": ${max_output_len},
+  "quantization": {"weights": "int4_awq", "kv_cache": "int8", "awq_block_size": ${awq_block_size}, "calib_size": ${calib_size}},
+  "tensorrt_llm_version": "${trtllm_ver}",
+  "tensorrt_version": "${tensorrt_ver}",
+  "cuda_toolkit": "${cuda_ver}",
+  "sm_arch": "${sm_tag}",
+  "build_command": "${build_cmd[*]}"
+}
+META
     fi
 }
 

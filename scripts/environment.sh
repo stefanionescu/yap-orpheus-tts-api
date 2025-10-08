@@ -102,6 +102,37 @@ export TORCH_COMPILE_DISABLE=${TORCH_COMPILE_DISABLE:-1}    # Disable torch.comp
 export TRITON_DISABLE_COMPILATION=${TRITON_DISABLE_COMPILATION:-0}
 
 # =============================================================================
+# HUGGING FACE PUBLISHING (OPTIONAL)
+# =============================================================================
+
+# Toggle push of artifacts to Hugging Face after build (0/1)
+export HF_PUSH_AFTER_BUILD=${HF_PUSH_AFTER_BUILD:-0}
+
+# Target HF repo ID (e.g., your-org/my-model-trtllm)
+export HF_PUSH_REPO_ID=${HF_PUSH_REPO_ID:-}
+
+# Private repo by default (1=private, 0=public)
+export HF_PUSH_PRIVATE=${HF_PUSH_PRIVATE:-1}
+
+# What to include: engines, checkpoints, or both
+export HF_PUSH_WHAT=${HF_PUSH_WHAT:-both}
+
+# Optional override for engine folder label (e.g., sm80_trt-llm-1.0.0_cuda12.4)
+export HF_PUSH_ENGINE_LABEL=${HF_PUSH_ENGINE_LABEL:-}
+
+# Optional overrides for source paths
+export CHECKPOINT_DIR=${CHECKPOINT_DIR:-$PWD/models/orpheus-trtllm-ckpt-int4-awq}
+export TRTLLM_ENGINE_DIR=${TRTLLM_ENGINE_DIR:-$PWD/models/orpheus-trt-int4-awq}
+
+# Optional push behavior toggles
+export HF_PUSH_PRUNE=${HF_PUSH_PRUNE:-0}            # 1=delete matching remote paths before upload
+export HF_PUSH_NO_README=${HF_PUSH_NO_README:-0}    # 1=do not generate README.md
+
+# Optional: annotate build environment (e.g., container image tag)
+# Example: BUILD_IMAGE="runpod/pytorch:1.0.1-cu1281-torch280-ubuntu2404"
+export BUILD_IMAGE=${BUILD_IMAGE:-}
+
+# =============================================================================
 # STREAMING CONFIGURATION
 # =============================================================================
 
