@@ -1,32 +1,33 @@
-# Docker Deployment for Orpheus 3B TTS (INT4 AWQ Quantized)
+# Docker Deployment for Orpheus 3B TTS
 
-This directory contains Docker configuration for building and deploying the Orpheus 3B TTS server with pre-built TensorRT engines for rapid deployment.
+This directory contains Docker configuration for building and deploying the Orpheus 3B TTS server with **pre-built INT4-AWQ quantized TensorRT engines**.
+
+**What gets built:** Orpheus 3B model with INT4-AWQ weight-only quantization + INT8 KV cache (6GB → ~1.5GB, 4x compression)
 
 ## Quick Start (2-5 minutes)
 
-### One-Command Remote Build & Push
+### Build & Push on GPU Machine
 
-Run this **directly on a GPU machine** to build and push your Docker image:
+Clone the repo and run the build script **directly on a GPU machine**:
 
 ```bash
-# On the remote GPU machine (Ubuntu 20.04/22.04 or Debian 11/12)
-curl -fsSL https://raw.githubusercontent.com/YOUR_REPO/main/docker/scripts/build.sh | bash -s -- \
+# On the GPU machine (Ubuntu 20.04/22.04 or Debian 11/12)
+git clone https://github.com/your_username/yap-orpheus-tts-api.git
+cd yap-orpheus-tts-api
+
+bash docker/scripts/build.sh \
   --docker-username YOUR_DOCKERHUB_USERNAME \
   --docker-password YOUR_DOCKERHUB_PASSWORD \
   --hf-token hf_xxx
 ```
 
-Or download and run:
-```bash
-wget https://raw.githubusercontent.com/YOUR_REPO/main/docker/scripts/build.sh
-bash build.sh --docker-username USER --docker-password PASS --hf-token TOKEN
-```
-
 What it does:
 1. Installs Docker + NVIDIA Container Toolkit
-2. Clones the repository 
-3. Builds the image with TensorRT engine (30-45 min)
-4. Pushes to `docker.io/YOUR_DOCKERHUB_USERNAME/orpheus-3b-tts:latest`
+2. Builds the image with **INT4-AWQ quantized TensorRT engine** (30-45 min)
+   - Downloads Orpheus 3B model from HuggingFace
+   - Quantizes weights to INT4-AWQ (4x compression)
+   - Builds optimized TensorRT engine with INT8 KV cache
+3. Pushes complete image to `docker.io/YOUR_DOCKERHUB_USERNAME/orpheus-3b-tts:latest`
 
 Requirements:
 - GPU machine with NVIDIA drivers installed
@@ -38,7 +39,7 @@ Troubleshooting:
 
 ### Deploy Pre-built Image
 
-After building with `build.sh`, deploy anywhere:
+After building with `build.sh`, deploy the **pre-quantized image** anywhere with GPU:
 
 ```bash
 # Set your Docker image name and API key
@@ -178,12 +179,14 @@ You can skip manual prerequisites by using the automated remote build above. If 
 
 The `build.sh` script handles everything automatically. For manual control, you can run the individual steps from `build.sh` separately if needed.
 
-This will:
-- Build Docker image with all dependencies
-- Install TensorRT-LLM and PyTorch
-- Build optimized INT4-AWQ + INT8 KV cache engine
-- Push complete image to Docker Hub
-- Enable 2-5 minute deployments anywhere
+**What the build process does:**
+- Installs all system dependencies and TensorRT-LLM
+- Downloads Orpheus 3B model from HuggingFace (`canopylabs/orpheus-3b-0.1-ft`)
+- **Quantizes model weights to INT4-AWQ** (reduces 6GB → ~1.5GB)
+- **Builds TensorRT engine with INT8 KV cache** for memory efficiency
+- Packages everything into a Docker image
+- Pushes complete image to Docker Hub
+- **Result:** 2-5 minute deployments anywhere with pre-quantized model
 
 ## Cloud Deployment
 
@@ -252,11 +255,13 @@ bash /app/stop-server.sh
 ### Image Configuration
 
 The Docker image includes:
-- Base: NVIDIA TensorRT 23.12 container (includes CUDA, cuDNN, TensorRT)
-- Python: 3.10 with optimized virtual environment
-- PyTorch: CUDA 12.1 support
-- TensorRT-LLM: Version 1.0.0 with INT4-AWQ + INT8 KV cache
-- Pre-built Engine: Optimized for 16 concurrent users on A100
+- **Base:** NVIDIA TensorRT 23.12 container (includes CUDA, cuDNN, TensorRT)
+- **Python:** 3.10 with optimized virtual environment
+- **PyTorch:** CUDA 12.1 support
+- **TensorRT-LLM:** Version 1.0.0
+- **Pre-built Engine:** Orpheus 3B with INT4-AWQ weight quantization + INT8 KV cache
+- **Model Size:** ~1.5GB (down from 6GB original)
+- **Performance:** Optimized for 16 concurrent users on A100
 
 ## Performance Comparison
 
@@ -313,7 +318,8 @@ docker image inspect your_username/orpheus-3b-tts:latest --format='{{.Size}}' | 
 ## Optimization
 
 The Docker image is optimized for:
-- Fast startup: Pre-built TensorRT engine
-- Memory efficiency: INT4-AWQ weights + INT8 KV cache
-- High concurrency: 16 concurrent users on A100
-- Small size: Multi-stage build with cleanup
+- **Fast startup:** Pre-built TensorRT engine (no build time on deployment)
+- **Memory efficiency:** INT4-AWQ weight quantization + INT8 KV cache
+- **Model compression:** 6GB → ~1.5GB (4x smaller)
+- **High concurrency:** 16 concurrent users on A100
+- **Small image size:** Multi-stage build with cleanup

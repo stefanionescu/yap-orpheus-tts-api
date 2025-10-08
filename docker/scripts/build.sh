@@ -9,7 +9,7 @@
 # 4. Push to Docker Hub
 #
 # Usage (on remote GPU machine):
-#   curl -fsSL https://raw.githubusercontent.com/YOUR_REPO/main/docker/scripts/main.sh | bash -s -- \
+#   curl -fsSL https://raw.githubusercontent.com/YOUR_REPO/main/docker/scripts/build.sh | bash -s -- \
 #     --docker-username YOUR_USERNAME \
 #     --docker-password YOUR_PASSWORD \
 #     [--hf-token HF_TOKEN] \
@@ -18,8 +18,8 @@
 #     [--image-tag latest]
 #
 # Or download and run:
-#   wget https://raw.githubusercontent.com/YOUR_REPO/main/docker/scripts/main.sh
-#   bash main.sh --docker-username USER --docker-password PASS
+#   wget https://raw.githubusercontent.com/YOUR_REPO/main/docker/scripts/build.sh
+#   bash build.sh --docker-username USER --docker-password PASS
 # =============================================================================
 
 set -euo pipefail
