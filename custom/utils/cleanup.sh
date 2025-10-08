@@ -84,24 +84,52 @@ _full_cleanup() {
     log "Removing workspace artifacts..."
     local -a workspace_dirs=(
         ".venv"
-        "$MODELS_DIR"
-        "$TRTLLM_REPO_DIR"
-        ".trtllm-repo"
         "logs"
         ".pytest_cache"
         ".mypy_cache"
         ".ruff_cache"
+        "node_modules"
+        "$PWD/node_modules"
+    )
+
+    local -a model_dirs=(
+        "$MODELS_DIR"
+        "$PWD/models"
+        "$PWD/models/orpheus-trt-int4-awq"
+        "$PWD/models/orpheus-trtllm-ckpt-int4-awq"
+        "$HOME/models"
+        "/workspace/models"
+    )
+
+    local -a trt_dirs=(
+        "$TRTLLM_REPO_DIR"
+        ".trtllm-repo"
+        "$PWD/.trtllm-repo"
+        "$PWD/TensorRT-LLM"
+        "$HOME/.trtllm-repo"
+        "$HOME/TensorRT-LLM"
+        "/workspace/.trtllm-repo"
+        "/workspace/TensorRT-LLM"
+        "/opt/TensorRT-LLM"
     )
 
     if [ -n "$CHECKPOINT_DIR" ]; then
+        model_dirs+=("$CHECKPOINT_DIR")
         workspace_dirs+=("$CHECKPOINT_DIR")
     fi
     if [ -n "$TRTLLM_ENGINE_DIR" ]; then
+        model_dirs+=("$TRTLLM_ENGINE_DIR")
         workspace_dirs+=("$TRTLLM_ENGINE_DIR")
     fi
 
     local dir
     for dir in "${workspace_dirs[@]}"; do
+        _safe_rm "$dir"
+    done
+    for dir in "${model_dirs[@]}"; do
+        _safe_rm "$dir"
+    done
+    for dir in "${trt_dirs[@]}"; do
         _safe_rm "$dir"
     done
 
@@ -113,6 +141,8 @@ _full_cleanup() {
     local -a cache_dirs=(
         "$HOME/.cache/huggingface"
         "$HOME/.cache/huggingface_hub"
+        "$HOME/.cache/hf"
+        "$HOME/.cache/hf_transfer"
         "$HOME/.cache/pip"
         "$HOME/.cache/torch"
         "$HOME/.cache/tensorrt"
@@ -120,22 +150,54 @@ _full_cleanup() {
         "$HOME/.cache/modelopt"
         "$HOME/.cache/nvidia"
         "$HOME/.cache/onnx"
+        "$HOME/.cache/cuda"
+        "$HOME/.cache/pycuda"
+        "$HOME/.cache/clip"
         "$HOME/.pip"
         "$HOME/.torch"
         "$HOME/.triton"
         "$HOME/.nv"
-        "$HOME/.local/share/pip"
-        "$HOME/.local/share/tensorrt_llm"
-        "$HOME/.local/state/pip"
+        "$HOME/.huggingface"
+        "$HOME/.cache/huggingface/hub"
+        "$HOME/.cache/huggingface/datasets"
+        "$HOME/.cache/tensorrt_llm"
+        "/workspace/.cache/huggingface"
+        "/workspace/.cache/pip"
+        "/workspace/.cache/torch"
+        "/workspace/.cache/tensorrt"
+        "/workspace/.cache/triton"
+        "/root/.cache/huggingface"
+        "/root/.cache/pip"
+        "/root/.cache/torch"
+        "/root/.cache/tensorrt"
+        "/root/.cache/triton"
     )
 
     for dir in "${cache_dirs[@]}"; do
         _safe_rm "$dir"
     done
 
+    log "Removing local Python installs..."
+    local -a python_artifact_dirs=(
+        "$HOME/.local/bin"
+        "$HOME/.local/lib/python3.10"
+        "$HOME/.local/lib/python3.11"
+        "$HOME/.local/lib/python3.12"
+        "$HOME/.local/share/pip"
+        "$HOME/.local/share/tensorrt_llm"
+        "$HOME/.local/share/virtualenv"
+        "$HOME/.local/state/pip"
+        "$HOME/.local/pipx"
+        "$HOME/.cache/virtualenv"
+    )
+
+    for dir in "${python_artifact_dirs[@]}"; do
+        _safe_rm "$dir"
+    done
+
     log "Clearing temporary build files..."
-    rm -rf /tmp/tensorrt* /tmp/trt* /tmp/torch* /tmp/pip-* /tmp/hf* /tmp/cuda* /tmp/nv* 2>/dev/null || true
-    rm -rf /dev/shm/tensorrt* /dev/shm/trt* /dev/shm/torch* /dev/shm/nv* /dev/shm/cuda* 2>/dev/null || true
+    rm -rf /tmp/tensorrt* /tmp/trt* /tmp/torch* /tmp/pip-* /tmp/hf* /tmp/cuda* /tmp/nv* /tmp/modelopt* /tmp/quantiz* 2>/dev/null || true
+    rm -rf /dev/shm/tensorrt* /dev/shm/trt* /dev/shm/torch* /dev/shm/nv* /dev/shm/cuda* /dev/shm/hf* 2>/dev/null || true
 }
 
 CLEAN_ALL=0

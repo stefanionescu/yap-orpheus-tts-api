@@ -341,9 +341,9 @@ bash custom/utils/cleanup.sh --help
 ### Cleanup Options Explained
 
 - **No flags**: Stop server processes, release GPU resources, clear `.run/`
-- **`--clean-all`**: Remove models, TensorRT repo/artifacts, Python venv, cached deps, and temp build files
+- **`--clean-all`**: Remove models, TensorRT repo clones (`.trtllm-repo`, `TensorRT-LLM`), Python venv, `~/.local/lib/python*`, Hugging Face caches, and temp build files
 
-**Warning**: `--clean-all` deletes the quantized engine, downloaded models, and cached dependencies. Expect a full rebuild on next start.
+**Warning**: `--clean-all` nukes every locally installed dependency (TensorRT engines, TRT repo, Hugging Face snapshots, pip site-packages, caches). Expect to re-run the full setup afterward.
 
 ## Architecture
 
