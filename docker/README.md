@@ -10,27 +10,31 @@ This image pre-installs everything done by `scripts/00-bootstrap.sh` and `script
 - **App deps**: `requirements.txt`
 - **TensorRT-LLM**: via NVIDIA PyPI (wheel URL is build-arg)
 - **TRT-LLM repo**: cloned to `/opt/TensorRT-LLM` and pinned to installed wheel version
-- **HF model cache**: Orpheus model snapshot downloaded to `/opt/models/<basename>-hf`
+- **HF model cache (optional)**: If `HF_TOKEN` build-arg is provided, the Orpheus model snapshot is pre-downloaded to `/opt/models/<basename>-hf` during build (token is not persisted).
 - **Runtime scripts** (inside image at `/usr/local/bin`):
   - `01-quantize-and-build.sh`: performs INT4-AWQ quantization and builds TRT engine
   - `02-start-server.sh`: starts the FastAPI server
+  - `run.sh`: orchestrates build → server (background)
+- **Environment defaults**: `docker/scripts/environment.sh` is baked in and auto-sourced for every Bash shell via `BASH_ENV` and `/etc/profile.d`, so defaults like `YAP_API_KEY`, sampling params, and performance knobs are always present. Override with `-e VAR=...` at runtime.
 
 #### Build
 ```bash
 cd /path/to/yap-orpheus-tts-api
-export HF_TOKEN=hf_xxx                        # REQUIRED at build time
-export MODEL_ID=canopylabs/orpheus-3b-0.1-ft  # optional override
-bash docker/build-base.sh
+export MODEL_ID=canopylabs/orpheus-3b-0.1-ft           # optional
+# Optionally provide HF token as a BuildKit secret (not persisted):
+export HF_TOKEN=hf_xxx
+DOCKER_BUILDKIT=1 bash docker/build.sh                 # uses --secret id=HF_TOKEN,env=HF_TOKEN when set
 
 # or with overrides:
 PYTORCH_INDEX_URL=https://download.pytorch.org/whl/cu126 \
 TRTLLM_WHEEL_URL=https://pypi.nvidia.com/tensorrt-llm/tensorrt_llm-1.0.0-cp310-cp310-linux_x86_64.whl \
 IMAGE_NAME=yapai/orpheus-trtllm-base IMAGE_TAG=cu126-py310-trt1.0 \
-HF_TOKEN=$HF_TOKEN \
-bash docker/build-base.sh
+bash docker/build.sh
 ```
 
-`HF_TOKEN` is mandatory during build to validate access to models and mirror the install script behavior.
+Notes:
+- `HF_TOKEN` is optional at build time. When set, it is passed as a BuildKit secret, used only during the relevant RUN steps, and never persisted in layers.
+- Do not bake secrets into images pushed to registries; provide them at build via `--secret` or at runtime via `-e`.
 
 #### Use in Cloud
 Use this image as a base for your runtime image where you add model engines and start the server.
@@ -45,6 +49,7 @@ CMD ["bash", "-lc", "uvicorn server.server:app --host $HOST --port $PORT --timeo
 
 #### Notes
 - This base image intentionally mirrors bootstrap steps; additionally it pre-clones the TRT-LLM repo and caches the Orpheus model. Engine build (`scripts/02-build.sh`) and server run are left to downstream images or runtime.
+ - Secrets like `HF_TOKEN` and `YAP_API_KEY` must be provided at runtime (e.g., `docker run -e ...`, Compose/Orchestrator secrets). They are not persisted by the image.
 
 #### Runtime
 Examples after pulling the image:
@@ -52,8 +57,10 @@ Examples after pulling the image:
 # 1) Single-shot pipeline: quantize → build → start server (background)
 docker run --gpus all --rm \
   -e HF_TOKEN=$HF_TOKEN \
+  -e YAP_API_KEY=your_secret_key \
   -e MODEL_ID=canopylabs/orpheus-3b-0.1-ft \
   -e TRTLLM_ENGINE_DIR=/opt/engines/orpheus-trt-int4-awq \
+  -v /path/for/engines:/opt/engines \
   -p 8000:8000 \
   -it IMAGE:TAG run.sh
 
@@ -66,7 +73,9 @@ docker run --gpus all --rm \
 
 # Start server only (assumes engine exists at /opt/engines/...)
 docker run --gpus all --rm \
-  -e HF_TOKEN=$HF_TOKEN -e TRTLLM_ENGINE_DIR=/opt/engines/orpheus-trt-int4-awq \
+  -e HF_TOKEN=$HF_TOKEN \
+  -e YAP_API_KEY=your_secret_key \
+  -e TRTLLM_ENGINE_DIR=/opt/engines/orpheus-trt-int4-awq \
   -p 8000:8000 -it IMAGE:TAG 02-start-server.sh
 ```
 

@@ -58,6 +58,10 @@ See `custom/environment.sh` for all available options and detailed documentation
 
 ## Installation & Deployment
 
+### Docker (containerized) path
+
+If you want to build and run everything inside a container, see `docker/README.md` for image build (with BuildKit secret for `HF_TOKEN`) and instructions to quantize/build the engine and start the server inside the image.
+
 ### Scripts Deployment
 
 Runs bootstrap → install → build INT4-AWQ engine → start server:

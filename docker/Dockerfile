@@ -51,7 +51,12 @@ COPY tests/ /app/tests/
 COPY docker/scripts/01-quantize-and-build.sh /usr/local/bin/01-quantize-and-build.sh
 COPY docker/scripts/02-start-server.sh /usr/local/bin/02-start-server.sh
 COPY docker/scripts/run.sh /usr/local/bin/run.sh
-RUN chmod +x /usr/local/bin/01-quantize-and-build.sh /usr/local/bin/02-start-server.sh /usr/local/bin/run.sh
+COPY docker/scripts/environment.sh /usr/local/bin/environment.sh
+RUN chmod +x /usr/local/bin/01-quantize-and-build.sh /usr/local/bin/02-start-server.sh /usr/local/bin/run.sh /usr/local/bin/environment.sh
+
+# Ensure environment defaults are loaded in all shells
+ENV BASH_ENV=/usr/local/bin/environment.sh
+RUN mkdir -p /etc/profile.d && printf 'test -f /usr/local/bin/environment.sh && . /usr/local/bin/environment.sh\n' > /etc/profile.d/orpheus-env.sh
 
 
 # ----------------------------------------------------------------------------
@@ -68,21 +73,27 @@ RUN pip install --upgrade --no-cache-dir --extra-index-url https://pypi.nvidia.c
 RUN pip check
 
 # ----------------------------------------------------------------------------
-# Hugging Face authentication (REQUIRED at build-time) — authenticate BEFORE downloads
+# Hugging Face token handling (via BuildKit secret; never persisted in image)
+# Usage: docker build --secret id=HF_TOKEN,env=HF_TOKEN ...
 # ----------------------------------------------------------------------------
-ARG HF_TOKEN
-ENV HF_TOKEN=${HF_TOKEN}
-# Explicitly fail the build if HF_TOKEN is not provided
-RUN test -n "${HF_TOKEN}" || (echo "ERROR: HF_TOKEN build-arg is required (export HF_TOKEN=...)" >&2; exit 1)
-RUN python - <<'PY'
+RUN --mount=type=secret,id=HF_TOKEN,required=false \
+    bash -lc 'set -euo pipefail; \
+      tok=""; \
+      if [ -f /run/secrets/HF_TOKEN ]; then tok=$(cat /run/secrets/HF_TOKEN || true); fi; \
+      if [ -n "$tok" ]; then \
+        python - <<PY
 import os
 from huggingface_hub import login
-token = os.environ.get("HF_TOKEN")
-if not token:
-    raise SystemExit("HF_TOKEN missing")
-login(token=token, add_to_git_credential=False)
-print("\u2713 HuggingFace authentication OK (validated during build)")
+tok = open("/run/secrets/HF_TOKEN", "r").read().strip() if os.path.exists("/run/secrets/HF_TOKEN") else None
+if tok:
+    login(token=tok, add_to_git_credential=False)
+    print("✓ Build-time HF login OK (not persisted)")
+else:
+    print("(optional) No HF token secret provided at build time")
 PY
+      else \
+        echo "(optional) No HF token secret provided at build time"; \
+      fi'
 
 # ----------------------------------------------------------------------------
 # TensorRT-LLM repository: clone and sync to installed wheel version
@@ -115,27 +126,43 @@ RUN if [ -f "${TRTLLM_REPO_DIR}/requirements.txt" ]; then \
     fi
 
 # ----------------------------------------------------------------------------
-# Pre-download Orpheus model snapshot from Hugging Face (full repo, no quantization)
+# Optional: Pre-download Orpheus model snapshot (no token persisted). If HF_TOKEN
+# passed as build-arg, it is used only within this RUN and discarded.
 # ----------------------------------------------------------------------------
 ARG MODEL_ID=canopylabs/orpheus-3b-0.1-ft
 ENV MODEL_ID=${MODEL_ID}
 ENV MODELS_DIR=/opt/models
 ENV HF_HUB_ENABLE_HF_TRANSFER=1
-RUN mkdir -p "${MODELS_DIR}" && \
-    python - <<'PY'
+RUN --mount=type=secret,id=HF_TOKEN,required=false \
+    mkdir -p "${MODELS_DIR}" && \
+    bash -lc 'set -euo pipefail; \
+      py=${PYTHON:-python}; \
+      "$py" - <<PY
 import os
-from huggingface_hub import snapshot_download
-
-model_id = os.environ.get('MODEL_ID', 'canopylabs/orpheus-3b-0.1-ft')
-models_dir = os.environ.get('MODELS_DIR', '/opt/models')
-basename = model_id.split('/')[-1]
+from huggingface_hub import snapshot_download, login
+tok_path = "/run/secrets/HF_TOKEN"
+tok = None
+if os.path.exists(tok_path):
+    try:
+        tok = open(tok_path, "r").read().strip()
+    except Exception:
+        tok = None
+if tok:
+    try:
+        login(token=tok, add_to_git_credential=False)
+    except Exception:
+        pass
+model_id = os.environ.get("MODEL_ID", "canopylabs/orpheus-3b-0.1-ft")
+models_dir = os.environ.get("MODELS_DIR", "/opt/models")
+basename = model_id.split("/")[-1]
 local_dir = os.path.join(models_dir, f"{basename}-hf")
 os.makedirs(local_dir, exist_ok=True)
-
-snapshot_download(repo_id=model_id, local_dir=local_dir, local_dir_use_symlinks=False)
-
-print(f"\u2713 Downloaded model '{model_id}' to {local_dir}")
-PY
+try:
+    snapshot_download(repo_id=model_id, local_dir=local_dir, local_dir_use_symlinks=False)
+    print(f"\u2713 Downloaded model {model_id} to {local_dir}")
+except Exception as e:
+    print(f"(optional) snapshot_download skipped/failed: {e}")
+PY'
 
 # Default environment knobs carried from custom/environment.sh (safe defaults)
 ENV HF_TRANSFER=1 \
