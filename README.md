@@ -233,7 +233,7 @@ grep -i error logs/server.log
 ps aux | grep "uvicorn server.server:app"
 ```
 
-**Note**: If you run `cleanup.sh` and then restart the server with `03-run-server.sh`, the logs directory is recreated and new logs start fresh. Previous logs are removed during cleanup.
+**Note**: Running `cleanup.sh` without flags leaves `logs/` intact. Use `cleanup.sh --clean-all` if you want to wipe cached logs along with the rest of the workspace.
 
 Note on HF token precedence:
 - If you see a warning like:
@@ -328,32 +328,22 @@ export TLLM_LOG_LEVEL=DEBUG
 ## Cleanup
 
 ```bash
-# Stop server only
+# Stop server and leave dependencies/models untouched (default)
 bash custom/utils/cleanup.sh
 
-# Stop + remove build artifacts
-bash custom/utils/cleanup.sh --clean-trt
+# Full reset: remove models, TensorRT artifacts, venv, caches, temp files
+bash custom/utils/cleanup.sh --clean-all
 
-# Stop + remove venv and caches  
-bash custom/utils/cleanup.sh --clean-install
-
-# Nuclear option: remove everything
-bash custom/utils/cleanup.sh --clean-install --clean-trt --clean-system
-
-# Get help on cleanup options
+# Show help
 bash custom/utils/cleanup.sh --help
 ```
 
 ### Cleanup Options Explained
 
-- **No flags**: Stop processes, clean runtime files only
-- **`--clean-install`**: AGGRESSIVELY remove Python venv and ALL caches
-- **`--clean-trt`**: Remove TensorRT engines, CUDA artifacts, force uninstall packages
-- **`--clean-system`**: NUCLEAR system cleanup - removes ALL caches/logs/temp files
-- **`--clean-models`**: Remove downloaded models, checkpoints, and engines
-- **`--clean-all`**: NUCLEAR OPTION - removes EVERYTHING (all of the above)
+- **No flags**: Stop server processes, release GPU resources, clear `.run/`
+- **`--clean-all`**: Remove models, TensorRT repo/artifacts, Python venv, cached deps, and temp build files
 
-**Warning**: `--clean-trt` removes the built TensorRT engine. `--clean-all` is extremely aggressive and will remove gigabytes of cached data. You'll need to rebuild everything from scratch.
+**Warning**: `--clean-all` deletes the quantized engine, downloaded models, and cached dependencies. Expect a full rebuild on next start.
 
 ## Architecture
 
