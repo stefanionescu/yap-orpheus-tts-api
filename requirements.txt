@@ -9,7 +9,7 @@ huggingface_hub==0.24.7
 transformers==4.44.2
 torch==2.4.1
 numpy==1.26.4
-snac==0.1.6
+snac==1.2.1
 
 # Audio processing
 soundfile==0.12.1
