@@ -4,12 +4,15 @@
 # =============================================================================
 # Comprehensive cleanup script that stops all processes and optionally removes
 # build artifacts, caches, and temporary files. Includes GPU memory cleanup.
+# Optimized for cloud/container environments with aggressive cleanup options.
 #
 # Usage: bash scripts/utils/cleanup.sh [OPTIONS]
 # Options:
 #   --clean-install  Remove Python venv and package caches
-#   --clean-system   Remove system package caches
-#   --clean-trt      Remove TensorRT-LLM build artifacts
+#   --clean-system   Remove system package caches (aggressive for cloud)
+#   --clean-trt      Remove TensorRT-LLM build artifacts and packages
+#   --clean-models   Remove downloaded models, checkpoints, and engines
+#   --clean-all      Perform complete cleanup (all of the above)
 # =============================================================================
 
 set -euo pipefail
@@ -39,6 +42,19 @@ _stop_server_processes() {
 }
 
 _stop_background_processes() {
+    # Stop setup pipeline
+    if [ -f .run/setup-pipeline.pid ]; then
+        local pid
+        pid=$(cat .run/setup-pipeline.pid 2>/dev/null || true)
+        if [ -n "$pid" ]; then
+            echo "[cleanup] Stopping setup pipeline (PID: $pid)..."
+            kill "$pid" 2>/dev/null || true
+            sleep 1
+            kill -9 "$pid" 2>/dev/null || true
+        fi
+        rm -f .run/setup-pipeline.pid
+    fi
+    
     # Stop run-all pipeline
     if [ -f .run/run-all.pid ]; then
         local pid
@@ -54,6 +70,8 @@ _stop_background_processes() {
     
     # Kill any remaining pipeline processes
     pkill -f "scripts/run-all.sh" 2>/dev/null || true
+    pkill -f "scripts/main.sh" 2>/dev/null || true
+    pkill -f "setup-pipeline" 2>/dev/null || true
 }
 
 _cleanup_gpu_memory() {
@@ -138,32 +156,98 @@ _cleanup_python_environment() {
     rm -rf ~/.triton ~/.cache/triton /tmp/triton* || true
     rm -rf ~/.cache/pip ~/.cache/hf_transfer ~/.cache/clip ~/.cache/transformers || true
     rm -rf /tmp/.hf* 2>/dev/null || true
+    
+    # Remove additional Python package caches
+    rm -rf ~/.cache/wheel ~/.cache/setuptools ~/.cache/build || true
+    rm -rf ~/.local/lib/python*/site-packages/__pycache__ || true
+    rm -rf /tmp/pip-* /tmp/build-* /tmp/easy_install-* || true
+    
+    # Remove conda/mamba caches if present
+    rm -rf ~/.conda/pkgs ~/.mamba/pkgs ~/.cache/conda ~/.cache/mamba || true
+    
+    # Clean up Python bytecode files in workspace
+    find "$PWD" -name "*.pyc" -delete 2>/dev/null || true
+    find "$PWD" -name "*.pyo" -delete 2>/dev/null || true
+    find "$PWD" -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
+}
+
+_cleanup_models_and_artifacts() {
+    # Remove downloaded HuggingFace models and local model cache
+    rm -rf models/ || true
+    
+    # Remove quantized checkpoints and TensorRT engines
+    [ -n "${CHECKPOINT_DIR:-}" ] && rm -rf "${CHECKPOINT_DIR}" || true
+    [ -n "${TRTLLM_ENGINE_DIR:-}" ] && rm -rf "${TRTLLM_ENGINE_DIR}" || true
+    
+    # Remove default model paths based on environment.sh
+    rm -rf "$PWD/models/orpheus-trtllm-ckpt-int4-awq" || true
+    rm -rf "$PWD/models/orpheus-trt-int4-awq" || true
+    rm -rf "$PWD/models/canopylabs" || true
 }
 
 _cleanup_tensorrt_artifacts() {
-    # Remove TensorRT-LLM repository and models
-    rm -rf "$TRTLLM_REPO_DIR" "$MODELS_DIR" || true
+    # Remove TensorRT-LLM repository
+    rm -rf "$TRTLLM_REPO_DIR" || true
+    rm -rf .trtllm-repo || true
     
-    # Remove Python cache files
-    find "$PWD" -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
-    
-    # Remove TensorRT caches
+    # Remove TensorRT and CUDA caches
     rm -rf ~/.cache/tensorrt* ~/.cache/nv_tensorrt ~/.cache/nvidia ~/.nv || true
     rm -rf ~/.cache/modelopt ~/.cache/model_optimizer ~/.cache/nvidia_modelopt || true
+    rm -rf ~/.cache/cuda* ~/.cache/nvcc* ~/.cache/cutlass* || true
     
     # Remove temporary build files
     rm -rf /tmp/trt* /tmp/tensorrt* /tmp/modelopt* /tmp/quantiz* /tmp/calib* 2>/dev/null || true
-    rm -rf /dev/shm/trt* /dev/shm/quantiz* 2>/dev/null || true
+    rm -rf /dev/shm/trt* /dev/shm/quantiz* /dev/shm/cuda* /dev/shm/nv* 2>/dev/null || true
+    
+    # Remove TensorRT installation artifacts if they exist
+    rm -rf /tmp/TensorRT* /tmp/tensorrt* 2>/dev/null || true
+    
+    # Clean up quantization tool dependencies and caches (if venv exists)
+    if [ -f ".venv/bin/activate" ]; then
+        source .venv/bin/activate 2>/dev/null || true
+        pip uninstall -y nvidia-modelopt nvidia-ammo 2>/dev/null || true
+        pip uninstall -y tensorrt-cu12-bindings tensorrt-cu12-libs 2>/dev/null || true
+        pip uninstall -y tensorrt-llm 2>/dev/null || true
+    fi
 }
 
 _cleanup_system_caches() {
-    # Clean package manager caches
+    # Clean package manager caches (aggressive for cloud environments)
     if command -v apt-get >/dev/null 2>&1; then
         apt-get clean || true
+        apt-get autoclean || true
+        apt-get autoremove -y || true
+        rm -rf /var/lib/apt/lists/* || true
+        rm -rf /var/cache/apt/archives/* || true
     fi
     
-    # Remove temporary system files
-    rm -rf /var/lib/apt/lists/* /tmp/pip-* /tmp/tmp* /var/tmp/* 2>/dev/null || true
+    # Clean other package managers
+    if command -v yum >/dev/null 2>&1; then
+        yum clean all || true
+    fi
+    
+    if command -v dnf >/dev/null 2>&1; then
+        dnf clean all || true
+    fi
+    
+    # Remove temporary system files (aggressive cleanup for containers)
+    rm -rf /tmp/* /var/tmp/* 2>/dev/null || true
+    rm -rf /root/.cache/* /root/.local/share/* 2>/dev/null || true
+    
+    # Clean up systemd and journal logs if running in container
+    if [ -f /.dockerenv ] || [ -n "${container:-}" ]; then
+        journalctl --vacuum-time=1d 2>/dev/null || true
+        rm -rf /var/log/*.log /var/log/*/*.log 2>/dev/null || true
+    fi
+    
+    # Clean up build artifacts and development files
+    rm -rf /usr/local/src/* /usr/src/* 2>/dev/null || true
+    
+    # Clean up font caches and other system caches
+    rm -rf ~/.cache/fontconfig ~/.fontconfig 2>/dev/null || true
+    
+    # Clean up SSL certificate caches
+    rm -rf ~/.pki ~/.cache/ca-certificates 2>/dev/null || true
 }
 
 _cleanup_workspace_files() {
@@ -183,6 +267,7 @@ MODELS_DIR="${MODELS_DIR:-$PWD/models}"
 CLEAN_INSTALL=0
 CLEAN_SYSTEM=0
 CLEAN_TRT=0
+CLEAN_MODELS=0
 
 for arg in "$@"; do
     case "$arg" in
@@ -198,13 +283,26 @@ for arg in "$@"; do
             CLEAN_TRT=1
             echo "[cleanup] Will remove TensorRT-LLM build artifacts"
             ;;
+        --clean-models)
+            CLEAN_MODELS=1
+            echo "[cleanup] Will remove downloaded models and artifacts"
+            ;;
+        --clean-all)
+            CLEAN_INSTALL=1
+            CLEAN_SYSTEM=1
+            CLEAN_TRT=1
+            CLEAN_MODELS=1
+            echo "[cleanup] Will perform complete cleanup (all options)"
+            ;;
         --help|-h)
-            echo "Usage: $0 [--clean-install] [--clean-system] [--clean-trt]"
+            echo "Usage: $0 [--clean-install] [--clean-system] [--clean-trt] [--clean-models] [--clean-all]"
             echo ""
             echo "Options:"
             echo "  --clean-install  Remove Python venv and package caches"
-            echo "  --clean-system   Remove system package caches"
-            echo "  --clean-trt      Remove TensorRT-LLM build artifacts"
+            echo "  --clean-system   Remove system package caches (aggressive for cloud)"
+            echo "  --clean-trt      Remove TensorRT-LLM build artifacts and packages"
+            echo "  --clean-models   Remove downloaded models, checkpoints, and engines"
+            echo "  --clean-all      Perform complete cleanup (all of the above)"
             exit 0
             ;;
         *)
@@ -238,6 +336,11 @@ _cleanup_runtime_files
 if [ "$CLEAN_INSTALL" = "1" ]; then
     echo "[cleanup] Removing Python environment and caches..."
     _cleanup_python_environment
+fi
+
+if [ "$CLEAN_MODELS" = "1" ]; then
+    echo "[cleanup] Removing models and artifacts..."
+    _cleanup_models_and_artifacts
 fi
 
 if [ "$CLEAN_TRT" = "1" ]; then
