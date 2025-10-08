@@ -20,6 +20,7 @@ Run Orpheus 3B TTS behind a FastAPI server using TensorRT-LLM backend with INT4-
 - OpenMPI runtime (installed automatically by bootstrap script)
 - Python 3.10 with shared libraries (installed automatically by bootstrap script)
 - Hugging Face token (`HF_TOKEN`) with access to `canopylabs/orpheus-3b-0.1-ft`
+ - 120–130 GB free disk space to run `scripts/` (models, engine build, caches)
 
 ### Quickstart
 
