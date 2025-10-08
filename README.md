@@ -34,6 +34,8 @@ bash scripts/main.sh
 curl -s http://127.0.0.1:8000/healthz
 ```
 
+**Note:** `GPU_SM_ARCH` is only needed if you plan to push to HuggingFace (set `HF_PUSH_AFTER_BUILD=1`).
+
 ## Configuration
 
 All configuration is centralized in `scripts/environment.sh` with comprehensive documentation.
@@ -42,13 +44,16 @@ All configuration is centralized in `scripts/environment.sh` with comprehensive 
 - `HF_TOKEN`: Hugging Face token for model access
 - `TRTLLM_ENGINE_DIR`: Path to built engine (set automatically by build scripts)
 
+### Optional Environment Variables
+- `GPU_SM_ARCH`: GPU architecture - **only required for HuggingFace push** (A100: `sm80`, RTX 4090: `sm89`, H100: `sm90`)
+
 ### Key Configuration Settings
 - **Engine**: `TRTLLM_MAX_BATCH_SIZE=16` (concurrent users), `KV_FREE_GPU_FRAC=0.92` (GPU memory usage)
 - **TTS**: `SNAC_MAX_BATCH=64` (audio decoder batching), `ORPHEUS_MAX_TOKENS=1024` (output length)
 - **Server**: `HOST=0.0.0.0`, `PORT=8000`, `DEFAULT_VOICE=female`
 - **Performance**: CUDA, PyTorch, and threading optimizations
 - **Download**: `HF_DOWNLOAD_ESSENTIAL_ONLY=1` (excludes training artifacts, saves ~40GB)
-- **GPU**: `GPU_SM_ARCH=sm80` (default A100 - avoids nvidia-smi queries in cloud environments)
+- **GPU**: `GPU_SM_ARCH=sm80` (only required for HuggingFace push)
 
 See `scripts/environment.sh` for all available options and detailed documentation.
 
@@ -71,13 +76,11 @@ You can optionally publish the converted/quantized TRT-LLM checkpoint and/or the
 
 ```bash
 export HF_TOKEN="hf_xxx"                           # required for access and upload
+export GPU_SM_ARCH="sm80"                          # required: A100: sm80, RTX4090: sm89, H100: sm90
 export HF_PUSH_AFTER_BUILD=1                       # enable push step in pipeline
 export HF_PUSH_REPO_ID="your-org/my-model-trtllm"  # target HF repo
 export HF_PUSH_PRIVATE=0                           # 1=private, 0=public
 export HF_PUSH_WHAT=both                           # engines | checkpoints | both
-
-# GPU architecture MUST be set for push (defaults to A100 sm80)
-export GPU_SM_ARCH="sm80"                          # A100: sm80, RTX4090: sm89, H100: sm90
 
 # Optional: label for engine subtree (auto-detected if omitted)
 # e.g., sm80_trt-llm-1.0.0_cuda12.4

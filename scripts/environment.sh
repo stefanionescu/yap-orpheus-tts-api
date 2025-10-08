@@ -98,9 +98,9 @@ export NUMEXPR_NUM_THREADS=${NUMEXPR_NUM_THREADS:-1}
 export HF_TRANSFER=${HF_TRANSFER:-1}                                # Use hf_transfer for faster downloads
 export HF_DOWNLOAD_ESSENTIAL_ONLY=${HF_DOWNLOAD_ESSENTIAL_ONLY:-1}  # Download only essential files (excludes training artifacts)
 
-# GPU Architecture (REQUIRED for HF push - default: A100 PCIe sm80)
-export GPU_SM_ARCH=${GPU_SM_ARCH:-sm80}                             # A100: "sm80", RTX 4090: "sm89", H100: "sm90"
-# NEVER set to empty if you plan to push to HuggingFace - pipeline will abort!
+# GPU Architecture (only required for HuggingFace push)
+export GPU_SM_ARCH=${GPU_SM_ARCH:-}                                 # A100: "sm80", RTX 4090: "sm89", H100: "sm90"
+# Only required when HF_PUSH_AFTER_BUILD=1 - pipeline will abort if empty during HF push
 
 # Development and debugging toggles
 export TORCH_COMPILE_DISABLE=${TORCH_COMPILE_DISABLE:-1}    # Disable torch.compile by default

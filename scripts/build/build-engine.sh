@@ -398,6 +398,9 @@ set -- "${ARGS[@]:-}"
 
 echo "[build] Validating build environment..."
 
+# Check required environment variables
+require_env HF_TOKEN
+
 # Check virtual environment
 if [ ! -d "$VENV_DIR" ]; then
     echo "ERROR: Virtual environment not found at $VENV_DIR" >&2

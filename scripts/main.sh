@@ -20,14 +20,31 @@ echo "=== Complete TTS Setup Pipeline ==="
 # Environment Validation
 # =============================================================================
 
-# Check required environment variable
+# Check required environment variables
 if [ -z "${HF_TOKEN:-}" ]; then
     echo "ERROR: HF_TOKEN not set. Export your HuggingFace token first." >&2
     echo "Example: export HF_TOKEN=\"hf_xxx\"" >&2
     exit 1
 fi
 
+# Only require GPU_SM_ARCH if we plan to push to HuggingFace
+if [ "${HF_PUSH_AFTER_BUILD:-0}" = "1" ] && [ -z "${GPU_SM_ARCH:-}" ]; then
+    echo "ERROR: GPU_SM_ARCH not set but HF push is enabled." >&2
+    echo "Either disable HF push or set GPU architecture:" >&2
+    echo "  export HF_PUSH_AFTER_BUILD=0   # Disable HF push" >&2
+    echo "  # OR set GPU architecture:" >&2
+    echo "  export GPU_SM_ARCH=\"sm80\"     # A100" >&2
+    echo "  export GPU_SM_ARCH=\"sm89\"     # RTX 4090" >&2
+    echo "  export GPU_SM_ARCH=\"sm90\"     # H100" >&2
+    exit 1
+fi
+
 echo "[pipeline] HuggingFace token: ${HF_TOKEN:0:8}..."
+if [ -n "${GPU_SM_ARCH:-}" ]; then
+    echo "[pipeline] GPU architecture: ${GPU_SM_ARCH}"
+else
+    echo "[pipeline] GPU architecture: not set (not needed for build-only)"
+fi
 
 # =============================================================================
 # Pipeline Execution
