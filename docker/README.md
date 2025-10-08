@@ -12,8 +12,8 @@ This image pre-installs everything done by `scripts/00-bootstrap.sh` and `script
 - **TRT-LLM repo**: cloned to `/opt/TensorRT-LLM` and pinned to installed wheel version
 - **HF model cache**: Orpheus model snapshot downloaded to `/opt/models/<basename>-hf`
 - **Runtime scripts** (inside image at `/usr/local/bin`):
-  - `quantize_and_build.sh`: performs INT4-AWQ quantization and builds TRT engine
-  - `start_server.sh`: starts the FastAPI server
+  - `01-quantize-and-build.sh`: performs INT4-AWQ quantization and builds TRT engine
+  - `02-start-server.sh`: starts the FastAPI server
 
 #### Build
 ```bash
@@ -49,15 +49,42 @@ CMD ["bash", "-lc", "uvicorn server.server:app --host $HOST --port $PORT --timeo
 #### Runtime
 Examples after pulling the image:
 ```bash
-# Quantize and build engine
-docker run --gpus all --rm -e HF_TOKEN=$HF_TOKEN -e MODEL_ID=canopylabs/orpheus-3b-0.1-ft \
-  -v /path/for/engines:/opt/engines \
-  -it IMAGE:TAG quantize_and_build.sh --engine-dir /opt/engines/orpheus-trt-int4-awq
+# 1) Single-shot pipeline: quantize → build → start server (background)
+docker run --gpus all --rm \
+  -e HF_TOKEN=$HF_TOKEN \
+  -e MODEL_ID=canopylabs/orpheus-3b-0.1-ft \
+  -e TRTLLM_ENGINE_DIR=/opt/engines/orpheus-trt-int4-awq \
+  -p 8000:8000 \
+  -it IMAGE:TAG run.sh
 
-# Start server (assumes engine exists at /opt/engines/...)
-docker run --gpus all --rm -e HF_TOKEN=$HF_TOKEN -e TRTLLM_ENGINE_DIR=/opt/engines/orpheus-trt-int4-awq \
-  -p 8000:8000 -it IMAGE:TAG start_server.sh
+# 2) Manual steps (optional):
+# Quantize and build engine only
+docker run --gpus all --rm \
+  -e HF_TOKEN=$HF_TOKEN -e MODEL_ID=canopylabs/orpheus-3b-0.1-ft \
+  -v /path/for/engines:/opt/engines \
+  -it IMAGE:TAG 01-quantize-and-build.sh --engine-dir /opt/engines/orpheus-trt-int4-awq
+
+# Start server only (assumes engine exists at /opt/engines/...)
+docker run --gpus all --rm \
+  -e HF_TOKEN=$HF_TOKEN -e TRTLLM_ENGINE_DIR=/opt/engines/orpheus-trt-int4-awq \
+  -p 8000:8000 -it IMAGE:TAG 02-start-server.sh
+```
+
+RunPod:
+```bash
+# Use IMAGE:TAG in RunPod template with GPU, and set Env Vars:
+# - HF_TOKEN (required)
+# - MODEL_ID (optional)
+# - TRTLLM_ENGINE_DIR (e.g. /opt/engines/orpheus-trt-int4-awq)
+# Add container command: run.sh
 ```
 - Ensure the host runtime provides NVIDIA GPU access (`--gpus all` in Docker, or equivalent in your cloud).
+#### Tests
+Inside the container (after server is running):
+```bash
+# Warmup
+python /app/tests/warmup.py --server 127.0.0.1:8000 --voice female
 
-
+# Benchmark (adjust concurrency as needed)
+python /app/tests/bench.py --n 8 --concurrency 8
+```

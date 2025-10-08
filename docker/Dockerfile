@@ -48,10 +48,10 @@ RUN pip install --no-cache-dir -r /app/requirements.txt
 # ----------------------------------------------------------------------------
 COPY server/ /app/server/
 COPY tests/ /app/tests/
-COPY docker/scripts/quantize_and_build.sh /usr/local/bin/quantize_and_build.sh
-COPY docker/scripts/start_server.sh /usr/local/bin/start_server.sh
-COPY docker/scripts/prepare_repo.sh /usr/local/bin/prepare_repo.sh
-RUN chmod +x /usr/local/bin/quantize_and_build.sh /usr/local/bin/start_server.sh /usr/local/bin/prepare_repo.sh
+COPY docker/scripts/01-quantize-and-build.sh /usr/local/bin/01-quantize-and-build.sh
+COPY docker/scripts/02-start-server.sh /usr/local/bin/02-start-server.sh
+COPY docker/scripts/run.sh /usr/local/bin/run.sh
+RUN chmod +x /usr/local/bin/01-quantize-and-build.sh /usr/local/bin/02-start-server.sh /usr/local/bin/run.sh
 
 
 # ----------------------------------------------------------------------------

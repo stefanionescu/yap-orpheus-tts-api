@@ -12,10 +12,16 @@ if [[ -z "${TRTLLM_ENGINE_DIR:-}" ]]; then
 fi
 
 if [[ -z "${HF_TOKEN:-}" ]]; then
-  echo "WARNING: HF_TOKEN not set; some downloads may fail if required" >&2
+  echo "ERROR: HF_TOKEN is required" >&2
+  exit 1
 fi
 
 cd /app
+# Validate engine presence
+if [[ ! -f "$TRTLLM_ENGINE_DIR/rank0.engine" ]]; then
+  echo "ERROR: Engine not found at $TRTLLM_ENGINE_DIR/rank0.engine" >&2
+  exit 1
+fi
 exec uvicorn server.server:app --host "$HOST" --port "$PORT" --timeout-keep-alive 75 --log-level info
 
 
