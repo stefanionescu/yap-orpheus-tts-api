@@ -139,7 +139,6 @@ PY
 
 # Default environment knobs carried from custom/environment.sh (safe defaults)
 ENV HF_TRANSFER=1 \
-    HF_DOWNLOAD_ESSENTIAL_ONLY=0 \
     OMP_NUM_THREADS=1 \
     MKL_NUM_THREADS=1 \
     OPENBLAS_NUM_THREADS=1 \

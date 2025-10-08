@@ -52,7 +52,6 @@ All configuration is centralized in `custom/environment.sh` with comprehensive d
 - **TTS**: `SNAC_MAX_BATCH=64` (audio decoder batching), `ORPHEUS_MAX_TOKENS=1024` (output length)
 - **Server**: `HOST=0.0.0.0`, `PORT=8000`, `DEFAULT_VOICE=female`
 - **Performance**: CUDA, PyTorch, and threading optimizations
-- **Download**: `HF_DOWNLOAD_ESSENTIAL_ONLY=1` (excludes training artifacts, saves ~40GB)
 - **GPU**: `GPU_SM_ARCH=sm80` (only required for HuggingFace push)
 
 See `custom/environment.sh` for all available options and detailed documentation.
