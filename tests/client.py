@@ -110,6 +110,11 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="Output WAV filename (default: tts_<timestamp>.wav under ROOT/audio)",
     )
+    ap.add_argument(
+        "--trim-silence",
+        default="true",
+        help="Trim leading silence on server (true|false)",
+    )
     return ap.parse_args()
 
 
@@ -131,6 +136,7 @@ async def tts_client(
     texts: List[str],
     api_key: Optional[str],
     out_path: Path,
+    trim_silence: bool,
 ) -> dict:
     url = _ws_url(server)
     
@@ -170,7 +176,7 @@ async def tts_client(
         connect_ms += (time.perf_counter() - connect_start) * 1000.0
 
         # Send meta first (voice only)
-        meta = {"voice": voice}
+        meta = {"voice": voice, "trim_silence": bool(trim_silence)}
         await ws.send(json.dumps(meta))
 
         # Start server TTFB timer when we send the first text
@@ -264,6 +270,7 @@ def main() -> None:
     print(f"Text(s): {len(texts)}")
     # Buffer size is ignored in Mode A; kept for CLI compatibility
 
+    trim_flag = str(args.trim_silence).strip().lower() in {"1", "true", "yes", "y", "on"}
     res = asyncio.run(
         tts_client(
             server_str,
@@ -271,6 +278,7 @@ def main() -> None:
             texts,
             args.api_key,
             out,
+            trim_flag,
         )
     )
     

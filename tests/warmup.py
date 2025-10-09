@@ -49,6 +49,7 @@ def main() -> None:
     ap.add_argument("--voice", default=os.environ.get("TTS_VOICE", "female"), help="Voice alias: female|male")
     ap.add_argument("--text", default=DEFAULT_TEXT, help="Text to synthesize")
     ap.add_argument("--api-key", default=os.environ.get("YAP_API_KEY", "yap_api_key"), help="API key (Authorization Bearer)")
+    ap.add_argument("--trim-silence", default="true", help="Trim leading silence on server (true|false)")
     args = ap.parse_args()
 
     url = _ws_url(args.server)
@@ -67,7 +68,8 @@ def main() -> None:
             headers["Authorization"] = f"Bearer {args.api_key}"
         async with websockets.connect(url, max_size=None, extra_headers=headers or None) as ws:
             # Send metadata first
-            payload = {"voice": args.voice}
+            trim_flag = str(args.trim_silence).strip().lower() in {"1", "true", "yes", "y", "on"}
+            payload = {"voice": args.voice, "trim_silence": trim_flag}
             await ws.send(json.dumps(payload))
 
             # Start a background receive loop
