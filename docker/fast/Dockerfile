@@ -63,9 +63,13 @@ RUN pip check
 # ----------------------------------------------------------------------------
 COPY server/ /app/server/
 COPY tests/ /app/tests/
+RUN rm -f /app/tests/client.py || true
 COPY docker/fast/scripts/start-server.sh /usr/local/bin/start-server.sh
 COPY docker/fast/scripts/environment.sh /usr/local/bin/environment.sh
-RUN chmod +x /usr/local/bin/start-server.sh /usr/local/bin/environment.sh
+COPY custom/build/helpers.sh /app/custom/build/helpers.sh
+COPY custom/build/steps/ /app/custom/build/steps/
+RUN chmod +x /usr/local/bin/start-server.sh /usr/local/bin/environment.sh && \
+    chmod +x /app/custom/build/steps/*.sh
 
 # Ensure environment defaults are loaded in all shells
 ENV BASH_ENV=/usr/local/bin/environment.sh

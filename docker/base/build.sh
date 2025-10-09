@@ -3,7 +3,7 @@ set -euo pipefail
 
 # Build the base image that replicates bootstrap + TRT install
 
-IMAGE_NAME=${IMAGE_NAME:-sionescu/orpheus-trtllm}
+IMAGE_NAME=${IMAGE_NAME:-sionescu/orpheus-trtllm-base}
 IMAGE_TAG=${IMAGE_TAG:-cu121-py310}
 PUSH_IMAGE=${PUSH_IMAGE:-0}
 

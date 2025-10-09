@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # Fast image server startup script
-# Assumes models and engines are provided at runtime via volumes or downloads
+# Pulls quantized checkpoint or engines from HF (no TRT repo clone), builds engine if needed, then starts server
 
 echo "Starting Orpheus TTS Server (Fast Image)"
 
@@ -11,16 +11,37 @@ if [[ -f /usr/local/bin/environment.sh ]]; then
     source /usr/local/bin/environment.sh
 fi
 
-# Validate required environment variables
-if [[ -z "${TRTLLM_ENGINE_DIR:-}" ]]; then
-    echo "ERROR: TRTLLM_ENGINE_DIR environment variable is required"
-    echo "   Mount your pre-built engine or set path to engine directory"
-    exit 1
+mkdir -p /app/.run /app/logs || true
+
+# If HF_DEPLOY_REPO_ID is set, try to pull engines/checkpoints and build if needed
+if [[ -n "${HF_DEPLOY_REPO_ID:-}" ]]; then
+    echo "[fast] HF remote deploy enabled: ${HF_DEPLOY_REPO_ID}"
+    # Run the same remote deploy step logic as custom build (no repo clone)
+    bash -lc "source /usr/local/bin/environment.sh; cd /app; bash custom/build/steps/step_prepare_env.sh; bash custom/build/steps/step_remote_deploy.sh || true"
+    if [[ -f /app/.run/remote_result.env ]]; then
+        # shellcheck disable=SC1091
+        source /app/.run/remote_result.env
+        if [[ "${REMOTE_RESULT:-}" == "10" ]]; then
+            # Engines ready
+            # shellcheck disable=SC1091
+            source /app/.run/engine_dir.env || true
+            export TRTLLM_ENGINE_DIR="${TRTLLM_ENGINE_DIR:-}"
+        elif [[ "${REMOTE_RESULT:-}" == "11" ]]; then
+            # Checkpoint ready; build engine locally
+            echo "[fast] Building engine from downloaded checkpoint..."
+            CHECKPOINT_DIR="${CHECKPOINT_DIR:-/opt/models/_hf_download/trt-llm/checkpoints}" \
+            ENGINE_OUTPUT_DIR="${TRTLLM_ENGINE_DIR:-/opt/engines/orpheus-trt-int4-awq}" \
+            bash custom/build/steps/step_engine_build.sh
+            # shellcheck disable=SC1091
+            source /app/.run/engine_dir.env || true
+        fi
+    fi
 fi
 
-if [[ ! -d "$TRTLLM_ENGINE_DIR" ]]; then
-    echo "ERROR: Engine directory not found: $TRTLLM_ENGINE_DIR"
-    echo "   Ensure your TensorRT engine is mounted or available at this path"
+# Final validation of engine dir
+if [[ -z "${TRTLLM_ENGINE_DIR:-}" || ! -f "${TRTLLM_ENGINE_DIR}/rank0.engine" ]]; then
+    echo "ERROR: TensorRT-LLM engine not available at TRTLLM_ENGINE_DIR=$TRTLLM_ENGINE_DIR" >&2
+    echo "       Provide HF_DEPLOY_REPO_ID with engines/checkpoints, or mount an engine directory." >&2
     exit 1
 fi
 
