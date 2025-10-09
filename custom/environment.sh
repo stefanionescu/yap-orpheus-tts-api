@@ -138,6 +138,39 @@ export HF_PUSH_NO_README=${HF_PUSH_NO_README:-0}    # 1=do not generate README.m
 export BUILD_IMAGE=${BUILD_IMAGE:-}
 
 # =============================================================================
+# HUGGING FACE REMOTE DEPLOY (PULL) - OPTIONAL
+# =============================================================================
+
+# If set, the build step will attempt to pull a prebuilt artifact from
+# this Hugging Face repo instead of quantizing locally.
+# Supported content in the repo (by convention from push_to_hf.py):
+#   trt-llm/checkpoints/**           (portable; requires local engine build)
+#   trt-llm/engines/<label>/**      (non-portable; may allow skipping build)
+export HF_DEPLOY_REPO_ID=${HF_DEPLOY_REPO_ID:-}
+
+# What to pull if both are present in the repo.
+#   auto         → prefer engines if compatible, otherwise fall back to checkpoints
+#   engines      → require engines to be present; fail if not found
+#   checkpoints  → require checkpoints; skip quantization and only build engine locally
+export HF_DEPLOY_USE=${HF_DEPLOY_USE:-auto}
+
+# For engines layout, choose which engines subtree to use (folder name under engines/)
+# If empty, auto-select when a single label is present; otherwise attempt to match GPU_SM_ARCH.
+export HF_DEPLOY_ENGINE_LABEL=${HF_DEPLOY_ENGINE_LABEL:-}
+
+# Whether to skip local engine build when engines are downloaded successfully
+export HF_DEPLOY_SKIP_BUILD_IF_ENGINES=${HF_DEPLOY_SKIP_BUILD_IF_ENGINES:-1}
+
+# Enforce environment compatibility when using prebuilt engines (SM arch, optional TRT/CUDA)
+export HF_DEPLOY_STRICT_ENV_MATCH=${HF_DEPLOY_STRICT_ENV_MATCH:-1}
+
+# Working directory to place downloaded artifacts
+export HF_DEPLOY_WORKDIR=${HF_DEPLOY_WORKDIR:-$PWD/models/_hf_download}
+
+# Enable integrity validation of downloaded artifacts (presence + size checks)
+export HF_DEPLOY_VALIDATE=${HF_DEPLOY_VALIDATE:-1}
+
+# =============================================================================
 # STREAMING CONFIGURATION
 # =============================================================================
 

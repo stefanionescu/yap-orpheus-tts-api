@@ -84,6 +84,12 @@ PIPELINE_CMD='
         echo ""; \
     fi && \
     echo "[pipeline] === Step 4/4: Start TTS Server ===" && \
+    # Load engine dir produced by build/fetch step if present
+    if [ -f .run/engine_dir.env ]; then \
+        # shellcheck disable=SC1091
+        source .run/engine_dir.env; \
+        echo "[pipeline] Using engine from .run/engine_dir.env: ${TRTLLM_ENGINE_DIR}"; \
+    fi && \
     export TRTLLM_ENGINE_DIR="${TRTLLM_ENGINE_DIR:-$PWD/models/orpheus-trt-int4-awq}" && \
     bash custom/03-run-server.sh
 '

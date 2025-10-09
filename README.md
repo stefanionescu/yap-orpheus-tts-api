@@ -95,6 +95,37 @@ export HF_TOKEN="hf_xxx"
 bash custom/main.sh
 ```
 
+### Deploy from a Hugging Face checkpoint or prebuilt engines (skip local quantization)
+
+You can bypass local quantization by pulling artifacts from a Hugging Face model repo produced with our `server/hf/push_to_hf.py` tool or compatible layout. Set the variables below and run the same pipeline; the build step will skip unnecessary work.
+
+```bash
+# Required for HF access
+export HF_TOKEN="hf_xxx"
+
+# Point to the repo that contains either:
+# - trt-llm/checkpoints/**                (portable; engine will be built locally)
+# - trt-llm/engines/<engine_label>/**     (non-portable; may be used as-is if compatible)
+export HF_DEPLOY_REPO_ID="your-org/my-model-trtllm"
+
+# Optional selection and behavior
+# auto|engines|checkpoints (default: auto)
+export HF_DEPLOY_USE=auto
+# If pulling engines and multiple labels exist, pick one (e.g., sm80_trt-llm-1.0.0_cuda12.4)
+export HF_DEPLOY_ENGINE_LABEL=""
+# If engines are downloaded and environment matches, skip local build (default: 1)
+export HF_DEPLOY_SKIP_BUILD_IF_ENGINES=1
+# Enforce GPU SM match when using engines (default: 1)
+export HF_DEPLOY_STRICT_ENV_MATCH=1
+
+# Run the normal pipeline; it will:
+# - Prefer engines if compatible; otherwise fall back to checkpoints
+# - If only checkpoints exist, skip quantization and just build the engine
+bash custom/main.sh
+```
+
+Integrity checks ensure required files exist after download. When engines are used, a basic SM-arch compatibility check is performed using `build_metadata.json` (or folder label) vs your local GPU.
+
 ### Optional: Push artifacts to Hugging Face after build
 
 You can optionally publish the converted/quantized TRT-LLM checkpoint and/or the built engine(s) to a Hugging Face model repo. **Requires GPU_SM_ARCH to be set** - the pipeline will abort if GPU architecture is not explicitly configured. Engines are not portable across GPU architectures and TRT/CUDA versions, so prefer pushing TRT-LLM checkpoints for broad reuse.

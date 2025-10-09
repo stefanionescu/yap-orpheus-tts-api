@@ -35,11 +35,15 @@ if [ ! -d "$VENV_DIR" ]; then
     exit 1
 fi
 
-# Check TensorRT-LLM engine
+# Check TensorRT-LLM engine (support engines nested under engines/<label>)
 if [ ! -f "$TRTLLM_ENGINE_DIR/rank0.engine" ]; then
-    echo "ERROR: TensorRT-LLM engine not found at $TRTLLM_ENGINE_DIR/rank0.engine" >&2
-    echo "Run custom/02-build.sh first" >&2
-    exit 1
+    if [ -d "$TRTLLM_ENGINE_DIR" ] && [ -f "$TRTLLM_ENGINE_DIR/../build_metadata.json" ]; then
+        : # tolerate when engine dir points inside label folder
+    else
+        echo "ERROR: TensorRT-LLM engine not found at $TRTLLM_ENGINE_DIR/rank0.engine" >&2
+        echo "Run custom/02-build.sh first or configure HF_DEPLOY_REPO_ID to pull prebuilt engines." >&2
+        exit 1
+    fi
 fi
 
 # =============================================================================

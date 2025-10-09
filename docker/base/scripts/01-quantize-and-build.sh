@@ -62,7 +62,7 @@ if [[ ! -d "$TRTLLM_REPO_DIR" ]]; then
   exit 1
 fi
 
-# Install quantization requirements now (match custom/build/build-engine.sh)
+# Install quantization requirements now (match custom/build/build.sh)
 quant_requirements="$TRTLLM_REPO_DIR/examples/quantization/requirements.txt"
 if [[ -f "$quant_requirements" ]]; then
   echo "[build] Installing quantization requirements..."

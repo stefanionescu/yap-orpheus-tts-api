@@ -1,2 +1,2 @@
 #!/usr/bin/env bash
-exec bash "$(dirname "$0")/build/build-engine.sh" "$@"
+exec bash "$(dirname "$0")/build/build.sh" "$@"
