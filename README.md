@@ -301,6 +301,12 @@ python tests/bench.py --n 8 --concurrency 8
 
 # Custom text and voice
 python tests/warmup.py --voice female --text "Your custom text here"
+
+# Control trimming of leading silence (default: true)
+# Disable trimming for warmup
+python tests/warmup.py --trim-silence false
+# Disable trimming for benchmark
+python tests/bench.py --trim-silence false --n 8 --concurrency 8
 ```
 
 ### External Client Testing (from your laptop)
@@ -322,6 +328,9 @@ pip install websockets python-dotenv
 
 # 4) Run the client against your server (replace with your URL/host)
 python tests/client.py --voice female
+
+# Client: disable trimming example
+python tests/client.py --trim-silence false --voice male
 
 # Example for local machine
 # python tests/client.py --server 127.0.0.1:8000 --voice male
