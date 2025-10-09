@@ -72,10 +72,11 @@ class Settings:
 
     # Audio post-processing
     trim_leading_silence: bool = os.getenv("TRIM_LEADING_SILENCE", "1") == "1"
-    silence_rms_threshold: float = float(os.getenv("SILENCE_RMS_THRESHOLD", "0.0026"))
-    silence_activation_ms: float = float(os.getenv("SILENCE_ACTIVATION_MS", "8"))
-    silence_prespeech_pad_ms: float = float(os.getenv("SILENCE_PRESPEECH_PAD_MS", "80"))
-    silence_max_leading_sec: float = float(os.getenv("SILENCE_MAX_LEADING_SEC", "0.6"))
+    # Trim a bit more aggressively by default; override via env to tune
+    silence_rms_threshold: float = float(os.getenv("SILENCE_RMS_THRESHOLD", "0.0032"))
+    silence_activation_ms: float = float(os.getenv("SILENCE_ACTIVATION_MS", "12"))
+    silence_prespeech_pad_ms: float = float(os.getenv("SILENCE_PRESPEECH_PAD_MS", "60"))
+    silence_max_leading_sec: float = float(os.getenv("SILENCE_MAX_LEADING_SEC", "1.0"))
 
 
 settings = Settings()
