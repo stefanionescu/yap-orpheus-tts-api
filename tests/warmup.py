@@ -50,6 +50,9 @@ def main() -> None:
     ap.add_argument("--text", default=DEFAULT_TEXT, help="Text to synthesize")
     ap.add_argument("--api-key", default=os.environ.get("YAP_API_KEY", "yap_api_key"), help="API key (Authorization Bearer)")
     ap.add_argument("--trim-silence", default="true", help="Trim leading silence on server (true|false)")
+    ap.add_argument("--temperature", type=float, default=None, help="Temperature for generation (0.3-0.9). If not specified, uses voice default")
+    ap.add_argument("--top-p", type=float, default=None, help="Top-p for generation (0.7-1.0). If not specified, uses voice default")
+    ap.add_argument("--repetition-penalty", type=float, default=None, help="Repetition penalty for generation (1.1-1.9). If not specified, uses voice default")
     args = ap.parse_args()
 
     url = _ws_url(args.server)
@@ -74,6 +77,12 @@ def main() -> None:
             if voice.lower() not in {"female", "male"}:
                 raise SystemExit("--voice must be provided as 'female' or 'male'")
             payload = {"voice": voice, "trim_silence": trim_flag}
+            if args.temperature is not None:
+                payload["temperature"] = args.temperature
+            if getattr(args, 'top_p', None) is not None:
+                payload["top_p"] = getattr(args, 'top_p')
+            if getattr(args, 'repetition_penalty', None) is not None:
+                payload["repetition_penalty"] = getattr(args, 'repetition_penalty')
             await ws.send(json.dumps(payload))
 
             # Start a background receive loop

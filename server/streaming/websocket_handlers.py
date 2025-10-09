@@ -37,10 +37,14 @@ class MessageParser:
             if ("text" not in obj) and (any(k in obj for k in settings.ws_meta_keys)):
                 return {"type": "meta", "meta": obj}
             
-            # Text message with optional voice override
+            # Text message with optional voice and generation parameter overrides
             text = (obj.get("text") or "").strip()
             voice = obj.get("voice")
             trim_silence = obj.get("trim_silence")
+            temperature = obj.get("temperature")
+            top_p = obj.get("top_p")
+            repetition_penalty = obj.get("repetition_penalty")
+            
             if text:
                 # Validate voice parameter if provided
                 if voice is not None:
@@ -48,10 +52,42 @@ class MessageParser:
                         resolve_voice(str(voice))  # This will raise ValueError if invalid
                     except ValueError as e:
                         raise ValueError(f"Voice validation failed: {e}")
-                # Pass through optional trim_silence override when present
+                
+                # Validate generation parameters if provided
+                if temperature is not None:
+                    try:
+                        temp_val = float(temperature)
+                        if not (0.3 <= temp_val <= 0.9):
+                            raise ValueError(f"Temperature must be between 0.3 and 0.9, got {temp_val}")
+                    except (ValueError, TypeError) as e:
+                        raise ValueError(f"Invalid temperature parameter: {e}")
+                
+                if top_p is not None:
+                    try:
+                        top_p_val = float(top_p)
+                        if not (0.7 <= top_p_val <= 1.0):
+                            raise ValueError(f"top_p must be between 0.7 and 1.0, got {top_p_val}")
+                    except (ValueError, TypeError) as e:
+                        raise ValueError(f"Invalid top_p parameter: {e}")
+                
+                if repetition_penalty is not None:
+                    try:
+                        rep_val = float(repetition_penalty)
+                        if not (1.1 <= rep_val <= 1.9):
+                            raise ValueError(f"repetition_penalty must be between 1.1 and 1.9, got {rep_val}")
+                    except (ValueError, TypeError) as e:
+                        raise ValueError(f"Invalid repetition_penalty parameter: {e}")
+                
+                # Build message with all optional parameters
                 msg = {"type": "text", "text": text, "voice": voice}
                 if trim_silence is not None:
                     msg["trim_silence"] = trim_silence
+                if temperature is not None:
+                    msg["temperature"] = temperature
+                if top_p is not None:
+                    msg["top_p"] = top_p
+                if repetition_penalty is not None:
+                    msg["repetition_penalty"] = repetition_penalty
                 return msg
         
         return None
@@ -80,17 +116,36 @@ class ConnectionState:
             except ValueError as e:
                 raise ValueError(f"Voice validation failed: {e}")
         
-        for param, attr in [
-            ("temperature", "temperature"),
-            ("top_p", "top_p"), 
-            ("repetition_penalty", "repetition_penalty"),
-        ]:
-            if param in meta:
-                try:
-                    value = float(meta[param])
-                    setattr(self, attr, value)
-                except Exception:
-                    pass
+        # Validate and set generation parameters with proper ranges
+        if "temperature" in meta:
+            try:
+                value = float(meta["temperature"])
+                if 0.3 <= value <= 0.9:
+                    self.temperature = value
+                else:
+                    raise ValueError(f"Temperature must be between 0.3 and 0.9, got {value}")
+            except (ValueError, TypeError) as e:
+                raise ValueError(f"Invalid temperature parameter: {e}")
+        
+        if "top_p" in meta:
+            try:
+                value = float(meta["top_p"])
+                if 0.7 <= value <= 1.0:
+                    self.top_p = value
+                else:
+                    raise ValueError(f"top_p must be between 0.7 and 1.0, got {value}")
+            except (ValueError, TypeError) as e:
+                raise ValueError(f"Invalid top_p parameter: {e}")
+        
+        if "repetition_penalty" in meta:
+            try:
+                value = float(meta["repetition_penalty"])
+                if 1.1 <= value <= 1.9:
+                    self.repetition_penalty = value
+                else:
+                    raise ValueError(f"repetition_penalty must be between 1.1 and 1.9, got {value}")
+            except (ValueError, TypeError) as e:
+                raise ValueError(f"Invalid repetition_penalty parameter: {e}")
         # Boolean parsing for trim_silence
         if "trim_silence" in meta:
             val = meta["trim_silence"]

@@ -59,6 +59,9 @@ async def _tts_one_ws(
     text: str,
     voice: str,
     trim_silence: bool,
+    temperature: Optional[float] = None,
+    top_p: Optional[float] = None,
+    repetition_penalty: Optional[float] = None,
 ) -> Dict[str, float]:
     url = _ws_url(server)
 
@@ -75,6 +78,12 @@ async def _tts_one_ws(
         headers["Authorization"] = f"Bearer {key}"
     async with websockets.connect(url, max_size=None, extra_headers=headers or None) as ws:
         meta = {"voice": voice, "trim_silence": bool(trim_silence)}
+        if temperature is not None:
+            meta["temperature"] = temperature
+        if top_p is not None:
+            meta["top_p"] = top_p
+        if repetition_penalty is not None:
+            meta["repetition_penalty"] = repetition_penalty
         await ws.send(json.dumps(meta))
 
         async def _recv_loop():
@@ -161,6 +170,9 @@ async def bench_ws(
     voice: str,
     texts: List[str],
     trim_silence: bool,
+    temperature: Optional[float] = None,
+    top_p: Optional[float] = None,
+    repetition_penalty: Optional[float] = None,
 ) -> Tuple[List[Dict[str, float]], int]:
     sem = asyncio.Semaphore(max(1, concurrency))
     results: List[Dict[str, float]] = []
@@ -171,7 +183,7 @@ async def bench_ws(
         text = texts[req_idx % len(texts)]
         async with sem:
             try:
-                r = await _tts_one_ws(server, text, voice, trim_silence)
+                r = await _tts_one_ws(server, text, voice, trim_silence, temperature, top_p, repetition_penalty)
                 results.append(r)
             except Exception as e:
                 errors_total += 1
@@ -194,6 +206,9 @@ def main() -> None:
     ap.add_argument("--voice", type=str, default=os.environ.get("TTS_VOICE", "female"), help="Voice alias: female|male")
     ap.add_argument("--trim-silence", default="true", help="Trim leading silence on server (true|false)")
     ap.add_argument("--text", action="append", default=None, help="Inline text prompt (repeat for multiple)")
+    ap.add_argument("--temperature", type=float, default=None, help="Temperature for generation (0.3-0.9). If not specified, uses voice default")
+    ap.add_argument("--top-p", type=float, default=None, help="Top-p for generation (0.7-1.0). If not specified, uses voice default")
+    ap.add_argument("--repetition-penalty", type=float, default=None, help="Repetition penalty for generation (1.1-1.9). If not specified, uses voice default")
     # Removed: seed and num-predict are not client-configurable
     args = ap.parse_args()
 
@@ -205,7 +220,17 @@ def main() -> None:
 
     t0 = time.time()
     trim_flag = str(args.trim_silence).strip().lower() in {"1", "true", "yes", "y", "on"}
-    results, errors = asyncio.run(bench_ws(args.server, args.n, args.concurrency, args.voice, texts, trim_flag))
+    results, errors = asyncio.run(bench_ws(
+        args.server, 
+        args.n, 
+        args.concurrency, 
+        args.voice, 
+        texts, 
+        trim_flag,
+        args.temperature,
+        getattr(args, 'top_p', None),
+        getattr(args, 'repetition_penalty', None)
+    ))
     elapsed = time.time() - t0
 
     _summarize("TTS Streaming", results)

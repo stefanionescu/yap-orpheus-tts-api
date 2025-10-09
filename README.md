@@ -247,6 +247,35 @@ curl -s http://127.0.0.1:8000/healthz
 ### Voices
 The server accepts `voice` values `female` or `male` (mapped internally to `tara` and `zac`).
 
+### Generation Parameters
+
+The TTS API supports customizable generation parameters that can be set per-connection (via metadata message) or per-text request. If not specified, the server uses voice-specific defaults optimized for each voice.
+
+#### Supported Parameters
+
+- **`temperature`** (float, 0.3-0.9): Controls randomness in generation. Lower values produce more consistent output, higher values add more variation.
+- **`top_p`** (float, 0.7-1.0): Nucleus sampling parameter. Controls the cumulative probability cutoff for token selection.
+- **`repetition_penalty`** (float, 1.1-1.9): Penalizes repeated tokens. Higher values reduce repetition more aggressively.
+
+#### Voice-Specific Defaults
+
+If generation parameters are not specified, the server uses optimized defaults based on the selected voice:
+
+- **Female (Tara)**: `temperature=0.45`, `top_p=0.95`, `repetition_penalty=1.25`  
+- **Male (Zac)**: `temperature=0.55`, `top_p=0.95`, `repetition_penalty=1.15`
+
+#### Usage Examples
+
+**Set parameters for entire connection via metadata message:**
+```json
+{"voice": "female", "temperature": 0.4, "top_p": 0.9, "repetition_penalty": 1.3}
+```
+
+**Override parameters for specific text:**
+```json
+{"text": "Hello world!", "voice": "female", "temperature": 0.6}
+```
+
 ### Checking Server Logs
 
 After starting the server, logs are automatically tailed. If you need to check logs later:
@@ -307,6 +336,10 @@ python tests/warmup.py --voice female --text "Your custom text here"
 python tests/warmup.py --trim-silence false
 # Disable trimming for benchmark
 python tests/bench.py --trim-silence false --n 8 --concurrency 8
+
+# Custom generation parameters
+python tests/warmup.py --voice female --temperature 0.4 --top-p 0.9 --repetition-penalty 1.3
+python tests/bench.py --voice male --temperature 0.6 --n 8 --concurrency 4
 ```
 
 ### External Client Testing (from your laptop)
@@ -331,6 +364,9 @@ python tests/client.py --voice female
 
 # Client: disable trimming example
 python tests/client.py --trim-silence false --voice male
+
+# Custom generation parameters
+python tests/client.py --voice female --temperature 0.4 --top-p 0.9 --repetition-penalty 1.3
 
 # Example for local machine
 # python tests/client.py --server 127.0.0.1:8000 --voice male

@@ -110,10 +110,30 @@ async def tts_ws(ws: WebSocket):
                             pass
                         break
                     
-                    # Synthesize and stream
+                    # Build sampling kwargs with per-message overrides
                     sampling_kwargs = connection_state.get_sampling_kwargs()
+                    
+                    # Allow per-message generation parameter overrides
+                    if "temperature" in message:
+                        try:
+                            sampling_kwargs["temperature"] = float(message["temperature"])
+                        except Exception:
+                            pass
+                    
+                    if "top_p" in message:
+                        try:
+                            sampling_kwargs["top_p"] = float(message["top_p"])
+                        except Exception:
+                            pass
+                    
+                    if "repetition_penalty" in message:
+                        try:
+                            sampling_kwargs["repetition_penalty"] = float(message["repetition_penalty"])
+                        except Exception:
+                            pass
+                    
                     trim_flag = connection_state.trim_silence
-                    # Allow per-message override when provided
+                    # Allow per-message trim_silence override when provided
                     if "trim_silence" in message:
                         try:
                             val = message["trim_silence"]

@@ -115,6 +115,24 @@ def parse_args() -> argparse.Namespace:
         default="true",
         help="Trim leading silence on server (true|false)",
     )
+    ap.add_argument(
+        "--temperature",
+        type=float,
+        default=None,
+        help="Temperature for generation (0.3-0.9). If not specified, uses voice default",
+    )
+    ap.add_argument(
+        "--top-p",
+        type=float,
+        default=None,
+        help="Top-p for generation (0.7-1.0). If not specified, uses voice default",
+    )
+    ap.add_argument(
+        "--repetition-penalty",
+        type=float,
+        default=None,
+        help="Repetition penalty for generation (1.1-1.9). If not specified, uses voice default",
+    )
     return ap.parse_args()
 
 
@@ -137,6 +155,9 @@ async def tts_client(
     api_key: Optional[str],
     out_path: Path,
     trim_silence: bool,
+    temperature: Optional[float] = None,
+    top_p: Optional[float] = None,
+    repetition_penalty: Optional[float] = None,
 ) -> dict:
     url = _ws_url(server)
     
@@ -175,8 +196,14 @@ async def tts_client(
     async with websockets.connect(url, **ws_kwargs) as ws:
         connect_ms += (time.perf_counter() - connect_start) * 1000.0
 
-        # Send meta first (voice only)
+        # Send meta first (voice and optional generation parameters)
         meta = {"voice": voice, "trim_silence": bool(trim_silence)}
+        if temperature is not None:
+            meta["temperature"] = temperature
+        if top_p is not None:
+            meta["top_p"] = top_p
+        if repetition_penalty is not None:
+            meta["repetition_penalty"] = repetition_penalty
         await ws.send(json.dumps(meta))
 
         # Start server TTFB timer when we send the first text
@@ -206,7 +233,7 @@ async def tts_client(
         recv_task = asyncio.create_task(_recv_loop())
 
         for idx, sentence in enumerate(sentences):
-            payload = {"text": sentence.strip()}
+            payload = {"text": sentence.strip(), "voice": voice}
             await ws.send(json.dumps(payload))
             if t0_server is None:
                 t0_server = time.perf_counter()
@@ -279,6 +306,9 @@ def main() -> None:
             args.api_key,
             out,
             trim_flag,
+            args.temperature,
+            getattr(args, 'top_p', None),
+            getattr(args, 'repetition_penalty', None),
         )
     )
     
