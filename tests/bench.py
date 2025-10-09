@@ -72,7 +72,7 @@ async def _tts_one_ws(
     key = os.environ.get("YAP_API_KEY", "YAP_API_KEY")
     if key:
         headers["Authorization"] = f"Bearer {key}"
-    async with websockets.connect(url, max_size=None, additional_headers=headers or None) as ws:
+    async with websockets.connect(url, max_size=None, extra_headers=headers or None) as ws:
         meta = {"voice": voice}
         await ws.send(json.dumps(meta))
 

@@ -137,7 +137,7 @@ async def tts_client(
         headers["Authorization"] = f"Bearer {api_key}"
 
     ws_options = {
-        "additional_headers": headers if headers else None,
+        "extra_headers": headers if headers else None,
         "max_size": None,
         "ping_interval": 30,
         "ping_timeout": 30,
