@@ -9,7 +9,7 @@ PUSH_IMAGE=${PUSH_IMAGE:-0}
 
 usage() {
   cat <<'EOF'
-Usage: docker/build.sh [--push]
+Usage: docker/base/build.sh [--push]
 
 Builds the Orpheus TRT-LLM base image. Pass --push (or set PUSH_IMAGE=1) to
 push the resulting tag to the configured registry (default docker.io).
@@ -44,14 +44,14 @@ BUILD_ARGS=(
 )
 
 SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &> /dev/null && pwd)
-REPO_ROOT=$(cd "$SCRIPT_DIR/.." && pwd)
+REPO_ROOT=$(cd "$SCRIPT_DIR/../.." && pwd)
 
 cd "$REPO_ROOT"
 
 echo "Building ${IMAGE_NAME}:${IMAGE_TAG} (platform linux/amd64)"
 docker build \
   --platform linux/amd64 \
-  -f docker/Dockerfile \
+  -f docker/base/Dockerfile \
   -t "${IMAGE_NAME}:${IMAGE_TAG}" \
   ${HF_TOKEN:+--secret id=HF_TOKEN,env=HF_TOKEN} \
   "${BUILD_ARGS[@]}" \

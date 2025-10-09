@@ -53,10 +53,10 @@ RUN grep -v '^torch==' /app/requirements.txt > /app/requirements-no-torch.txt &&
 # ----------------------------------------------------------------------------
 COPY server/ /app/server/
 COPY tests/ /app/tests/
-COPY docker/scripts/01-quantize-and-build.sh /usr/local/bin/01-quantize-and-build.sh
-COPY docker/scripts/02-start-server.sh /usr/local/bin/02-start-server.sh
-COPY docker/scripts/run.sh /usr/local/bin/run.sh
-COPY docker/scripts/environment.sh /usr/local/bin/environment.sh
+COPY docker/base/scripts/01-quantize-and-build.sh /usr/local/bin/01-quantize-and-build.sh
+COPY docker/base/scripts/02-start-server.sh /usr/local/bin/02-start-server.sh
+COPY docker/base/scripts/run.sh /usr/local/bin/run.sh
+COPY docker/base/scripts/environment.sh /usr/local/bin/environment.sh
 RUN chmod +x /usr/local/bin/01-quantize-and-build.sh /usr/local/bin/02-start-server.sh /usr/local/bin/run.sh /usr/local/bin/environment.sh
 
 # Ensure environment defaults are loaded in all shells
