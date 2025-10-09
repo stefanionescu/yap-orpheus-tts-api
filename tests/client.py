@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import inspect
 import json
 import os
 import sys
@@ -101,7 +102,7 @@ def parse_args() -> argparse.Namespace:
     )
     ap.add_argument(
         "--api-key",
-        default=os.getenv("YAP_API_KEY", "YAP_API_KEY"),
+        default=os.getenv("YAP_API_KEY", "yap_api_key"),
         help="API key for server Authorization (Bearer)",
     )
     ap.add_argument(
@@ -132,19 +133,25 @@ async def tts_client(
     out_path: Path,
 ) -> dict:
     url = _ws_url(server)
+    
+    # Prepare Authorization header from provided api_key (loaded from .env by default)
     headers = {}
     if api_key:
         headers["Authorization"] = f"Bearer {api_key}"
-
-    ws_options = {
-        "extra_headers": headers if headers else None,
-        "max_size": None,
-        "ping_interval": 30,
-        "ping_timeout": 30,
-        "open_timeout": 30,
-        "close_timeout": 0.5,
-    }
-
+    
+    # websockets compatibility: prefer the available header kwarg
+    try:
+        sig = inspect.signature(websockets.connect)
+        params = sig.parameters
+        if "extra_headers" in params:
+            ws_kwargs = {"extra_headers": headers or None}
+        elif "additional_headers" in params:
+            ws_kwargs = {"additional_headers": headers or None}
+        else:
+            ws_kwargs = {}
+    except Exception:
+        ws_kwargs = {"extra_headers": headers or None}
+    
     # Metrics
     t0_e2e = time.perf_counter()
     time_to_first_audio_e2e: Optional[float] = None
@@ -159,7 +166,7 @@ async def tts_client(
     sentences = [s for s in chunk_by_sentences(full_text) if s and s.strip()]
     connect_ms = 0.0
     connect_start = time.perf_counter()
-    async with websockets.connect(url, **ws_options) as ws:
+    async with websockets.connect(url, **ws_kwargs) as ws:
         connect_ms += (time.perf_counter() - connect_start) * 1000.0
 
         # Send meta first (voice only)

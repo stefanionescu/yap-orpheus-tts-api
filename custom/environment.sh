@@ -13,7 +13,7 @@
 export HOST=${HOST:-0.0.0.0}
 export PORT=${PORT:-8000}
 # Unified API key: use YAP_API_KEY only, with default
-export YAP_API_KEY=${YAP_API_KEY:-YAP_API_KEY}
+export YAP_API_KEY=${YAP_API_KEY:-yap_api_key}
 
 # Model and authentication
 export MODEL_ID=${MODEL_ID:-canopylabs/orpheus-3b-0.1-ft}

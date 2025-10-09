@@ -47,7 +47,7 @@ class Settings:
     ws_queue_maxsize: int = int(os.getenv("WS_QUEUE_MAXSIZE", "128"))
     default_voice: str = os.getenv("DEFAULT_VOICE", "tara")
     # API key for simple auth (override in production); single source: YAP_API_KEY
-    api_key: str = os.getenv("YAP_API_KEY", "YAP_API_KEY")
+    api_key: str = os.getenv("YAP_API_KEY", "yap_api_key")
     ws_meta_keys: tuple[str, ...] = (
         "voice", "temperature", "top_p", "repetition_penalty", "trim_silence"
     )

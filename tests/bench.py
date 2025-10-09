@@ -69,7 +69,7 @@ async def _tts_one_ws(
     # Sticky WS: open once, send meta, all sentences, then __END__
     sentences = [s for s in chunk_by_sentences(text) if s and s.strip()]
     headers = {}
-    key = os.environ.get("YAP_API_KEY", "YAP_API_KEY")
+    key = os.environ.get("YAP_API_KEY", "yap_api_key")
     if key:
         headers["Authorization"] = f"Bearer {key}"
     async with websockets.connect(url, max_size=None, extra_headers=headers or None) as ws:

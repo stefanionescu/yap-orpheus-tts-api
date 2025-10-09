@@ -79,7 +79,7 @@ PIPELINE_CMD='
             # Use venv python if available
             PYTHON_EXEC="${PYTHON_EXEC:-python}"; \
             if [ -x ".venv/bin/python" ]; then PYTHON_EXEC=".venv/bin/python"; fi; \
-            "$PYTHON_EXEC" custom/utils/push_to_hf.py --repo-id "${HF_PUSH_REPO_ID}" $([ "${HF_PUSH_PRIVATE:-1}" = "1" ] && echo --private) --what "${HF_PUSH_WHAT:-both}" --engine-label "${HF_PUSH_ENGINE_LABEL:-}" $([ "${HF_PUSH_PRUNE:-0}" = "1" ] && echo --prune) $([ "${HF_PUSH_NO_README:-0}" = "1" ] && echo --no-readme); \
+            "$PYTHON_EXEC" server/hf/push_to_hf.py --repo-id "${HF_PUSH_REPO_ID}" $([ "${HF_PUSH_PRIVATE:-1}" = "1" ] && echo --private) --what "${HF_PUSH_WHAT:-both}" --engine-label "${HF_PUSH_ENGINE_LABEL:-}" $([ "${HF_PUSH_PRUNE:-0}" = "1" ] && echo --prune) $([ "${HF_PUSH_NO_README:-0}" = "1" ] && echo --no-readme); \
         fi; \
         echo ""; \
     fi && \

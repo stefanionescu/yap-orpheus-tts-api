@@ -48,7 +48,7 @@ def main() -> None:
     ap.add_argument("--server", default="127.0.0.1:8000", help="host:port or http[s]://host:port")
     ap.add_argument("--voice", default=os.environ.get("TTS_VOICE", "female"), help="Voice alias: female|male")
     ap.add_argument("--text", default=DEFAULT_TEXT, help="Text to synthesize")
-    ap.add_argument("--api-key", default=os.environ.get("YAP_API_KEY", "YAP_API_KEY"), help="API key (Authorization Bearer)")
+    ap.add_argument("--api-key", default=os.environ.get("YAP_API_KEY", "yap_api_key"), help="API key (Authorization Bearer)")
     args = ap.parse_args()
 
     url = _ws_url(args.server)

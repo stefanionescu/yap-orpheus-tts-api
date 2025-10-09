@@ -8,6 +8,7 @@ from pathlib import Path
 from huggingface_hub import HfApi, create_repo, upload_folder
 import subprocess
 import platform
+from datetime import datetime, timezone
 
 try:
     import torch  # type: ignore
@@ -142,6 +143,119 @@ def collect_env_metadata(engine_dir: Path) -> dict:
 
 
 def write_readme(repo_root: Path, engine_label: str, meta: dict, what: str, repo_id: str):
+    """Write README.md into the staging folder. Prefer a rich template if present."""
+    # Attempt to load rich template from repository
+    try:
+        repo_src_root = Path(__file__).resolve().parents[2]
+    except Exception:
+        repo_src_root = Path.cwd()
+
+    template_path = repo_src_root / "server" / "hf" / "orpheus-readme.md"
+
+    def _safe_get(dct: dict, *keys, default=None):
+        cur = dct or {}
+        for k in keys:
+            if not isinstance(cur, dict) or k not in cur:
+                return default
+            cur = cur.get(k)
+        return cur if cur is not None else default
+
+    def _source_model_from_env_or_meta() -> str:
+        env_model = os.environ.get("MODEL_ID") or ""
+        if env_model:
+            return env_model
+        m = _safe_get(meta, "model_id", default="") or _safe_get(meta, "base_model", default="")
+        return str(m) if m else "canopylabs/orpheus-3b-0.1-ft"
+
+    def _to_link(model_id: str) -> str:
+        model_id = (model_id or "").strip()
+        if not model_id:
+            return "Orpheus 3B"
+        return f"[{model_id}](https://huggingface.co/{model_id})"
+
+    def _render(template: str, mapping: dict) -> str:
+        rendered = template
+        for k, v in mapping.items():
+            rendered = rendered.replace("{{" + k + "}}", str(v))
+        return rendered
+
+    # Build mapping for template
+    base_model = _source_model_from_env_or_meta()
+    awq_block_size = (
+        os.environ.get("AWQ_BLOCK_SIZE")
+        or str(_safe_get(meta, "quantization", "awq_block_size", default="") or "")
+        or "128"
+    )
+    calib_size = (
+        os.environ.get("CALIB_SIZE")
+        or str(_safe_get(meta, "quantization", "calib_size", default="") or "")
+        or "256"
+    )
+    dtype = os.environ.get("TRTLLM_DTYPE") or str(meta.get("dtype") or "float16")
+    max_input_len = os.environ.get("TRTLLM_MAX_INPUT_LEN") or str(meta.get("max_input_len") or meta.get("max_input_len_tokens") or "48")
+    max_output_len = os.environ.get("TRTLLM_MAX_OUTPUT_LEN") or str(meta.get("max_output_len") or meta.get("max_output_len_tokens") or "1024")
+    max_batch_size = os.environ.get("TRTLLM_MAX_BATCH_SIZE") or str(meta.get("max_batch_size") or "16")
+    trtllm_ver = meta.get("tensorrt_llm_version") or meta.get("tensorrt_version") or ""
+
+    # Estimated sizes for Orpheus 3B
+    original_size_gb = str(_safe_get(meta, "original_size_gb", default=6.0))
+    quantized_size_gb = str(_safe_get(meta, "quantized_size_gb", default=1.6))
+
+    quant_summary = {
+        "quantization": {
+            "weights_precision": "int4_awq",
+            "kv_cache_dtype": _safe_get(meta, "quantization", "kv_cache", default="int8") or "int8",
+            "awq_block_size": int(awq_block_size) if str(awq_block_size).isdigit() else awq_block_size,
+            "calib_size": int(calib_size) if str(calib_size).isdigit() else calib_size,
+        },
+        "build": {
+            "dtype": dtype,
+            "max_input_len": int(max_input_len) if str(max_input_len).isdigit() else max_input_len,
+            "max_output_len": int(max_output_len) if str(max_output_len).isdigit() else max_output_len,
+            "max_batch_size": int(max_batch_size) if str(max_batch_size).isdigit() else max_batch_size,
+            "engine_label": engine_label,
+            "tensorrt_llm_version": trtllm_ver,
+        },
+        "environment": {
+            "sm_arch": meta.get("sm_arch", ""),
+            "gpu_name": meta.get("gpu_name", ""),
+            "cuda_toolkit": meta.get("cuda_toolkit", ""),
+            "nvidia_driver": meta.get("nvidia_driver", ""),
+        },
+    }
+
+    mapping = {
+        "license": "apache-2.0",
+        "base_model": base_model,
+        "model_name": repo_id,
+        "source_model_link": _to_link(base_model),
+        "w_bit": "4",
+        "q_group_size": awq_block_size,
+        "awq_version": trtllm_ver,
+        "generated_at": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
+        "original_size_gb": original_size_gb,
+        "quantized_size_gb": quantized_size_gb,
+        "quant_summary": json.dumps(quant_summary, ensure_ascii=False, indent=2),
+        "calib_section": (
+            f"- Method: Activation-aware weight quantization (AWQ)\n"
+            f"- Calibration size: {calib_size}\n"
+            f"- AWQ block/group size: {awq_block_size}\n"
+            f"- DType for build: {dtype}\n"
+        ),
+        "repo_name": repo_id,
+        "engine_label": engine_label,
+    }
+
+    if template_path.is_file():
+        try:
+            template_text = template_path.read_text()
+            rendered = _render(template_text, mapping)
+            (repo_root / "README.md").write_text(rendered)
+            return
+        except Exception:
+            pass
+
+    # Fallback: generic README if template missing or failed to render
     title = "TRT-LLM Artifacts"
     env_lines = []
     for k in [
