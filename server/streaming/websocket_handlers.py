@@ -61,7 +61,8 @@ class ConnectionState:
     """Manages per-connection synthesis parameters."""
     
     def __init__(self):
-        self.voice = settings.default_voice
+        # Voice must be explicitly provided by the client via meta or per-message override
+        self.voice = None
         self.temperature: Optional[float] = None
         self.top_p: Optional[float] = None
         self.repetition_penalty: Optional[float] = None
@@ -106,7 +107,9 @@ class ConnectionState:
     
     def get_sampling_kwargs(self) -> dict:
         """Build sampling parameters dict with voice-specific fallback defaults."""
-        # Get voice-specific defaults
+        # Voice must have been set by now via meta or message override
+        if not self.voice:
+            raise ValueError("Voice not set; client must provide 'voice' in metadata or per message.")
         voice_defaults = get_voice_defaults(self.voice)
         
         return {

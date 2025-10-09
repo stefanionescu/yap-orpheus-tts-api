@@ -94,7 +94,7 @@ async def _tts_one_ws(
         recv_task = asyncio.create_task(_recv_loop())
 
         for sentence in sentences:
-            await ws.send(json.dumps({"text": sentence.strip()}))
+            await ws.send(json.dumps({"text": sentence.strip(), "voice": voice}))
 
         await ws.send("__END__")
         await recv_task

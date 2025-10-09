@@ -46,7 +46,7 @@ def _ws_url(server: str) -> str:
 def main() -> None:
     ap = argparse.ArgumentParser(description="WebSocket streaming warmup (Orpheus TTS)")
     ap.add_argument("--server", default="127.0.0.1:8000", help="host:port or http[s]://host:port")
-    ap.add_argument("--voice", default=os.environ.get("TTS_VOICE", "female"), help="Voice alias: female|male")
+    ap.add_argument("--voice", default=os.environ.get("TTS_VOICE", "female"), help="Voice alias: female|male (required)")
     ap.add_argument("--text", default=DEFAULT_TEXT, help="Text to synthesize")
     ap.add_argument("--api-key", default=os.environ.get("YAP_API_KEY", "yap_api_key"), help="API key (Authorization Bearer)")
     ap.add_argument("--trim-silence", default="true", help="Trim leading silence on server (true|false)")
@@ -69,7 +69,11 @@ def main() -> None:
         async with websockets.connect(url, max_size=None, extra_headers=headers or None) as ws:
             # Send metadata first
             trim_flag = str(args.trim_silence).strip().lower() in {"1", "true", "yes", "y", "on"}
-            payload = {"voice": args.voice, "trim_silence": trim_flag}
+            # Enforce voice is provided
+            voice = (args.voice or "").strip()
+            if voice.lower() not in {"female", "male"}:
+                raise SystemExit("--voice must be provided as 'female' or 'male'")
+            payload = {"voice": voice, "trim_silence": trim_flag}
             await ws.send(json.dumps(payload))
 
             # Start a background receive loop
@@ -95,7 +99,7 @@ def main() -> None:
             recv_task = asyncio.create_task(_recv_loop())
 
             for sentence in sentences:
-                await ws.send(json.dumps({"text": sentence.strip()}))
+                await ws.send(json.dumps({"text": sentence.strip(), "voice": voice}))
 
             await ws.send("__END__")
             await recv_task
