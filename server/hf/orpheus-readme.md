@@ -17,7 +17,7 @@ pipeline_tag: text-to-speech
     {{model_name}} — INT{{w_bit}} AWQ Quantized
   </h1>
   <p style="font-size: 18px; color: #666;">
-    High-performance INT{{w_bit}} AWQ quantization for production TTS with TensorRT-LLM
+    Streaming optimized Orpheus 3B quant. Meant to run on an A100 with TensorRT 
   </p>
 </div>
 
@@ -34,14 +34,14 @@ pipeline_tag: text-to-speech
 
 ## Model Overview
 
-This is a production-grade INT{{w_bit}} AWQ quantized version of {{source_model_link}}, optimized for low-latency text-to-speech with TensorRT-LLM.
+This is a streaming optimized INT4 AWQ quantized version of [canopylabs/orpheus-3b-0.1-ft](https://huggingface.co/canopylabs/orpheus-3b-0.1-ft), meant to run with TensorRT-LLM.
 
 **Key Features:**
 - **Optimized for Production**: Built for high-throughput, low-latency TTS serving
 - **Faster Inference**: Up to ~3x faster than FP16 with minimal perceived quality loss
-- **Memory Efficient**: ≈4x smaller weights vs. FP16 (INT{{w_bit}})
+- **Memory Efficient**: ≈4x smaller weights vs. FP16 (INT4)
 - **Ready for Streaming**: Designed for real-time streaming TTS backends
-- **Calibrated**: Quantized with high-quality calibration data using AWQ
+- **Calibrated**: Calibrated for 48 tokens of input and up to 1024 tokens of output (roughly 12 seconds worth of audio per text chunk)
 
 ---
 
@@ -49,12 +49,12 @@ This is a production-grade INT{{w_bit}} AWQ quantized version of {{source_model_
 
 | Specification | Details |
 |---------------|---------|
-| **Source Model** | {{source_model_link}} |
+| **Source Model** | [canopylabs/orpheus-3b-0.1-ft](https://huggingface.co/canopylabs/orpheus-3b-0.1-ft) |
 | **Quantization Method** | AWQ (Activation-aware Weight Quantization) |
-| **Precision** | INT{{w_bit}} weights, INT8 KV cache |
-| **AWQ Group/Block Size** | {{q_group_size}} |
-| **TensorRT-LLM Version** | `{{awq_version}}` |
-| **Generated** | {{generated_at}} |
+| **Precision** | INT4 weights, INT8 KV cache |
+| **AWQ Group/Block Size** | 128 |
+| **TensorRT-LLM Version** | `1.0.0` |
+| **Generated** | 2025-10-09 |
 | **Pipeline** | TensorRT-LLM AWQ Quantization |
 
 ### Artifact Layout
@@ -64,22 +64,11 @@ trt-llm/
   checkpoints/            # Quantized TRT-LLM checkpoints (portable)
     *.safetensors
     config.json
-  engines/{{engine_label}}/     # Built TensorRT-LLM engines (hardware-specific)
+  engines/sm80_trt-llm-1.0.0_cuda12.4/     # Built TensorRT-LLM engines (hardware-specific)
     rank*.engine
     build_metadata.json
     build_command.sh
 ```
-
-### Size Comparison
-
-| Version | Size | Memory Usage | Speed |
-|---------|------|--------------|-------|
-| Original FP16 | {{original_size_gb}} GB | ~{{original_size_gb}} GB VRAM | 1x |
-| **AWQ INT{{w_bit}}** | **{{quantized_size_gb}} GB** | **~{{quantized_size_gb}} GB VRAM** | **up to ~3x** |
-
-> Note: Engine file sizes vary by GPU architecture and build options.
-
----
 
 ## Quick Start
 
@@ -90,14 +79,14 @@ from huggingface_hub import snapshot_download
 
 # Download quantized checkpoints (portable)
 ckpt_path = snapshot_download(
-    repo_id="{{repo_name}}",
+    repo_id="yapwithai/orpheus-3b-trt-int4-awq",
     allow_patterns=["trt-llm/checkpoints/**"],
 )
 
 # Or download TensorRT-LLM engines for a specific build label
 eng_path = snapshot_download(
-    repo_id="{{repo_name}}",
-    allow_patterns=["trt-llm/engines/{{engine_label}}/**"],
+    repo_id="yapwithai/orpheus-3b-trt-int4-awq",
+    allow_patterns=["trt-llm/engines/sm80_trt-llm-1.0.0_cuda12.4/**"],
 )
 print("checkpoints:", ckpt_path)
 print("engines:", eng_path)
@@ -107,61 +96,46 @@ print("engines:", eng_path)
 
 ```bash
 # Point your server to the downloaded engines
-export TRTLLM_ENGINE_DIR=/path/to/trt-llm/engines/{{engine_label}}
+export TRTLLM_ENGINE_DIR=/path/to/trt-llm/engines/sm80_trt-llm-1.0.0_cuda12.4
 
 # Start your TTS server (example: FastAPI + WebSocket)
 python -m server.server
 ```
 
-### Minimal WebSocket Client (Python)
-
-```python
-import asyncio, json, websockets
-
-async def main():
-    url = "ws://127.0.0.1:8000/ws/tts"
-    headers = {"Authorization": "Bearer YOUR_API_KEY"}
-    async with websockets.connect(url, extra_headers=headers, max_size=None) as ws:
-        await ws.send(json.dumps({"voice": "female"}))
-        await ws.send(json.dumps({"text": "The future of voice is real-time."}))
-        await ws.send("__END__")
-        # Receive streaming PCM16 chunks (bytes)
-        total = 0
-        try:
-            while True:
-                msg = await ws.recv()
-                if isinstance(msg, (bytes, bytearray)):
-                    total += len(msg)
-        except Exception:
-            pass
-        print("received bytes:", total)
-
-asyncio.run(main())
-```
-
----
-
 ## Quantization Details
 
-{{calib_section}}
+- Method: Activation-aware weight quantization (AWQ)
+- Calibration size: 256
+- AWQ block/group size: 128
+- DType for build: float16
+
 
 ### Configuration Summary
 
 ```json
-{{quant_summary}}
+{
+  "quantization": {
+    "weights_precision": "int4_awq",
+    "kv_cache_dtype": "int8",
+    "awq_block_size": 128,
+    "calib_size": 256
+  },
+  "build": {
+    "dtype": "float16",
+    "max_input_len": 48,
+    "max_output_len": 1024,
+    "max_batch_size": 16,
+    "engine_label": "sm80_trt-llm-1.0.0_cuda12.4",
+    "tensorrt_llm_version": "1.0.0"
+  },
+  "environment": {
+    "sm_arch": "sm80",
+    "gpu_name": "NVIDIA A100 80GB PCIe",
+    "cuda_toolkit": "12.4",
+    "nvidia_driver": "550.127.05"
+  }
+}
 ```
-
----
-
-## Performance Notes
-
-| Metric | FP16 | INT{{w_bit}} AWQ | Improvement |
-|--------|------|------------------|-------------|
-| Memory Usage | 100% | ~25% | ~4x smaller |
-| Latency | 1x | ~0.3–0.5x | up to ~3x faster |
-| Quality | Baseline | Near-parity | Minimal perceptual loss |
-
-> Benchmarks depend on GPU, SM arch, TRT/CUDA versions, and server integration.
 
 ---
 
@@ -186,12 +160,12 @@ asyncio.run(main())
 
 ### System Requirements
 - **GPU**: NVIDIA, Compute Capability ≥ 8.0 (A100/RTX 40/H100 class recommended)
-- **VRAM**: ≥ {{quantized_size_gb}} GB for INT{{w_bit}} engines (per GPU)
+- **VRAM**: ≥ 1.6 GB for INT4 engines (per GPU)
 - **CUDA**: 12.x recommended
 - **Python**: 3.10+
 
 ### Framework Compatibility
-- **TensorRT-LLM** (engines), version `{{awq_version}}`
+- **TensorRT-LLM** (engines), version `1.0.0`
 - **TRT-LLM Checkpoints** are portable across systems; engines are not
 
 ### Installation
@@ -209,7 +183,7 @@ pip install huggingface_hub
 <details>
 <summary><b>Engine not portable</b></summary>
 Engines are specific to GPU SM and TRT/CUDA versions. Rebuild on the target
-system or download a matching `engines/{{engine_label}}` variant if provided.
+system or download a matching `engines/sm80_trt-llm-1.0.0_cuda12.4` variant if provided.
 </details>
 
 <details>
@@ -230,5 +204,3 @@ on your server is tuned to your GPU.
 ## License
 
 This quantized model inherits the license from the original model: **Apache 2.0**
-
-

@@ -3,17 +3,17 @@ set -euo pipefail
 
 # Build the fast production image with dependencies only
 
-IMAGE_NAME=${IMAGE_NAME:-sionescu/orpheus-trtllm-fast}
+IMAGE_NAME=${IMAGE_NAME:-sionescu/orpheus-trtllm-int4-fast}
 IMAGE_TAG=${IMAGE_TAG:-cu121-py310}
-PUSH_IMAGE=${PUSH_IMAGE:-0}
+PUSH_IMAGE=${PUSH_IMAGE:-1}
 
 usage() {
   cat <<'EOF'
-Usage: docker/fast/build.sh [--push]
+Usage: docker/fast/build.sh
 
-Builds the Orpheus TTS fast production image with dependencies only.
-Pass --push (or set PUSH_IMAGE=1) to push the resulting tag to the 
-configured registry (default docker.io).
+Builds the Orpheus TTS fast production image with dependencies only, and pushes
+to the configured registry (default docker.io) by default. To skip pushing, set
+PUSH_IMAGE=0.
 EOF
 }
 

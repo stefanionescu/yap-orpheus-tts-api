@@ -42,9 +42,9 @@ RUN echo "Using PyTorch index: ${PYTORCH_INDEX_URL}" && \
 # ----------------------------------------------------------------------------
 WORKDIR /app
 COPY requirements.txt /app/requirements.txt
-# Install requirements while keeping the exact CUDA wheel for torch already installed
-RUN grep -v '^torch==' /app/requirements.txt > /app/requirements-no-torch.txt && \
-    pip install --no-cache-dir -r /app/requirements-no-torch.txt
+# Install runtime requirements but skip torch (already installed) and mpi4py (needs MPI dev libs)
+RUN grep -Ev '^(torch==|mpi4py==)' /app/requirements.txt > /app/requirements-fast.txt && \
+    pip install --no-cache-dir -r /app/requirements-fast.txt
 
 # ----------------------------------------------------------------------------
 # TensorRT-LLM installation (runtime wheel only, no repo)
@@ -66,10 +66,7 @@ COPY tests/ /app/tests/
 RUN rm -f /app/tests/client.py || true
 COPY docker/fast/scripts/start-server.sh /usr/local/bin/start-server.sh
 COPY docker/fast/scripts/environment.sh /usr/local/bin/environment.sh
-COPY custom/build/helpers.sh /app/custom/build/helpers.sh
-COPY custom/build/steps/ /app/custom/build/steps/
-RUN chmod +x /usr/local/bin/start-server.sh /usr/local/bin/environment.sh && \
-    chmod +x /app/custom/build/steps/*.sh
+RUN chmod +x /usr/local/bin/start-server.sh /usr/local/bin/environment.sh
 
 # Ensure environment defaults are loaded in all shells
 ENV BASH_ENV=/usr/local/bin/environment.sh

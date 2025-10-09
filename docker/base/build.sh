@@ -5,14 +5,14 @@ set -euo pipefail
 
 IMAGE_NAME=${IMAGE_NAME:-sionescu/orpheus-trtllm-base}
 IMAGE_TAG=${IMAGE_TAG:-cu121-py310}
-PUSH_IMAGE=${PUSH_IMAGE:-0}
+PUSH_IMAGE=${PUSH_IMAGE:-1}
 
 usage() {
   cat <<'EOF'
-Usage: docker/base/build.sh [--push]
+Usage: docker/base/build.sh
 
-Builds the Orpheus TRT-LLM base image. Pass --push (or set PUSH_IMAGE=1) to
-push the resulting tag to the configured registry (default docker.io).
+Builds the Orpheus TRT-LLM base image and pushes to the configured registry
+(default docker.io) by default. To skip pushing, set PUSH_IMAGE=0.
 EOF
 }
 

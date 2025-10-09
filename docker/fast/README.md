@@ -20,10 +20,24 @@ Not included: engines and models (fetched/mounted at runtime).
 
 ```bash
 cd /path/to/yap-orpheus-tts-api
+# Basic build
 bash docker/fast/build.sh
 
-# Optional: push
+# Custom name/tag or registry
+IMAGE_NAME=myregistry/orpheus-tts-fast IMAGE_TAG=prod \
+bash docker/fast/build.sh
+
+# Optional: custom PyTorch/TensorRT versions
+PYTORCH_INDEX_URL=https://download.pytorch.org/whl/cu126 \
+TRTLLM_WHEEL_URL=https://pypi.nvidia.com/tensorrt-llm/tensorrt_llm-1.1.0-cp310-cp310-linux_x86_64.whl \
+bash docker/fast/build.sh
+
+# Push in one step
 bash docker/fast/build.sh --push
+
+# Or push after build
+docker login
+docker push ${IMAGE_NAME:-sionescu/orpheus-trtllm-int4-fast}:${IMAGE_TAG:-cu121-py310}
 ```
 
 ---

@@ -227,7 +227,7 @@ def write_readme(repo_root: Path, engine_label: str, meta: dict, what: str, repo
     mapping = {
         "license": "apache-2.0",
         "base_model": base_model,
-        "model_name": repo_id,
+        "model_name": "Orpheus 3B",
         "source_model_link": _to_link(base_model),
         "w_bit": "4",
         "q_group_size": awq_block_size,
