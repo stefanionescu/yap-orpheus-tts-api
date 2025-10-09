@@ -190,6 +190,7 @@ _full_cleanup() {
 
     log "Removing cached dependencies..."
     local -a cache_dirs=(
+        "$HOME/.cache"
         "$HOME/.cache/huggingface"
         "$HOME/.cache/huggingface_hub"
         "$HOME/.cache/hf"
@@ -212,16 +213,22 @@ _full_cleanup() {
         "$HOME/.cache/huggingface/hub"
         "$HOME/.cache/huggingface/datasets"
         "$HOME/.cache/tensorrt_llm"
+        "$HOME/.local/share/cache"
+        "$HOME/.local/share/huggingface"
         "/workspace/.cache/huggingface"
         "/workspace/.cache/pip"
         "/workspace/.cache/torch"
         "/workspace/.cache/tensorrt"
         "/workspace/.cache/triton"
+        "/workspace/.cache"
+        "/workspace/.local/share/cache"
         "/root/.cache/huggingface"
         "/root/.cache/pip"
         "/root/.cache/torch"
         "/root/.cache/tensorrt"
         "/root/.cache/triton"
+        "/root/.cache"
+        "/root/.local/share/cache"
     )
 
     for dir in "${cache_dirs[@]}"; do
@@ -255,6 +262,12 @@ _full_cleanup() {
         "${STORAGE_DIR:-}"
         "${RUNPOD_STORAGE_DIR:-}"
         "${PERSISTENT_STORAGE_DIR:-}"
+        "${RUNPOD_VOLUME:-}"
+        "${RUNPOD_PERSISTENT_DIR:-}"
+        "${RUNPOD_VOLUMES_DIR:-}"
+        "/runpod-volume"
+        "/workspace/data"
+        "/workspace/cache"
         "/workspace/storage"
         "$PWD/storage"
         "$HOME/storage"
