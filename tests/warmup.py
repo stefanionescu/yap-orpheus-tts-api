@@ -65,7 +65,7 @@ def main() -> None:
         headers = {}
         if args.api_key:
             headers["Authorization"] = f"Bearer {args.api_key}"
-        async with websockets.connect(url, max_size=None, additional_headers=headers or None) as ws:
+        async with websockets.connect(url, max_size=None, extra_headers=headers or None) as ws:
             # Send metadata first
             payload = {"voice": args.voice}
             await ws.send(json.dumps(payload))
