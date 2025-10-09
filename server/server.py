@@ -90,20 +90,18 @@ async def tts_ws(ws: WebSocket):
                     text = message.get("text", "").strip()
                     voice_override = message.get("voice")
                     
-                    if voice_override:
+                    # Voice must always be provided and valid for each text message
+                    try:
+                        voice_str = str(voice_override)
+                        from server.voices import resolve_voice
+                        resolve_voice(voice_str)  # Raises ValueError if invalid/missing
+                        connection_state.voice = voice_str
+                    except Exception:
                         try:
-                            # Validate voice parameter - only 'female' and 'male' allowed
-                            voice_str = str(voice_override)
-                            from server.voices import resolve_voice
-                            resolve_voice(voice_str)  # This will raise ValueError if invalid
-                            connection_state.voice = voice_str
-                        except ValueError:
-                            # Invalid voice parameter - close connection
-                            try:
-                                await ws.close(code=1008)  # Policy violation
-                            except Exception:
-                                pass
-                            break
+                            await ws.close(code=1008)
+                        except Exception:
+                            pass
+                        break
                     
                     if not text:
                         try:

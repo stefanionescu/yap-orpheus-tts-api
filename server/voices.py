@@ -22,7 +22,7 @@ def resolve_voice(v: str) -> str:
         ValueError: If voice parameter is not 'female' or 'male'
     """
     if not v:
-        return "tara"  # Default to female voice
+        raise ValueError("Voice is required and must be 'female' or 'male'.")
     
     key = v.strip().lower()
     
@@ -47,7 +47,7 @@ def get_voice_defaults(voice: str) -> dict:
     Returns:
         Dict with default temperature, top_p, repetition_penalty for the voice
     """
-    resolved = resolve_voice(voice) if voice else "tara"
+    resolved = resolve_voice(voice)
     
     if resolved == "zac":  # Male voice
         return {

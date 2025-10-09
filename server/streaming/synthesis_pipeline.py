@@ -22,13 +22,12 @@ class SynthesisPipeline:
         # Build sampling params
         sp = SamplingParams(**sampling_kwargs)
         
-        # Resolve voice and chunk text  
-        # Voice should already be validated by this point, but handle any edge cases
-        try:
+        # Resolve voice and chunk text (accept internal names directly)
+        if voice in ("tara", "zac"):
+            resolved_voice = voice
+        else:
+            # Enforce valid alias ('female' or 'male'); no defaulting
             resolved_voice = resolve_voice(voice)
-        except ValueError:
-            # Fallback to default voice if somehow an invalid voice got through
-            resolved_voice = resolve_voice("female")  # Default to female voice
         chunks = chunk_by_sentences(text)
         
         if not chunks:

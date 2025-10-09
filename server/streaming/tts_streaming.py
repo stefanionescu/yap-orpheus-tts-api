@@ -28,12 +28,12 @@ async def aiter_pcm_from_custom_tokens(engine, prompt: str, voice: str, sp, trim
     )
 
     # Build the Orpheus prompt
-    # Voice should already be validated by this point, but handle any edge cases
-    try:
+    # Accept internal names directly; resolve only external aliases
+    if voice in ("tara", "zac"):
+        resolved_voice = voice
+    else:
+        # Enforce valid alias ('female' or 'male'); no defaulting
         resolved_voice = resolve_voice(voice)
-    except ValueError:
-        # Fallback to default voice if somehow an invalid voice got through
-        resolved_voice = resolve_voice("female")  # Default to female voice
     formatted = build_prompt(prompt, resolved_voice)
 
     # Initialize clean decoder, processor, and silence trimmer
