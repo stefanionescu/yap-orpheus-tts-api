@@ -80,57 +80,6 @@ _safe_rm() {
     fi
 }
 
-_clear_storage_root() {
-    local root="$1"
-
-    if [ -z "$root" ]; then
-        return
-    fi
-    if [ "$root" = "/" ]; then
-        return
-    fi
-    if [ ! -d "$root" ]; then
-        return
-    fi
-    if [ "$PWD" = "$root" ]; then
-        log "Skipping storage root $root because it matches the workspace"
-        return
-    fi
-
-    log "Clearing storage directory: $root"
-    local dotglob_was_set=0
-    local nullglob_was_set=0
-    if shopt -q dotglob; then
-        dotglob_was_set=1
-    fi
-    if shopt -q nullglob; then
-        nullglob_was_set=1
-    fi
-    shopt -s dotglob nullglob
-
-    local entry
-    for entry in "$root"/*; do
-        case "${entry##*/}" in
-            .|..)
-                continue
-                ;;
-        esac
-        case "$PWD" in
-            "$entry"|"$entry"/*)
-                continue
-                ;;
-        esac
-        rm -rf "$entry" 2>/dev/null || true
-    done
-
-    if [ "$dotglob_was_set" -eq 0 ]; then
-        shopt -u dotglob
-    fi
-    if [ "$nullglob_was_set" -eq 0 ]; then
-        shopt -u nullglob
-    fi
-}
-
 _full_cleanup() {
     log "Removing workspace artifacts..."
     local -a workspace_dirs=(
@@ -190,7 +139,6 @@ _full_cleanup() {
 
     log "Removing cached dependencies..."
     local -a cache_dirs=(
-        "$HOME/.cache"
         "$HOME/.cache/huggingface"
         "$HOME/.cache/huggingface_hub"
         "$HOME/.cache/hf"
@@ -213,22 +161,16 @@ _full_cleanup() {
         "$HOME/.cache/huggingface/hub"
         "$HOME/.cache/huggingface/datasets"
         "$HOME/.cache/tensorrt_llm"
-        "$HOME/.local/share/cache"
-        "$HOME/.local/share/huggingface"
         "/workspace/.cache/huggingface"
         "/workspace/.cache/pip"
         "/workspace/.cache/torch"
         "/workspace/.cache/tensorrt"
         "/workspace/.cache/triton"
-        "/workspace/.cache"
-        "/workspace/.local/share/cache"
         "/root/.cache/huggingface"
         "/root/.cache/pip"
         "/root/.cache/torch"
         "/root/.cache/tensorrt"
         "/root/.cache/triton"
-        "/root/.cache"
-        "/root/.local/share/cache"
     )
 
     for dir in "${cache_dirs[@]}"; do
@@ -256,34 +198,6 @@ _full_cleanup() {
     log "Clearing temporary build files..."
     rm -rf /tmp/tensorrt* /tmp/trt* /tmp/torch* /tmp/pip-* /tmp/hf* /tmp/cuda* /tmp/nv* /tmp/modelopt* /tmp/quantiz* 2>/dev/null || true
     rm -rf /dev/shm/tensorrt* /dev/shm/trt* /dev/shm/torch* /dev/shm/nv* /dev/shm/cuda* /dev/shm/hf* 2>/dev/null || true
-
-    local -a storage_roots=(
-        "${STORAGE_ROOT:-}"
-        "${STORAGE_DIR:-}"
-        "${RUNPOD_STORAGE_DIR:-}"
-        "${PERSISTENT_STORAGE_DIR:-}"
-        "${RUNPOD_VOLUME:-}"
-        "${RUNPOD_PERSISTENT_DIR:-}"
-        "${RUNPOD_VOLUMES_DIR:-}"
-        "/runpod-volume"
-        "/workspace/data"
-        "/workspace/cache"
-        "/workspace/storage"
-        "$PWD/storage"
-        "$HOME/storage"
-    )
-
-    if [ -n "${CLEANUP_STORAGE_ROOTS:-}" ]; then
-        local extra_root
-        for extra_root in ${CLEANUP_STORAGE_ROOTS}; do
-            storage_roots+=("$extra_root")
-        done
-    fi
-
-    local storage_dir
-    for storage_dir in "${storage_roots[@]}"; do
-        _clear_storage_root "$storage_dir"
-    done
 }
 
 CLEAN_ALL=0
