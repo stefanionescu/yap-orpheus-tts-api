@@ -429,11 +429,8 @@ bash custom/utils/cleanup.sh --help
 
 ### Quantization Strategy
 - **Weights**: INT4-AWQ (4x compression, ~2% quality loss)
-- **KV Cache**: INT8 (2x compression, ~0.5% quality loss, **critical for high concurrency**)
+- **KV Cache**: INT8 (2x compression, ~0.5% quality loss)
 - **Activations**: FP16 (no quantization - preserves quality)
-
-### Why This Works for TTS
-TTS models generate discrete audio codes where activation precision is critical. Weight-only quantization (INT4-AWQ) compresses the model without degrading the forward pass quality, while **INT8 KV cache is essential for high-concurrency performance** - it doubles the number of concurrent users the GPU can handle by reducing KV cache memory from 16-bit to 8-bit.
 
 **Avoid**: 
 - Full quantization (W8A8 SmoothQuant) destroys TTS quality by quantizing activations
