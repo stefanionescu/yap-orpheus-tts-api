@@ -10,7 +10,7 @@ export PORT=${PORT:-8000}
 export YAP_API_KEY=${YAP_API_KEY:-yap_api_key}
 
 # Model and Hugging Face
-export MODEL_ID=${MODEL_ID:-canopylabs/orpheus-3b-0.1-ft}
+export MODEL_ID=${MODEL_ID:-yapwithai/orpheus-3b-trt-int4-awq}
 export HF_TOKEN=${HF_TOKEN:-}
 
 # =============================================================================

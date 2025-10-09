@@ -262,7 +262,7 @@ The TTS API supports customizable generation parameters that can be set per-conn
 If generation parameters are not specified, the server uses optimized defaults based on the selected voice:
 
 - **Female (Tara)**: `temperature=0.45`, `top_p=0.95`, `repetition_penalty=1.25`  
-- **Male (Zac)**: `temperature=0.55`, `top_p=0.95`, `repetition_penalty=1.15`
+- **Male (Zac)**: `temperature=0.45`, `top_p=0.95`, `repetition_penalty=1.15`
 
 #### Usage Examples
 

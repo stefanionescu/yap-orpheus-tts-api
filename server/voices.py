@@ -39,7 +39,7 @@ def get_voice_defaults(voice: str) -> dict:
     
     Based on optimal settings:
     - Female (Tara): temperature=0.45, top_p=0.95, repetition_penalty=1.25
-    - Male (Zac): temperature=0.55, top_p=0.95, repetition_penalty=1.15
+    - Male (Zac): temperature=0.45, top_p=0.95, repetition_penalty=1.15
     
     Args:
         voice: Voice parameter ('female' or 'male')
@@ -51,7 +51,7 @@ def get_voice_defaults(voice: str) -> dict:
     
     if resolved == "zac":  # Male voice
         return {
-            "temperature": 0.55,
+            "temperature": 0.45,
             "top_p": 0.95,
             "repetition_penalty": 1.15,
         }
